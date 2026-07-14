@@ -1,0 +1,183 @@
+# TikHub 查询与费用控制
+
+## 目标
+
+TikHub 用作社交媒体和中文内容平台的第三方 API 后端。它补充本 Skill 内置的 Hacker News/GitHub 公开社区适配器与网页核验层，不替代其他证据层。
+
+一期平台集合固定为本文件列出的 12 个搜索来源。价格目录出现新平台或新端点时只做记录，不自动扩展生产白名单与每日计划。
+
+任何付费请求都必须遵循：
+
+```text
+生成查询计划 → 读取控制台实时价格 → 输出预计费用 → 校验费用上限 → 零费用账户预检 → 执行 → 记录预计实际消耗
+```
+
+不要把 API Key、Cookie、Authorization 头或完整响应头写入计划、报告、日志或 GitHub。
+
+## 当前受控搜索端点
+
+价格会变化，以下仅是 2026-07-14 控制台标价样本。每次执行仍必须从 `https://user.tikhub.io/api/pricing?page=1&page_size=2000` 刷新。
+
+| 来源 | 搜索端点 | 样本单价 USD |
+|---|---|---:|
+| TikTok | `/api/v1/tiktok/app/v3/fetch_video_search_result` | 0.001 |
+| Instagram | `/api/v1/instagram/v2/general_search` | 0.002 |
+| LinkedIn | `/api/v1/linkedin/web/search_posts` | 0.004 |
+| Threads | `/api/v1/threads/web/search_recent` | 0.002 |
+| X / Twitter | `/api/v1/twitter/web/fetch_search_timeline` | 0.001 |
+| YouTube | `/api/v1/youtube/web/search_video` | 0.001 |
+| 抖音 | `/api/v1/douyin/search/fetch_video_search_v2` | 0.010 |
+| 小红书 | `/api/v1/xiaohongshu/app_v2/search_notes` | 0.010 |
+| B站 | `/api/v1/bilibili/web/fetch_general_search` | 0.001 |
+| 知乎 | `/api/v1/zhihu/web/fetch_article_search_v3` | 0.001 |
+| 微信搜一搜 | `/api/v1/wechat_search/v2/fetch_search` | 0.010 |
+| Reddit | `/api/v1/reddit/app/fetch_dynamic_search` | 0.001 |
+
+只允许脚本内白名单端点。需要增加新端点时，先确认官方 OpenAPI 参数和控制台实时单价，再补测试和白名单。
+
+## 生成计划
+
+```bash
+python3 "$SKILL_DIR/scripts/build_query_plan.py" \
+  --date YYYY-MM-DD \
+  --home "$RADAR_HOME" \
+  --export-tikhub-plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-plan.json"
+```
+
+默认轻量计划采用每日核心源加三日滚动源：
+
+- 核心源：Reddit、X、YouTube、小红书、知乎。
+- 滚动组一：TikTok、Instagram、抖音。
+- 滚动组二：LinkedIn、Threads、B站。
+- 滚动组三：TikTok、Instagram、微信搜一搜。
+- 当日地区查询使用轮换地区的本地语言表达，不只追加国家名。
+
+评论不在搜索阶段批量获取。先筛选 1–5 个高价值帖子，再生成单独的评论深挖计划并重新估价。
+
+## 评论深挖计划
+
+12 个搜索来源都已配置“帖子详情 + 一级评论”白名单。以下为 2026-07-14 的单帖首页样本价；执行前仍以实时目录为准。
+
+| 来源 | 详情 + 一级评论 USD | 关键标识 |
+|---|---:|---|
+| TikTok | 0.002 | `aweme_id` |
+| Instagram | 0.004 | `code_or_url` |
+| LinkedIn | 0.008 | `post_id` |
+| Threads | 0.004 | 数字 `post_id` |
+| X / Twitter | 0.002 | `tweet_id` |
+| YouTube | 0.002 | `video_id` |
+| 抖音 | 0.002 | `aweme_id` |
+| 小红书 | 0.020 | `note_id` 或 `share_text`，并指定图文/视频 |
+| B站 | 0.002 | `bv_id` |
+| 知乎回答 | 0.002 | `answer_id`；当前不把文章 ID 套入回答评论接口 |
+| 微信文章 | 0.020 | `https://mp.weixin.qq.com/` 文章 URL |
+| Reddit | 0.002 | `post_id`，自动规范为 `t3_` 前缀 |
+
+搜索执行后先规范化并导出可深挖候选：
+
+```bash
+python3 "$SKILL_DIR/scripts/normalize_tikhub_results.py" \
+  --input "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-results.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-normalized-search.json" \
+  --selection-output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-comment-candidates.json"
+```
+
+候选会携带平台所需标识和小红书/知乎/微信的 `content_type`，但不会自动决定研究价值。从中选 1–5 个并补充 `selection_reason`，例如：
+
+```json
+[
+  {
+    "source": "threads",
+    "selected_item_id": "threads-12345",
+    "selection_reason": "多人重复描述同一人工流程并询问替代工具",
+    "identifiers": {"post_id": "12345"}
+  }
+]
+```
+
+生成独立计划：
+
+```bash
+python3 "$SKILL_DIR/scripts/tikhub_query.py" build-comments \
+  --date YYYY-MM-DD \
+  --parent-search-run-id RUN-YYYYMMDD-XXXXXXXXXX \
+  --input "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-comment-selections.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-comment-plan.json"
+
+python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
+  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-comment-plan.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-comment-cost-estimate.json"
+```
+
+每个选中帖子固定两次首页请求。任何评论翻页都必须另建计划、重新读取价格并单独通过预算；脚本不会隐式自动翻页。
+
+执行评论计划后再次运行规范化脚本。输出评论必须保留 `parent_item_id`，这样证据可以追溯到搜索阶段选中的帖子。微信搜索结果使用 `identifiers.url` 传给公众号详情和评论接口；不得再使用旧的 `article_url` 字段。
+
+## 运行前估价
+
+估价不会调用付费数据端点：
+
+```bash
+python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
+  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-plan.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-cost-estimate.json"
+```
+
+估价必须返回：
+
+- 请求次数。
+- 原价、预计美元和人民币费用。
+- 最大尝试次数下的最坏费用。
+- 按来源费用明细。
+- 免费额度适用端点对应的费用。
+- 免费额度不适用端点对应的费用。
+
+人民币金额默认使用可配置的估算汇率 `7.2`，不是实时外汇报价。需要其他口径时传 `--usd-to-cny`。
+
+## 执行
+
+API Key 只能通过环境变量提供，不允许作为命令行参数：
+
+```bash
+export TIKHUB_API_KEY='由用户在本机安全设置，不写入文件'
+
+python3 "$SKILL_DIR/scripts/tikhub_query.py" run \
+  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-plan.json" \
+  --max-cost-usd 0.10 \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-results.json"
+```
+
+中国大陆默认使用官方 `https://api.tikhub.dev`；其他地区可显式传 `--api-base https://api.tikhub.io`。
+
+`--max-cost-usd` 是硬性上限，按“实时目录原价 × 最大尝试次数”的未舍入金额校验；账户折扣不会降低硬预算保护值。`run` 不接受离线价格文件。预算通过后，脚本先确认 `/api/v1/tikhub/user/get_user_info` 在实时目录中的价格仍为 `$0`，再读取账户状态、付费余额和免费额度；只保留这些非敏感摘要，不保存邮箱、API Key 名称或其他账户资料。脚本按端点资格计算免费额度可覆盖部分和最坏情况下所需付费余额，余额不足时会在任何数据请求之前失败关闭。
+
+没有密钥、账户不可用、零费用预检端点涨价、余额不足、实时价格缺失、端点不在白名单或预计费用超过上限时，不发起任何付费数据请求。
+
+## 费用报告口径
+
+每次向用户返回：
+
+```text
+TikHub 预计：N 次，$X（约 ¥Y）
+免费额度适用成本：$A
+免费额度不适用成本：$B
+执行后估计尝试成本：$C
+实际账单：以 TikHub 使用日志为准
+```
+
+`allow_free_credit` 只表示端点资格，不表示账户当前免费额度一定足够。`run` 会通过零费用账户端点核验余额，并在结果中记录最坏情况下需要的付费余额；失败请求是否扣费由 TikHub 账单决定，因此“执行后估计尝试成本”不能写成已经核对的实际扣款。需要精确对账时，再读取用户授权的 TikHub 使用日志。
+
+## 安全与故障处理
+
+- 不使用用户平台 Cookie 参数；只使用 TikHub Bearer API Key。
+- 不允许任意 API 域名；跨域重定向和 HTTPS 降级重定向会被拒绝，避免 Bearer 密钥外泄或重定向型 SSRF。
+- `run` 强制刷新公开实时价格目录；离线价格文件只允许用于估价和测试。
+- `run` 在付费数据请求前调用零费用账户端点；若该端点缺失或价格不再为零，会直接停止。
+- 搜索阶段的翻页、数量和筛选参数固定为受测首页值，防止手工篡改导致无效但可能计费的请求。
+- 单计划最多 100 个请求，关键词最长 100 字符，单响应最大 8 MiB，整批持久化结果最大 32 MiB；达到批次上限后停止后续付费调用。
+- 第三方响应中的 Authorization、Cookie、Token、API Key、Secret 和 Password 字段会被删除。
+- 第三方 HTTP 错误正文不会进入报告；错误以 `auth_error`、`rate_limited`、`timeout` 等结构化状态记录。
+- HTTP 200 但响应 `code` 非 0/200 或 `success=false` 时按业务错误处理，不计为成功。
+- 单一来源错误会记录在该请求下，其他来源继续执行；但批次结果超过安全上限时会停止继续花费。
+- 默认每个请求只尝试一次；提高到 2 或 3 次时，仅网络、超时、限流和 5xx 错误退避重试，401/403/4xx 不浪费重试费用。
+- 估价与结果保存计划哈希、价格目录哈希、抓价时间和价格来源，便于后续对账。
