@@ -46,7 +46,9 @@ class ReportValidationTests(unittest.TestCase):
 
         low_block = opportunity_block(1, include_second_source=False, confidence=4)
         low_content = valid_report(1, low_count_reason=True).replace(opportunity_block(1), low_block)
-        self.assertTrue(validate_report(low_content).valid)
+        low_result = validate_report(low_content)
+        self.assertFalse(low_result.valid)
+        self.assertTrue(any("至少提供两个独立来源" in error for error in low_result.errors))
 
     def test_rejects_disallowed_sensitive_domain(self) -> None:
         content = valid_report().replace("- 敏感领域：无", "- 敏感领域：医疗", 1)
@@ -69,7 +71,7 @@ class ReportValidationTests(unittest.TestCase):
         self.assertTrue(any("老产品的新形态" in error for error in result.errors))
 
     def test_reports_multiple_structural_errors_and_warning(self) -> None:
-        content = valid_report().replace("## 综合推荐排名", "## 被删除的排名", 1)
+        content = valid_report().replace("## 四、今日升级与降级", "## 被删除的升级与降级", 1)
         content = content.replace("- 深度机会数量：3", "- 深度机会数量：2", 1)
         content = content.replace("- 数字化交付：是", "- 数字化交付：否", 1)
         content = content.replace("- 一个月 MVP：是", "- 一个月 MVP：否", 1)
@@ -88,6 +90,20 @@ class ReportValidationTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertTrue(any("数量声明" in error for error in result.errors))
         self.assertTrue(any("数据源覆盖" in error for error in result.errors))
+
+    def test_requires_quick_and_regional_evidence_contracts(self) -> None:
+        quick = validate_report(valid_report().replace("- 付款者：小微企业主", "- 快速付款者被删除：小微企业主", 1))
+        self.assertFalse(quick.valid)
+        self.assertTrue(any("付款者" in error for error in quick.errors))
+
+        regional = validate_report(valid_report().replace("- 缺失证据：当地直接付款与重复投诉", "- 区域缺口被删除：无", 1))
+        self.assertFalse(regional.valid)
+        self.assertTrue(any("缺失证据" in error for error in regional.errors))
+
+    def test_quick_section_accepts_non_top_a_level_candidate(self) -> None:
+        content = valid_report().replace("- 证据等级：B", "- 证据等级：A", 1)
+        result = validate_report(content)
+        self.assertTrue(result.valid, result.errors)
 
     def test_requires_tikhub_cost_section_and_all_fields(self) -> None:
         missing = validate_report(valid_report().replace("## 采集费用", "## 被删除的费用", 1))

@@ -1,89 +1,35 @@
-# 研究工作流
+# V3 研究工作流
 
-## 目录
-
-1. 研究原则
-2. 每日采集
-3. 证据规范化
-4. 聚类与反证
-5. 状态提交
-6. 深挖与历史回顾
-
-## 1. 研究原则
-
-遵循“先证据、后机会、再产品形态”的顺序。不要先生成产品列表再为它寻找引用。
-
-把一次运行拆成两个研究面：
-
-- 消费者：恋爱陪伴、成人、游戏、虚拟角色、社交娱乐、身份表达、创作玩法和大需求的新形态。
-- 小微企业：明确工作触发点、手工替代、招聘与外包、区域化缺口、开发者工具和平台撮合。
-
-把 30 个自然日作为每日主窗口，从其中派生 7 天新信号。每周或深挖时再做 90 天验证；使用 12 个月信息解释竞争历史和“为什么是现在”。窗口为含首尾的自然日区间，30 日窗口起点是 `as_of - 29 days`；报告直接引用计划中的 `range_from` 和 `range_to`。
-
-## 2. 每日采集
-
-### 2.1 导出两类独立计划
-
-使用 `build_query_plan.py` 同时导出：
+## 1. 总流程
 
 ```text
-RUN_DIR/community-plan.json
-RUN_DIR/tikhub-search-plan.json
+来源预检与费用门禁
+  -> 商业/需求证据
+  -> 付费对标 BENCH
+  -> 六轴扩展 100–200
+  -> 六项硬门槛
+  -> A/B/R 分层
+  -> A 级深度评分
+  -> 三层日报
+  -> 校验后写状态
 ```
 
-两个计划与总计划共享 `run_id`。社区计划只允许 Hacker News 和 GitHub；TikHub 计划只允许一期白名单平台。不要跨计划拼接运行 ID。
+研究顺序是“付费事实 → 需求行为 → 产品缺口 → 点子”，不是先脑暴再找引用。
 
-### 2.2 运行社区证据引擎
+## 2. 采集窗口与来源
 
-社区检索逻辑内置在本 Skill 中，不直接调用其他 Skill。先做离线能力检查，再执行固定端点、固定参数范围的只读查询：
+- 30 个自然日：日常需求、投诉、切换、招聘和付款信号。
+- 7 日：新出现或快速升温。
+- 90 日：重复性与地区验证。
+- 365 日：竞品、失败历史和“为什么是现在”。
 
-```bash
-RUN_DIR="$RADAR_HOME/raw/YYYY-MM-DD"
-python3 "$SKILL_DIR/scripts/community_query.py" doctor --json
-python3 "$SKILL_DIR/scripts/community_query.py" run \
-  --plan "$RUN_DIR/community-plan.json" \
-  --output "$RUN_DIR/community-normalized.json"
-```
+所有窗口包含首尾日期。使用查询计划里的 `from/to`，不自行估算。
 
-GitHub Token 可选，只从 `GITHUB_TOKEN` 或 `GH_TOKEN` 读取；缺少时使用公开限额。结果文件只保留规范化证据和来源状态，不持久化完整响应或令牌。
+`build_query_plan.py` 生成共享 `run_id` 的社区与 TikHub 计划。社区只允许 Hacker News/GitHub；TikHub 只允许一期白名单。Web 用于打开竞品定价、付款证据、本地差异和反证，不绕过来源范围。
 
-### 2.3 使用 Web 补充
-
-一期仅串行补充：
-
-- 当日轮换地区的本地语言讨论
-- 竞品官网、价格、融资和发布记录
-- 候选机会的反证与失败案例
-
-先搜索，再打开高价值结果。只有读取正文后，才能把文本当作直接证据。搜索摘要只能作为发现线索。
-
-一期不把 Product Hunt、Indie Hackers、应用商店、V2EX、即刻、脉脉或其他尚未适配平台加入每日采集。Web 只承担核验和反证，不绕过一期范围。
-
-### 2.4 使用 TikHub 补充社交与中文平台
-
-先生成并独立导出 TikHub 查询计划，然后读取控制台实时价格：
-
-```bash
-python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
-  --plan "$RUN_DIR/tikhub-search-plan.json" \
-  --output "$RUN_DIR/tikhub-cost-estimate.json"
-```
-
-每次执行前都报告费用。API Key 只从 `TIKHUB_API_KEY` 环境变量读取，执行命令必须设置 `--max-cost-usd`。执行器会先通过零费用账户端点核验账户状态、免费额度与最坏情况下所需付费余额，余额不足时不发起付费数据请求。每日采用“核心源 + 三日滚动源”，三日集合并后覆盖 TikTok、Instagram、LinkedIn、Threads、X、YouTube、Reddit、抖音、小红书、B站、知乎和微信搜一搜。
-
-以上 12 个平台是一期固定集合。生成计划时必须包含 `scope.id=phase_1_existing_platforms` 和 `platform_expansion_enabled=false`；实时价格目录中的其他平台不得自动加入。
-
-搜索和评论分两阶段计费：第一阶段只做关键词搜索并用 `normalize_tikhub_results.py --selection-output` 生成可深挖候选；第二阶段从候选中选 1–5 个、补充 `selection_reason`，用 `tikhub_query.py build-comments` 生成“详情 + 一级评论”计划并重新估价。微信必须从搜索结果的 `url` 接入公众号接口；小红书按图文/视频类型路由；知乎只接受回答 ID。评论执行结果要再次规范化。12 个当前搜索来源都已配置评论深挖白名单；如果任一端点从实时价格目录消失，整份评论计划必须失败关闭。不要为了补齐数量批量抓取无关评论，也不要隐式翻页。
-
-详细端点、价格口径与安全规则见 [tikhub-integration.md](tikhub-integration.md)。
-
-### 2.5 使用浏览器抽样
-
-仅在用户明确要求深挖、且公开搜索无法核实时使用授权浏览器。限制为少量页面和字段核验；不要批量遍历私有内容。
+TikHub 必须先实时估价，再显式预算执行。搜索和评论分阶段估价；评论只深挖 1–5 个高价值帖子，不为凑数量批量抓取。
 
 ## 3. 证据规范化
-
-将每条证据整理成以下结构：
 
 ```json
 {
@@ -92,77 +38,68 @@ python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
   "author": "u/example",
   "container": "r/example",
   "original_text": "short quote",
-  "zh_translation": "简短中文翻译",
+  "zh_translation": "简短翻译",
   "language": "en",
   "published_at": "2026-07-13",
   "date_confidence": "high",
-  "observed_at": "2026-07-14T09:00:00+08:00",
+  "observed_at": "2026-07-15T09:00:00+08:00",
   "engagement": {"comments": 42},
   "access_method": "native-platform",
-  "signal_types": ["pain", "workaround", "spending"],
-  "notes": "为什么与候选有关"
+  "signal_types": ["complaint", "workaround", "subscription"],
+  "market": "美国",
+  "notes": "与哪个 BENCH 或候选有关"
 }
 ```
 
-使用以下访问方式：
+访问方式只用 `native-platform`、`third-party-api`、`search-index`、`authorized-browser-sample`、`manual-verification`。发布时间不确定就降低日期置信度；互动量未知就省略或写未知。
 
-- `native-platform`
-- `third-party-api`
-- `search-index`
-- `authorized-browser-sample`
-- `manual-verification`
+## 4. 建立 BENCH
 
-发布时间不确定时保留原始值并降低 `date_confidence`。互动量缺失时省略字段或写“未知”，不要填 0。
+每个付费对标核验：产品/服务、来源市场、付款者、价格或支出、付款信号、当前替代、缺口、获客渠道、30 天最小产品和直达证据。
 
-## 4. 聚类与反证
+优先证据顺序：
 
-按用户任务聚类，而不是按关键词聚类。至少比较：
+1. 订单、收入、订阅、合同、发票、采购。
+2. 明确招聘、外包和服务报价。
+3. 用户自述真实购买、取消或切换。
+4. 官方定价页。
+5. 互动、点赞、愿望和泛讨论。
 
-- 目标用户是否相同
-- 触发场景是否相同
-- 损失或欲望是否相同
-- 当前替代方案是否相同
-- 最小切入口是否相同
+第 5 类不能单独建立 BENCH。
 
-对每个拟进入 Top 5 的候选主动搜索：
+## 5. 扩展与过滤
 
-- 已有直接和间接竞品
-- 用户为何不购买已有产品
-- 免费替代品
-- 失败或停止维护的类似项目
-- 平台和数据依赖
-- 巨头近期新增能力
-- 目标用户是否只想免费使用
+用 `expand_ideas.py` 做六轴有限扩展，不手工复制标题。候选跨国家或主渠道时保留独立 `market_scope`。
 
-“没有搜到”只表示证据不足，不表示不存在。
+用 `filter_ideas.py` 执行六项硬门槛。输出：
 
-## 5. 状态提交
+- A：本地直接付款 + 至少两个独立来源；进入深度评分。
+- B：付费对标 + 投诉/替代/招聘/外包；进入快速点子。
+- R：来源市场付费 + 合理本地差异，缺本地付款；进入区域 SIG。
+- rejected：保留明确失败门槛，便于后续补证。
 
-在评分和写 Markdown 前先用 `manage_state.py prepare` 解析稳定 ID；Markdown 校验通过后，再用共享 `run_id` 批量提交当前视图和追加式观察历史。保存每个机会用于指纹的四个字段：
+目标数量不足时停在真实数量，并在报告说明是哪种证据不足。
 
-```json
-{
-  "title": "机会标题",
-  "target_user": "具体用户",
-  "context": "触发场景",
-  "problem_or_desire": "问题或欲望",
-  "wedge": "最小切入口"
-}
-```
+## 6. 评分、反证与报告
 
-轻微改写或翻译标题不得改变稳定 ID。切入口真正变化时应创建新机会。
+只为 A 级补齐三轨评分。拟进入 Top 5 前必须查：直接/间接竞品、免费替代、用户不购买原因、失败产品、平台内置能力、数据与合规依赖、当地竞品。
 
-同一 `run_id` 重放不新增观察事件；同日不同运行可以记录新的分数与证据快照，但 `occurrences` 只按唯一 `seen_dates` 计数。历史文件只追加，当前视图可更新；写入由文件锁串行化并原子替换。
+日报按固定三层输出：
 
-## 6. 深挖与历史回顾
+- 深度机会：解释购买触发、证据、反证、MVP、首笔收入与最大风险。
+- 快速点子：只写付款者、对标、需求、替代、缺口、渠道和 MVP。
+- 区域创意：只写来源市场、目标地区、本地差异、最小产品、缺证和升级条件。
 
-深挖时扩展证据与反证，不只是扩写产品方案。历史回顾时使用：
+结构校验通过前不写状态。
 
-- `first_seen`
-- `last_seen`
-- `seen_dates`
-- `occurrences`
-- 独立来源数量
-- 新地区、新人群、新付费和技术变化
+## 7. 状态与升级
 
-没有新增证据不等于降温。只有观察到讨论减少、需求被满足、竞品覆盖或用户行为转移时，才标记降温。
+先 `prepare` 分配稳定 ID，再评分和写报告。稳定身份基于任务，不基于标题；国家、地区和主渠道存在时加入身份，避免跨市场合并。
+
+校验通过后用同一 `run_id` 分别提交 OPP 与 SIG。同一运行重放不新增事件；当前视图更新，观察历史追加。
+
+R/SIG 只有在目标地区出现直接付款且独立来源达标后，才通过 `manage_state.py promote` 升级。升级保留双向链接。
+
+## 8. 深挖与趋势
+
+深挖优先补“最可能推翻机会的证据”，而不是扩写功能。历史趋势看出现日期、重复观察、证据源、付款变化、地区和证据层级。没有新结果不等于需求下降；只有发现需求被满足、用户迁移、竞品覆盖或付费消失时才降级。

@@ -904,7 +904,7 @@ def fetch_account_snapshot(
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {secret}",
-        "User-Agent": "AI-Opportunity-Radar/2.0",
+        "User-Agent": "AI-Opportunity-Radar/3.0",
     }
     try:
         payload = transport(
@@ -1008,7 +1008,7 @@ def _execute_plan_with_pricing(
             f"当前付费余额 ${format(paid_balance, 'f')}"
         )
     request_prices = {item["id"]: Decimal(str(item["unit_estimated_price_usd"])) for item in estimate["requests"]}
-    headers = {"Accept": "application/json", "Authorization": f"Bearer {secret}", "User-Agent": "AI-Opportunity-Radar/2.0"}
+    headers = {"Accept": "application/json", "Authorization": f"Bearer {secret}", "User-Agent": "AI-Opportunity-Radar/3.0"}
     results: list[dict[str, Any]] = []
     attempted_cost = Decimal("0")
     ok_count = 0
@@ -1192,7 +1192,7 @@ def _load_pricing_file(path: Path) -> list[dict[str, Any]]:
 
 
 def fetch_live_pricing() -> list[dict[str, Any]]:
-    req = request.Request(PRICING_URL, headers={"Accept": "application/json", "User-Agent": "AI-Opportunity-Radar/2.0"})
+    req = request.Request(PRICING_URL, headers={"Accept": "application/json", "User-Agent": "AI-Opportunity-Radar/3.0"})
     try:
         with _safe_urlopen(req, timeout=20) as response:
             payload = json.loads(response.read(MAX_RESPONSE_BYTES).decode("utf-8"))

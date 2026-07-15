@@ -67,7 +67,7 @@ class ScoringTests(unittest.TestCase):
         data["scores"]["regional_gap"] = 10
         scored = score_candidate(data)
 
-        self.assertEqual(scored["scoring_version"], "2.0")
+        self.assertEqual(scored["scoring_version"], "3.0")
         self.assertEqual(scored["scoring_weights"]["regional_gap"], 2.5)
         self.assertTrue(scored["confidence_capped"])
         self.assertEqual(scored["auxiliary_scores"]["confidence"], 4.0)

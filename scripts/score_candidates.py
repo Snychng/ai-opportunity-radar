@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""按机会轨道分别计算 V2 分数，并执行证据置信度约束。"""
+"""按机会轨道分别计算 V3 A 级候选分数，并执行证据置信度约束。"""
 
 from __future__ import annotations
 

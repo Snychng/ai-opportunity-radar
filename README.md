@@ -1,26 +1,32 @@
 # AI Opportunity Radar
 
-一个面向 Codex 的 AI 创业机会研究 Skill。它从公开社区、开发者反馈和受预算保护的社交平台数据中提取真实问题、欲望、替代行为与付费信号，生成每日机会雷达、定向扫描、单机会深挖和历史趋势回顾。
+一个面向 Codex 的 AI 创业机会研究 Skill。它先寻找真实付费产品与现有支出，再围绕细分人群、购买触发、AI 新形态、地区、渠道和交付方式批量扩展点子，最后用硬门槛过滤并输出三层机会。
 
-项目坚持“先证据，后机会，再产品形态”：不会把热门话题直接包装成创业方向，也不会把单次搜索无结果解释为没有需求或没有竞品。
+项目坚持“先付费事实，后需求行为，再产品形态”：批量生成可以宽，进入正式机会必须严。热门话题、愿望表达和单次搜索无结果都不会被直接包装成市场结论。
 
 ## 核心能力
 
 | 能力 | 说明 |
 |---|---|
-| 每日雷达 | 输出 3–5 个深度机会、最多 20 个早期信号、覆盖缺口与历史变化 |
+| 付费对标 | 为每条候选建立稳定 `BENCH`，记录产品、付款者、价格/支出和付款证据 |
+| 批量点子 | 沿六个维度确定性扩展 100–200 个原始候选，并保留来源对标 |
+| 硬过滤 | 付款市场、付款者、替代方案、产品缺口、获客渠道、30 天 MVP 缺一不可 |
+| 三层日报 | 3–5 个 A 级深度机会、20–40 个 A/B 级快速点子、30–80 个 R 级区域迁移假设 |
 | 定向扫描 | 按地区、语言、行业或机会类型复用同一研究流程 |
 | 机会深挖 | 围绕稳定机会 ID 补充独立证据、反证、竞品、MVP 和验证实验 |
 | 历史回顾 | 比较近 7/30/90 天的出现次数、评分和证据变化 |
 | 多语言研究 | 覆盖英语、中文及东南亚、南亚、非洲、中东、拉美的轮换语言查询 |
 | 费用保护 | TikHub 请求执行前强制刷新价格、估算最坏成本、检查账户与显式预算 |
 | 可重放状态 | 使用稳定 ID、追加式观察历史、文件锁和原子写入支持安全重跑 |
+| 证据升级 | R/SIG 补齐本地付款证据后，可审计地升级为 A/OPP 并保留双向链接 |
 
-机会分为三条轨道：
+深度机会仍分三条评分轨道：
 
 - `needle`：针尖型机会，强调明确用户、明确触发时刻和单一任务。
 - `new_form`：老产品新形态，强调代理、语音、长期记忆、动态生成或社交体验带来的重做机会。
 - `regional_gap`：区域错配型机会，强调语言、文化、价格、渠道和本地集成缺口。
+
+评分只对已经通过硬门槛的 A 级候选排序。未进入 Top 5 的 A 级候选可以保留为快速卡片；B 级不做冗长推演；缺目标地区付款证据的区域创意统一保留为 R/SIG。
 
 ## 数据源范围
 
@@ -45,12 +51,18 @@ flowchart LR
     F --> G["详情与一级评论"]
     F --> E
     G --> E
-    E --> H["证据聚类与候选定义"]
-    H --> I["稳定 ID 与分轨评分"]
-    I --> J["Markdown 日报"]
-    J --> K{"结构校验通过?"}
-    K -->|是| L["当前视图 + 追加式历史"]
-    K -->|否| M["修复报告，不写状态"]
+    E --> H["真实付费对标 BENCH"]
+    H --> I["六轴扩展 100–200"]
+    I --> J{"六项硬门槛"}
+    J -->|A| K["深度评分 3–5"]
+    J -->|B| L["快速点子 20–40"]
+    J -->|R| M["区域 SIG 30–80"]
+    K --> N["三层 Markdown 日报"]
+    L --> N
+    M --> N
+    N --> O{"结构校验通过?"}
+    O -->|是| P["当前视图 + 追加历史"]
+    O -->|否| Q["修复报告，不写状态"]
 ```
 
 项目分为两层：
@@ -58,7 +70,7 @@ flowchart LR
 - `SKILL.md` 与 `references/` 定义研究方法、机会政策、查询语言、安全边界和报告契约。
 - `scripts/` 提供确定性工具，负责查询计划、数据采集、费用保护、规范化、稳定 ID、评分、报告校验和状态写入。
 
-证据聚类、反证判断、候选定义、中文翻译和报告撰写仍由 Codex 完成；项目不是一个无需判断的一键市场研究脚本。
+付费证据核验、反证判断、维度设计、中文翻译和报告撰写仍由 Codex 完成；扩展、硬过滤、ID、评分、报告结构与状态由脚本确定性约束。
 
 ## 环境要求
 
@@ -97,6 +109,7 @@ git -C "$HOME/.codex/skills/ai-opportunity-radar" pull --ff-only
 
 ```text
 运行今天的 AI 创业机会雷达
+给我很多有真实市场需求、30 天能做 MVP 的点子
 扫描东南亚本地语言 AI 社交产品机会
 深挖 OPP-20260714-A1B2C3
 回顾最近 30 天升温的机会
@@ -159,7 +172,24 @@ python3 "$SKILL_DIR/scripts/normalize_tikhub_results.py" \
 
 从评论候选中选择 1–5 条并补充 `selection_reason` 后，可按 [`references/tikhub-integration.md`](references/tikhub-integration.md) 生成独立评论计划。评论翻页必须重新建计划和估价。
 
-### 稳定 ID、评分与状态提交
+### 付费对标、批量扩展与硬过滤
+
+先按 [`references/data-contracts.md`](references/data-contracts.md) 整理 `benchmarks-and-dimensions.json`。仓库提供了可直接运行的[示例输入](examples/benchmarks-and-dimensions.json)；其中 URL 和商业数据均为演示占位符，不是市场证据：
+
+```bash
+python3 "$SKILL_DIR/scripts/expand_ideas.py" \
+  --input "$RUN_DIR/benchmarks-and-dimensions.json" \
+  --limit 200 \
+  --output "$RUN_DIR/expanded-candidates.json"
+
+python3 "$SKILL_DIR/scripts/filter_ideas.py" \
+  --input "$RUN_DIR/expanded-candidates.json" \
+  --output "$RUN_DIR/tiered-candidates.json"
+```
+
+过滤结果包含 `deep_candidates`、`validated_ideas`、`regional_signals` 和带失败原因的 `rejected`。目标数量不足时保留真实数量，不用弱证据补齐。
+
+### 稳定 ID、A 级评分与状态提交
 
 候选评分前必须先分配稳定 ID：
 
@@ -168,12 +198,12 @@ python3 "$SKILL_DIR/scripts/manage_state.py" prepare \
   --home "$RADAR_HOME" \
   --kind opportunity \
   --date "$RUN_DATE" \
-  --input "$RUN_DIR/candidates.json" \
-  --output "$RUN_DIR/candidates-with-ids.json"
+  --input "$RUN_DIR/deep-candidates.json" \
+  --output "$RUN_DIR/deep-candidates-with-ids.json"
 
 python3 "$SKILL_DIR/scripts/score_candidates.py" \
-  --input "$RUN_DIR/candidates-with-ids.json" \
-  --output "$RUN_DIR/scored-candidates.json"
+  --input "$RUN_DIR/deep-candidates-with-ids.json" \
+  --output "$RUN_DIR/scored-deep-candidates.json"
 ```
 
 Markdown 日报结构校验通过后才能写入历史：
@@ -187,18 +217,30 @@ python3 "$SKILL_DIR/scripts/manage_state.py" record-batch \
   --kind opportunity \
   --date "$RUN_DATE" \
   --run-id RUN-YYYYMMDD-XXXXXXXXXX \
-  --input "$RUN_DIR/scored-candidates.json"
+  --input "$RUN_DIR/opportunities.json"
 ```
 
-实际 `run_id` 从 `query-plan.json` 读取。不要手工构造或跨日期复用。
+R 级区域创意应使用 `--kind signal` 独立分配和提交。实际 `run_id` 从 `query-plan.json` 读取，不手工构造或跨日期复用。
+
+R/SIG 补齐目标地区直接付款证据后可升级：
+
+```bash
+python3 "$SKILL_DIR/scripts/manage_state.py" promote \
+  --home "$RADAR_HOME" \
+  --signal-id SIG-YYYYMMDD-XXXXXX \
+  --date "$RUN_DATE" \
+  --run-id RUN-YYYYMMDD-XXXXXXXXXX \
+  --input "$RUN_DIR/promoted-opportunity.json"
+```
 
 ## 数据契约
 
-- `schema_version`：当前为 `2.0`。
+- `schema_version`：当前为 `3.0`。
 - 运行 ID：`RUN-YYYYMMDD-XXXXXXXXXX`。
+- 付费对标 ID：`BENCH-XXXXXXXX`。
 - 机会 ID：`OPP-YYYYMMDD-XXXXXX`。
 - 信号 ID：`SIG-YYYYMMDD-XXXXXX`。
-- 机会身份由 `target_user + context + problem_or_desire + wedge` 决定，不依赖标题或翻译。
+- 机会身份由 `target_user + context + problem_or_desire + wedge`，以及存在时的国家、地区和主渠道决定；不依赖标题或翻译。
 - 同一 `run_id + kind + fingerprint` 重放不会重复创建观察事件。
 - 同日不同运行可以保存新的评分快照，但 `occurrences` 只按唯一日期计数。
 
@@ -240,7 +282,7 @@ $RADAR_HOME/
 | MVP 可行性 | 2.0 | 1.5 | 1.0 |
 | 证据质量 | 1.5 | 1.0 | 1.0 |
 
-单一独立来源的 `confidence` 自动限制为不高于 4。评分用于排序与分层，不是删除早期机会的硬阈值。
+单一独立来源的 `confidence` 自动限制为不高于 4。评分只排序已通过六项门槛的 A 级候选；B/R 的分层由证据契约决定。
 
 ## 安全边界
 
@@ -258,12 +300,15 @@ $RADAR_HOME/
 ```text
 .
 ├── SKILL.md                       # Skill 入口与完整执行流程
+├── examples/                      # 付费对标与六轴扩展示例
 ├── references/                    # 研究、评分、安全、数据和报告契约
 ├── scripts/
 │   ├── build_query_plan.py        # 确定性查询计划与平台轮换
 │   ├── community_query.py         # HN / GitHub 公开适配器
 │   ├── contracts.py               # schema、run_id、稳定 ID
-│   ├── manage_state.py            # 当前视图、追加历史与幂等写入
+│   ├── expand_ideas.py            # 从 BENCH 做六轴确定性扩展
+│   ├── filter_ideas.py            # 六项硬门槛与 A/B/R 分层
+│   ├── manage_state.py            # 当前视图、追加历史、幂等写入与 SIG 升级
 │   ├── normalize_tikhub_results.py # TikHub 搜索与评论规范化
 │   ├── score_candidates.py        # 三轨评分
 │   ├── tikhub_query.py            # TikHub 白名单、估价与执行
@@ -279,7 +324,7 @@ ruff check scripts tests
 pytest -q
 ```
 
-当前测试覆盖查询计划、30 日窗口、多语言轮换、TikHub 费用与账户预检、业务错误、搜索到评论的标识转换、证据规范化、评分、报告校验、追加式状态和 CLI 主流程。
+当前测试覆盖查询计划、多语言轮换、TikHub 费用与账户预检、付费对标扩展、六项硬门槛、A/B/R 分层、跨地区稳定身份、SIG→OPP 升级、评分、三层报告校验、追加式状态和 CLI 主流程。
 
 ## 参考文档
 

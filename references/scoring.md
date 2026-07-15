@@ -1,14 +1,18 @@
-# 评分契约
+# A 级深度候选评分契约
 
-## 1. 先选轨道，再评分
+## 1. 评分不是过滤器
 
-每个候选必须先填写 `track`：
+先执行六项硬门槛和 A/B/R 分层。只有 A 级候选进入本评分；B 级直接形成快速卡片，R 级保持 `SIG`。
 
-- `needle`：针尖型机会，强调需求、30 天 MVP、商业化和证据。
-- `new_form`：老产品新形态，强调形态变化、需求和传播。
-- `regional_gap`：区域错配型机会，强调本地语言/渠道缺口、需求和商业化。
+不要用高总分补偿：没有付款者、没有付费对标、没有获客渠道或 MVP 超过 30 天。
 
-七项主评分均为 0 到 10。三条轨道分别使用以下权重，合计均为 10，因此满分都是 100：
+## 2. 三条轨道
+
+- `needle`：针尖型，强调明确任务、30 天 MVP、商业化和证据。
+- `new_form`：老产品新形态，强调用户行为变化、需求和传播。
+- `regional_gap`：已获得本地付款证据的区域机会，强调语言/渠道缺口、需求与商业化。只有迁移逻辑、没有本地付款时仍是 R 级，不能评分。
+
+七项主评分均为 0–10，权重合计为 10，满分 100：
 
 | JSON 字段 | `needle` | `new_form` | `regional_gap` |
 |---|---:|---:|---:|
@@ -20,63 +24,66 @@
 | `mvp_feasibility` | 2.0 | 1.5 | 1.0 |
 | `evidence` | 1.5 | 1.0 | 1.0 |
 
-不要因总分低就删除候选。75 分以上为“推荐”，60 到 74.9 为“重点观察”，其余保留为“早期信号”。跨轨道排名可以比较总分，但必须同时展示轨道，避免把不同类型的评分重点隐藏掉。
+75 分以上为“推荐”，60–74.9 为“重点观察”，其余为“早期信号”。这些标签只代表 A 级候选内部优先级。
 
-## 2. 辅助评分与证据约束
+## 3. 辅助评分
 
-辅助评分不进入总分，分别填写 0 到 10：
+四项 0–10，不进入总分：
 
 - `first_revenue`：30 天内获得首笔真实收入
-- `scale`：发展成订阅、平台或网络效应产品
-- `personal_influence`：成为高质量开源项目或代表作
+- `scale`：订阅、平台或网络效应潜力
+- `personal_influence`：开源项目或代表作价值
 - `confidence`：证据置信度
 
-单一独立来源的 `confidence` 不得高于 4。脚本会根据 `evidence` 自动计算独立来源数量并执行上限；来源多但都转载同一事件时，人工判断仍应按单来源处理。
+单一独立来源的 `confidence` 自动封顶 4。来源多但都转述同一事件时，人工仍按单来源处理。
 
-## 3. 输入顺序和 JSON
+## 4. 输入示例
 
-评分前必须先运行 `manage_state.py prepare`，因此输入中已经有稳定机会 ID：
+评分前必须先用 `manage_state.py prepare` 分配 OPP：
 
 ```json
 {
-  "id": "OPP-20260714-A1B2C3",
-  "title": "机会名称",
-  "track": "regional_gap",
-  "target_user": "具体用户",
-  "context": "触发场景",
-  "problem_or_desire": "具体问题或欲望",
-  "wedge": "最小产品切入口",
+  "id": "OPP-20260715-A1B2C3",
+  "evidence_tier": "A",
+  "benchmark_ids": ["BENCH-1234ABCD"],
+  "payer": "独立站商家",
+  "buying_trigger": "大促前客服量翻倍",
+  "acquisition_channel": "Shopify 商家社区",
+  "track": "needle",
+  "target_user": "印尼独立站商家",
+  "context": "大促前 FAQ 激增",
+  "problem_or_desire": "人工客服成本过高",
+  "wedge": "WhatsApp 内自动回复一个 FAQ",
   "scores": {
     "demand": 8,
     "new_form": 7,
-    "distribution": 7,
-    "regional_gap": 9,
-    "monetization": 7,
-    "mvp_feasibility": 8,
-    "evidence": 6
+    "distribution": 8,
+    "regional_gap": 7,
+    "monetization": 8,
+    "mvp_feasibility": 9,
+    "evidence": 7
   },
   "auxiliary_scores": {
-    "first_revenue": 7,
-    "scale": 8,
-    "personal_influence": 6,
-    "confidence": 6
+    "first_revenue": 8,
+    "scale": 7,
+    "personal_influence": 5,
+    "confidence": 7
   },
-  "risks": ["平台政策", "冷启动"],
   "evidence": [
-    {"source": "github", "container": "owner/repo", "url": "https://..."},
-    {"source": "hackernews", "container": "Hacker News", "url": "https://..."}
+    {"source": "vendor", "url": "https://..."},
+    {"source": "community", "url": "https://..."}
   ]
 }
 ```
 
-脚本写入 `scoring_version=2.0`、实际轨道权重、独立来源数和是否触发置信度上限。以后修改权重时不得静默覆盖旧观察事件中的分数。
+脚本写入 `scoring_version=3.0`、实际权重、独立来源数和置信度封顶状态。
 
-## 4. 评分锚点
+## 5. 评分锚点
 
-- 0 到 2：几乎没有相关证据或明显不成立
-- 3 到 4：弱信号，适合观察
-- 5 到 6：有合理迹象，但关键问题未验证
-- 7 到 8：多项证据支持，值得主动验证
-- 9 到 10：非常强且直接的证据；谨慎使用满分
+- 0–2：几乎不成立
+- 3–4：弱
+- 5–6：合理但关键问题未验证
+- 7–8：多项直接证据支持
+- 9–10：非常强且直接，谨慎使用
 
-把合规、平台政策、数据、内容审核、巨头复制和一人运营作为独立风险标签，不偷偷混入总分。
+合规、平台政策、数据获取、内容审核、巨头复制和一人运营压力作为独立风险标签，不偷偷混入总分。

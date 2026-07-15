@@ -151,7 +151,7 @@ def validate_plan(plan: dict[str, Any]) -> None:
     lower_timestamp = int(datetime.combine(range_from, time.min, tzinfo=timezone.utc).timestamp())
     upper_timestamp = int(datetime.combine(as_of_date + timedelta(days=1), time.min, tzinfo=timezone.utc).timestamp()) - 1
     if plan.get("schema_version") != SCHEMA_VERSION or plan.get("stage") != "community_discovery":
-        raise CommunityPlanError("社区计划必须使用 V2 discovery 契约")
+        raise CommunityPlanError("社区计划必须使用 V3 discovery 契约")
     scope = plan.get("scope")
     if not isinstance(scope, dict) or set(scope.get("sources") or []) != ALLOWED_SOURCES:
         raise CommunityPlanError("社区计划来源必须严格为 Hacker News 与 GitHub")
@@ -357,7 +357,7 @@ def execute_plan(
     seen: set[tuple[str, str]] = set()
     for item in plan["requests"]:
         source = item["source"]
-        headers = {"Accept": "application/json", "User-Agent": "AI-Opportunity-Radar/2.0"}
+        headers = {"Accept": "application/json", "User-Agent": "AI-Opportunity-Radar/3.0"}
         if source == "github" and github_token.strip():
             headers["Authorization"] = f"Bearer {github_token.strip()}"
             headers["X-GitHub-Api-Version"] = "2022-11-28"

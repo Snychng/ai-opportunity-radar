@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""维护机会雷达 V2 当前视图与追加式观察历史。"""
+"""维护机会雷达 V3 当前视图、观察历史与 SIG→OPP 升级关系。"""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from contracts import (
     validate_record_id,
     validate_run_as_of,
 )
+from filter_ideas import classify_candidate
 
 
 DEFAULT_HOME = Path(os.environ.get("AI_OPPORTUNITY_RADAR_HOME", "~/Documents/AI-Opportunity-Radar")).expanduser()
@@ -46,8 +47,10 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "markets": ["global", "china", "southeast_asia", "south_asia", "africa", "middle_east", "latin_america"],
     "audiences": ["small_business", "consumer"],
     "mvp_days_max": 30,
+    "raw_candidates_per_day": [100, 200],
+    "validated_quick_ideas_per_day": [20, 40],
+    "regional_migration_signals_per_day": [30, 80],
     "deep_opportunities_per_day": [3, 5],
-    "watchlist_max": 20,
     "allowed_sensitive_domains": [
         "dating_relationship_companionship",
         "adult_content",
@@ -334,6 +337,112 @@ def upsert_record(
     return upsert_records(home, kind, [record], observed_on, run_id=resolved_run_id)[0]
 
 
+def promote_signal(
+    home: Path,
+    signal_id: str,
+    opportunity: dict[str, Any],
+    observed_on: date,
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    """在同一把锁内把区域 SIG 升级为 OPP，并双向保留审计链接。"""
+    try:
+        validate_record_id(signal_id, kind="signal")
+        validate_run_as_of(run_id, observed_on.isoformat())
+    except ContractError as exc:
+        raise StateError(str(exc)) from exc
+    if not isinstance(opportunity, dict):
+        raise StateError("升级后的机会必须是 JSON 对象")
+
+    home = initialize_home(home)
+    with _exclusive_lock(home):
+        signals = load_records(home, "signal")
+        signal = next((item for item in signals if item.get("id") == signal_id), None)
+        if signal is None:
+            raise StateError(f"未找到待升级信号：{signal_id}")
+        if signal.get("promoted_to"):
+            return {
+                "status": "replayed",
+                "signal_id": signal_id,
+                "opportunity_id": signal["promoted_to"],
+            }
+
+        opportunities = load_records(home, "opportunity")
+        opportunity_observations = load_observations(home, "opportunity")
+        signal_observations = load_observations(home, "signal")
+        value = deepcopy(opportunity)
+        value["promoted_from"] = signal_id
+        tier, reasons, gates = classify_candidate(value)
+        if tier != "A":
+            failed = reasons or [gate for gate, passed in gates.items() if not passed]
+            raise StateError(f"SIG 只有达到 A 级证据才能升级：{', '.join(failed)}")
+        value["evidence_tier"] = "A"
+        fingerprint = fingerprint_record(value)
+        if fingerprint != signal.get("fingerprint"):
+            raise StateError("升级后的 OPP 必须与原 SIG 保持相同业务身份；用户、场景、需求、切入口和市场范围不能改变")
+        existing = next((item for item in opportunities if item.get("fingerprint") == fingerprint), None)
+        opportunity_id = _expected_id("opportunity", value, observed_on, existing)
+        base = deepcopy(existing) if existing is not None else {}
+        merged = deepcopy(base)
+        merged.update(value)
+        merged.update(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "id": opportunity_id,
+                "fingerprint": fingerprint,
+                "first_seen": base.get("first_seen", observed_on.isoformat()),
+                "last_seen": max(base.get("last_seen", observed_on.isoformat()), observed_on.isoformat()),
+                "last_run_id": run_id,
+            }
+        )
+        merged["seen_dates"] = sorted(set([*base.get("seen_dates", []), observed_on.isoformat()]))
+        merged["occurrences"] = len(merged["seen_dates"])
+        merged["evidence"] = _merge_evidence(base.get("evidence"), value.get("evidence"))
+        opportunity_event = _observation_event(
+            kind="opportunity", run_id=run_id, observed_on=observed_on, record=merged
+        )
+        if opportunity_event["event_id"] not in {item.get("event_id") for item in opportunity_observations}:
+            opportunity_observations.append(opportunity_event)
+        if existing is None:
+            opportunities.append(merged)
+            status = "created"
+        else:
+            opportunities[opportunities.index(existing)] = merged
+            status = "updated"
+
+        signal_index = signals.index(signal)
+        promoted_signal = deepcopy(signal)
+        promoted_signal.update(
+            {
+                "promoted_to": opportunity_id,
+                "promotion_status": "promoted",
+                "promoted_on": observed_on.isoformat(),
+                "last_seen": max(signal.get("last_seen", observed_on.isoformat()), observed_on.isoformat()),
+                "last_run_id": run_id,
+            }
+        )
+        promoted_signal["seen_dates"] = sorted(
+            set([*signal.get("seen_dates", []), observed_on.isoformat()])
+        )
+        promoted_signal["occurrences"] = len(promoted_signal["seen_dates"])
+        signals[signal_index] = promoted_signal
+        signal_event = _observation_event(
+            kind="signal", run_id=run_id, observed_on=observed_on, record=promoted_signal
+        )
+        signal_event["event_id"] = hashlib.sha256(
+            f"{run_id}|signal-promotion|{promoted_signal['fingerprint']}".encode("utf-8")
+        ).hexdigest()[:24]
+        signal_event["event_type"] = "promotion"
+        if signal_event["event_id"] not in {item.get("event_id") for item in signal_observations}:
+            signal_observations.append(signal_event)
+
+        _write_jsonl(_state_path(home, "opportunity"), opportunities, sort_current=True)
+        _write_jsonl(_observation_path(home, "opportunity"), opportunity_observations)
+        _write_jsonl(_state_path(home, "signal"), signals, sort_current=True)
+        _write_jsonl(_observation_path(home, "signal"), signal_observations)
+        return {"status": status, "signal_id": signal_id, "opportunity_id": opportunity_id}
+
+
 def history(home: Path, kind: str, as_of: date, days: int) -> list[dict[str, Any]]:
     """返回窗口内当前记录及逐次评分和证据观察历史。"""
     if days <= 0:
@@ -487,7 +596,7 @@ def _parse_date(value: str) -> date:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="管理 AI 创业机会雷达 V2 状态")
+    parser = argparse.ArgumentParser(description="管理 AI 创业机会雷达 V3 状态")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="初始化目录和状态")
@@ -527,6 +636,13 @@ def main() -> int:
     source_parser.add_argument("--date", default=beijing_today().isoformat())
     source_parser.add_argument("--run-id")
 
+    promote_parser = subparsers.add_parser("promote", help="将已补齐本地证据的 SIG 升级为 OPP")
+    promote_parser.add_argument("--home", type=Path, default=DEFAULT_HOME)
+    promote_parser.add_argument("--signal-id", required=True)
+    promote_parser.add_argument("--date", default=beijing_today().isoformat())
+    promote_parser.add_argument("--run-id", required=True)
+    promote_parser.add_argument("--input", type=Path, required=True, help="升级后的机会 JSON 对象")
+
     args = parser.parse_args()
     try:
         if args.command == "init":
@@ -549,12 +665,20 @@ def main() -> int:
             result = history(args.home, args.kind, _parse_date(args.date), args.days)
         elif args.command == "get":
             result = find_record(args.home, args.kind, args.id)
-        else:
+        elif args.command == "source-health":
             result = update_source_health(
                 args.home,
                 args.source,
                 args.status,
                 args.detail,
+                _parse_date(args.date),
+                run_id=args.run_id,
+            )
+        else:
+            result = promote_signal(
+                args.home,
+                args.signal_id,
+                _read_json_object(args.input),
                 _parse_date(args.date),
                 run_id=args.run_id,
             )

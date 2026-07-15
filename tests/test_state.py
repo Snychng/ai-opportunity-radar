@@ -20,6 +20,7 @@ from manage_state import (  # noqa: E402
     initialize_home,
     load_observations,
     load_records,
+    promote_signal,
     resolve_record_ids,
     update_source_health,
     upsert_record,
@@ -85,6 +86,16 @@ class StateTests(unittest.TestCase):
             second = upsert_record(home, "opportunity", sample_record("English title"), date(2026, 7, 15))
 
         self.assertEqual(first["id"], second["id"])
+
+    def test_market_scope_prevents_cross_country_or_channel_collision(self) -> None:
+        generic = sample_record()
+        indonesia = sample_record()
+        indonesia["market_scope"] = {"country": "印度尼西亚", "primary_channel": "WhatsApp"}
+        vietnam = sample_record()
+        vietnam["market_scope"] = {"country": "越南", "primary_channel": "Zalo"}
+
+        self.assertNotEqual(fingerprint_record(generic), fingerprint_record(indonesia))
+        self.assertNotEqual(fingerprint_record(indonesia), fingerprint_record(vietnam))
 
     def test_find_record_returns_deep_dive_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -223,6 +234,89 @@ class StateTests(unittest.TestCase):
             recent = history(home, "opportunity", date(2026, 7, 14), 30)
 
         self.assertEqual([item["title"] for item in recent], ["新机会"])
+
+    def test_promotes_signal_to_opportunity_with_bidirectional_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = initialize_home(Path(tmp))
+            signal = sample_record("印尼语客服迁移假设")
+            signal["market_scope"] = {"country": "印度尼西亚", "primary_channel": "WhatsApp"}
+            signal_id = upsert_record(home, "signal", signal, date(2026, 7, 14))["id"]
+            opportunity = sample_record("印尼语客服已验证机会")
+            opportunity["market_scope"] = signal["market_scope"]
+            opportunity.update({
+                "benchmark_ids": ["BENCH-A1B2C3D4"],
+                "payer": "印尼独立站商家",
+                "current_alternative": "人工客服",
+                "product_gap": "缺少印尼语和 WhatsApp 集成",
+                "acquisition_channel": "印尼 Shopify 商家社区",
+                "mvp_days": 21,
+                "mvp_scope": "WhatsApp 内自动回复一个 FAQ",
+                "source_region": "美国",
+                "target_region": "印度尼西亚",
+                "payment_signals": [{"type": "subscription", "region": "印度尼西亚", "local": True}],
+                "demand_signals": [{"type": "complaint"}],
+                "evidence": [
+                    {"source": "vendor", "url": "https://vendor.example/pricing"},
+                    {"source": "community", "url": "https://community.example/paid-user"},
+                ],
+            })
+            result = promote_signal(
+                home,
+                signal_id,
+                opportunity,
+                date(2026, 7, 15),
+                run_id="RUN-20260715-ABCDEF1234",
+            )
+            promoted = find_record(home, "opportunity", result["opportunity_id"])
+            source = find_record(home, "signal", signal_id)
+            replay = promote_signal(
+                home,
+                signal_id,
+                opportunity,
+                date(2026, 7, 15),
+                run_id="RUN-20260715-ABCDEF1234",
+            )
+
+        self.assertEqual(promoted["promoted_from"], signal_id)
+        self.assertEqual(source["promoted_to"], result["opportunity_id"])
+        self.assertEqual(source["promotion_status"], "promoted")
+        self.assertEqual(source["occurrences"], 2)
+        self.assertEqual(replay["status"], "replayed")
+
+    def test_rejects_promotion_to_an_unrelated_business_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = initialize_home(Path(tmp))
+            signal = sample_record("区域假设")
+            signal["market_scope"] = {"country": "印度尼西亚", "primary_channel": "WhatsApp"}
+            signal_id = upsert_record(home, "signal", signal, date(2026, 7, 14))["id"]
+            unrelated = sample_record("不相关机会")
+            unrelated.update({
+                "wedge": "完全不同的产品切入口",
+                "market_scope": signal["market_scope"],
+                "benchmark_ids": ["BENCH-A1B2C3D4"],
+                "payer": "印尼商家",
+                "current_alternative": "人工",
+                "product_gap": "本地语言",
+                "acquisition_channel": "商家社区",
+                "mvp_days": 20,
+                "mvp_scope": "单任务闭环",
+                "source_region": "美国",
+                "target_region": "印度尼西亚",
+                "payment_signals": [{"type": "payment", "region": "印度尼西亚", "local": True}],
+                "evidence": [
+                    {"source": "one", "url": "https://one.example"},
+                    {"source": "two", "url": "https://two.example"},
+                ],
+            })
+
+            with self.assertRaisesRegex(StateError, "相同业务身份"):
+                promote_signal(
+                    home,
+                    signal_id,
+                    unrelated,
+                    date(2026, 7, 15),
+                    run_id="RUN-20260715-ABCDEF1234",
+                )
 
 
 if __name__ == "__main__":

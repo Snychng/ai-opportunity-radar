@@ -1,52 +1,149 @@
-# V2 数据契约与阶段连接
+# V3 数据契约与阶段连接
 
-## 1. 全局标识
+## 1. 共享运行契约
 
-- `schema_version`：当前固定为 `2.0`。
-- `run_id`：`RUN-YYYYMMDD-XXXXXXXXXX`，由日期、运行模式、定向范围和计划版本确定。同一输入重跑得到同一 ID。
-- 机会 ID：`OPP-YYYYMMDD-XXXXXX`；信号 ID：`SIG-YYYYMMDD-XXXXXX`。日期是首次观察日，末尾来自“目标用户 + 场景 + 问题或欲望 + 最小切入口”的稳定指纹。
-- 标题、翻译和分数不得参与稳定 ID；四个身份字段变化时应视为新记录。
+- `schema_version`、`query_plan_version`、`scoring_version`：当前为 `3.0`。
+- `run_id`：`RUN-YYYYMMDD-XXXXXXXXXX`，由日期、模式、定向范围和版本确定。
+- `as_of`：北京时间 `YYYY-MM-DD`，必须与 `run_id` 日期一致。
+- 所有原始、规范化、扩展、过滤、评分和状态文件都保留同一 `run_id`。
 
-## 2. 阶段输入输出
+阶段顺序：
 
-| 阶段 | 输入 | 输出 | 必须保持的字段 |
-|---|---|---|---|
-| `query_plan` | 日期、偏好、可选定向范围 | 总计划、社区计划、TikHub 搜索计划 | `schema_version`、`run_id`、`as_of` |
-| `community_discovery` | 社区计划 | `community_normalized` | `run_id`、来源状态、规范化 `evidence` |
-| `search_discovery` | TikHub 搜索计划、实时价格、预算 | TikHub 搜索结果 | `run_id`、`stage`、请求状态 |
-| `tikhub_normalized_search` | TikHub 搜索结果 | 规范化证据、`comment_candidates` | `run_id`、来源标识、直达 URL |
-| `comment_deep_dive` | 1–5 个候选及 `selection_reason` | 详情与一级评论结果 | 与搜索阶段相同的 `run_id`、`selected_item_id` |
-| `tikhub_normalized_comments` | 评论结果 | 规范化评论和详情状态 | `parent_item_id`、来源状态 |
-| `candidates_with_ids` | 聚类候选 | 已解析稳定 ID 的候选 | 四个身份字段、`id`、`fingerprint` |
-| `scored_candidates` | 已有 ID 的候选 | V2 轨道评分 | `id`、`track`、`scoring_version` |
-| `validated_report` | 评分候选与证据 | Markdown 日报 | 报告 ID 与候选 ID 完全一致 |
-| `state_observations` | 校验通过的候选、`run_id` | 当前视图 + 追加式观察事件 | `event_id`、`observed_on`、分数与证据快照 |
+```text
+query_plan
+  -> community_normalized + tikhub_normalized
+  -> paid_benchmarks
+  -> expanded_candidates
+  -> tiered_candidates
+  -> OPP/SIG stable IDs
+  -> A-level scoring
+  -> validated_report
+  -> state_observations
+```
 
-任何阶段缺少或改变 `run_id` 都应失败关闭。不要用文件名、数组位置或日报序号代替稳定标识。
+## 2. 付费对标
 
-## 3. 重跑与历史语义
-
-- 同一 `run_id + kind + fingerprint` 只产生一个观察事件，重复提交返回 `replayed`。
-- 同一天不同运行可以记录新的评分或证据快照，但 `occurrences` 等于唯一 `seen_dates` 数量，不会因同日重跑膨胀。
-- `opportunities.jsonl` 与 `signals.jsonl` 是当前视图；`*-observations.jsonl` 是不可覆盖的观察历史。
-- 更新由同一文件锁保护；当前视图和历史分别原子写入。报告结构校验通过前不得提交状态。
-
-## 4. 最小候选契约
-
-候选进入评分前必须具有：
+最小结构：
 
 ```json
 {
-  "id": "OPP-20260714-A1B2C3",
-  "track": "needle",
-  "target_user": "具体用户",
-  "context": "明确触发场景",
-  "problem_or_desire": "具体问题或欲望",
-  "wedge": "第一版只替代的动作",
-  "evidence": [{"source": "...", "url": "https://..."}],
-  "scores": {},
-  "auxiliary_scores": {}
+  "id": "BENCH-A1B2C3D4",
+  "product": "已有产品或服务",
+  "source_market": "美国",
+  "payer": "独立站商家",
+  "price": "每月 49 美元",
+  "payment_signals": [
+    {"type": "subscription", "region": "美国", "url": "https://..."}
+  ],
+  "current_alternative": "人工客服",
+  "product_gap": "价格高且不支持印尼语",
+  "acquisition_channel": "Shopify 商家社区",
+  "mvp_days": 21,
+  "mvp_scope": "导入 FAQ 并生成一次回复",
+  "evidence": []
 }
 ```
 
-证据数组不得为空。低证据候选可以进入早期观察池，但不能通过抬高 `confidence` 掩盖来源不足。
+`BENCH` ID 根据产品、来源市场、付款者和价格生成；相同对标重跑保持稳定。
+
+## 3. 扩展输入与输出
+
+`expand_ideas.py` 输入：
+
+```json
+{
+  "run_id": "RUN-...",
+  "as_of": "YYYY-MM-DD",
+  "benchmarks": [],
+  "dimensions": {
+    "segments": [],
+    "triggers": [],
+    "forms": [],
+    "regions": [],
+    "channels": [],
+    "offers": []
+  }
+}
+```
+
+六个维度都是可选非空数组；缺失时使用对标自身值。脚本按固定顺序做有限笛卡尔扩展、稳定去重，并生成 `CAND-XXXXXXXXXX`。
+
+扩展候选必须携带：
+
+- `benchmark_ids`
+- `payer`、`buying_trigger`
+- `current_alternative`、`current_spend`
+- `payment_signals`、`demand_signals`
+- `product_gap`、`acquisition_channel`、`delivery_model`
+- `mvp_days`、`mvp_scope`
+- `source_region`、`target_region`、`localization_gap`、`transfer_reason`
+- `market_scope.country/region/language/primary_channel`
+
+## 4. 过滤输出
+
+`filter_ideas.py` 输出四个数组：
+
+- `deep_candidates`：A 级，`record_kind=opportunity`
+- `validated_ideas`：B 级，`record_kind=opportunity`
+- `regional_signals`：R 级，`record_kind=signal`
+- `rejected`：附 `rejection_reasons`
+- `overflow`：超过 B 级 40 条或 R 级 80 条的合格候选；不丢弃，但不进入当日日报主卡片
+
+每条保留 `hard_gates`。R 级还必须保留：
+
+- `missing_proof`
+- `promotion_triggers`
+- `source_region`、`target_region`
+- `localization_gap`、`transfer_reason`
+
+## 5. 稳定 OPP/SIG 身份
+
+格式：
+
+- `OPP-YYYYMMDD-XXXXXX`
+- `SIG-YYYYMMDD-XXXXXX`
+
+指纹字段：
+
+1. `target_user`
+2. `context`
+3. `problem_or_desire`
+4. `wedge`
+5. 可选 `market_scope.country`
+6. 可选 `market_scope.region`
+7. 可选 `market_scope.primary_channel`
+
+标题、翻译、总分和证据增删不改变 ID。国家或主渠道真正不同时应生成不同 ID。旧记录没有 `market_scope` 时继续使用四字段身份，保持兼容。
+
+必须先执行 `manage_state.py prepare` 分配 ID，再写报告和评分。不要手工编造 ID。
+
+## 6. 状态与升级
+
+当前视图：
+
+- `state/opportunities.jsonl`
+- `state/signals.jsonl`
+
+追加历史：
+
+- `state/opportunity-observations.jsonl`
+- `state/signal-observations.jsonl`
+
+同一 `run_id + kind + fingerprint` 重放不重复写事件；`occurrences` 按唯一日期计数。
+
+R 级补齐本地直接付款和独立来源后，通过 `manage_state.py promote` 升级：
+
+```text
+SIG.promoted_to -> OPP ID
+OPP.promoted_from -> SIG ID
+```
+
+升级在同一文件锁内写入两侧当前视图与观察事件。已升级 SIG 重放返回原 `OPP`。
+
+## 7. 兼容与失败策略
+
+- 阶段版本不一致时失败关闭，不静默混用。
+- 缺六项硬门槛时写拒绝原因，不猜测补齐。
+- 报告校验失败时不写机会状态。
+- 状态文件损坏时明确报错，不自动覆盖。
+- 运行数据永远写入 `RADAR_HOME`，不写入 Skill 目录。

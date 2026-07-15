@@ -29,6 +29,11 @@ def opportunity_block(
     return f"""### {opportunity_id}｜测试机会 {index}
 
 - 类型：老产品新形态
+- 证据等级：A
+- 付款者：小微企业主
+- 购买触发：每周重复处理同类任务超过两小时
+- 付费对标：已有同类 SaaS 按月收费
+- 获客渠道：目标行业社区
 - 综合分：78
 - 首笔收入潜力：8
 - 长期规模潜力：8
@@ -112,14 +117,50 @@ def opportunity_block(
 """
 
 
+def quick_idea_block(index: int) -> str:
+    return f"""### OPP-20260714-B2C3{index:02X}｜快速点子 {index}
+
+- 证据等级：B
+- 付款者：小微企业主
+- 付费对标：现有 SaaS 每月 29 美元
+- 需求证据：用户投诉现有工具太贵并用表格替代
+- 当前替代方案：表格与人工外包
+- 产品缺口：只完成一个高频步骤且支持中文
+- 获客渠道：目标行业微信群与论坛
+- 30 天 MVP：Web 工具完成单任务闭环
+"""
+
+
+def regional_signal_block(index: int) -> str:
+    return f"""### SIG-20260714-C3D4{index:02X}｜区域迁移点子 {index}
+
+- 证据等级：R
+- 来源市场：美国
+- 付费对标：现有 SaaS 每月 29 美元
+- 目标地区：印度尼西亚
+- 可能付款者：当地小微企业主
+- 本地差异：印尼语、WhatsApp 与本地支付
+- 最小产品：WhatsApp 内完成一次核心任务
+- 迁移理由：同类任务已在来源市场持续付费
+- 缺失证据：当地直接付款与重复投诉
+- 升级条件：补齐本地付款证据与两个独立来源
+"""
+
+
 def valid_report(count: int = 3, *, low_count_reason: bool = False) -> str:
-    reason = "\n- 少于 3 个的原因：当日证据不足，不凑数。" if low_count_reason else ""
+    reason = "\n- 深度机会不足 3 个的原因：当日 A 级证据不足，不凑数。" if low_count_reason else ""
     blocks = "\n".join(opportunity_block(i + 1) for i in range(count))
+    quick = quick_idea_block(1)
+    regional = regional_signal_block(1)
     return f"""# AI 创业机会雷达日报｜2026-07-14
 
-## 今日结论
+## 今日摘要
 
 - 深度机会数量：{count}{reason}
+- 已验证快速点子数量：1
+- 快速点子不足 20 个的原因：测试报告只保留一个完整样例，不使用弱证据凑数。
+- 区域迁移创意数量：1
+- 区域创意不足 30 个的原因：测试报告只保留一个完整样例，不把迁移假设写成已验证机会。
 
 ## 数据源覆盖
 
@@ -140,25 +181,21 @@ def valid_report(count: int = 3, *, low_count_reason: bool = False) -> str:
 - TikHub 免费额度不适用成本 USD：0.049000
 - TikHub 实际账单：未执行；执行后以 TikHub 使用日志为准
 
-## 综合推荐排名
-
-1. 测试机会
-
-## 分类视图
-
-- 老产品新形态
-
-## 深度机会
+## 一、深度机会
 
 {blocks}
 
-## 早期观察池
+## 二、已验证快速点子
 
-- 一个早期信号
+{quick}
 
-## 历史变化
+## 三、区域迁移创意池
 
-- 首次运行，无历史变化
+{regional}
+
+## 四、今日升级与降级
+
+- 今日无 SIG 升级或 OPP 降级。
 
 ## 方法与局限
 

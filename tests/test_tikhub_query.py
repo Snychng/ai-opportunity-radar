@@ -66,7 +66,7 @@ def pricing_rows() -> list[dict[str, object]]:
 
 def sample_plan() -> dict[str, object]:
     return {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "provider": "tikhub",
         "run_id": RUN_ID,
         "as_of": "2026-07-14",

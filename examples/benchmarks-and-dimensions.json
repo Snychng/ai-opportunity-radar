@@ -1,0 +1,118 @@
+{
+  "run_id": "RUN-20260715-ABCDEF1234",
+  "as_of": "2026-07-15",
+  "benchmarks": [
+    {
+      "product": "示例：现有 AI 客服 SaaS",
+      "source_market": "美国",
+      "payer": "独立站商家",
+      "price": "每月 49 美元",
+      "job": "重复回复售前和售后问题",
+      "problem_or_desire": "降低重复客服的人力成本",
+      "current_alternative": "人工客服与通用客服 SaaS",
+      "product_gap": "价格高、配置复杂、本地语言质量不稳定",
+      "acquisition_channel": "Shopify 商家社区",
+      "mvp_days": 21,
+      "mvp_scope": "导入 FAQ 并自动完成一次回复",
+      "payment_signals": [
+        {
+          "type": "subscription",
+          "region": "美国",
+          "url": "https://vendor.example/pricing"
+        }
+      ],
+      "demand_signals": [
+        {
+          "type": "complaint",
+          "url": "https://community.example/customer-support-cost"
+        }
+      ],
+      "evidence": [
+        {
+          "source": "vendor-pricing",
+          "url": "https://vendor.example/pricing"
+        },
+        {
+          "source": "merchant-community",
+          "url": "https://community.example/customer-support-cost"
+        }
+      ]
+    },
+    {
+      "product": "示例：人工客服外包服务",
+      "source_market": "美国",
+      "payer": "小型电商品牌",
+      "price": "每月 500 美元起",
+      "job": "在高峰期补充客服人力",
+      "problem_or_desire": "用更低成本覆盖夜间和大促咨询",
+      "current_alternative": "兼职客服与客服外包公司",
+      "product_gap": "交付慢、按月起订、培训成本高",
+      "acquisition_channel": "电商品牌主社群",
+      "mvp_days": 14,
+      "mvp_scope": "在一个消息渠道完成 FAQ 分流和回复草稿",
+      "payment_signals": [
+        {
+          "type": "pricing",
+          "region": "美国",
+          "url": "https://agency.example/pricing"
+        }
+      ],
+      "demand_signals": [
+        {
+          "type": "outsourcing",
+          "url": "https://jobs.example/customer-support-contract"
+        }
+      ],
+      "evidence": [
+        {
+          "source": "agency-pricing",
+          "url": "https://agency.example/pricing"
+        },
+        {
+          "source": "job-board",
+          "url": "https://jobs.example/customer-support-contract"
+        }
+      ]
+    }
+  ],
+  "dimensions": {
+    "segments": [
+      "Shopify 独立站商家",
+      "社交电商小团队"
+    ],
+    "triggers": [
+      "大促前咨询量突然增加",
+      "夜间无人值守但仍有订单咨询"
+    ],
+    "forms": [
+      "WhatsApp 内主动生成回复",
+      "浏览器侧边栏读取订单并生成回复",
+      "语音留言自动转成可执行客服任务"
+    ],
+    "regions": [
+      {
+        "country": "美国",
+        "region": "北美",
+        "language": "英语",
+        "localization_gap": "先验证更窄人群和更轻交付",
+        "transfer_reason": "来源市场已有直接付费"
+      },
+      {
+        "country": "印度尼西亚",
+        "region": "东南亚",
+        "language": "印尼语",
+        "localization_gap": "印尼语、WhatsApp 与本地支付工作流",
+        "transfer_reason": "当地社交电商活跃，国际客服产品本地化不足"
+      }
+    ],
+    "channels": [
+      "Shopify 商家社区",
+      "WhatsApp 服务商合作渠道"
+    ],
+    "offers": [
+      "每月订阅",
+      "按成功回复量计费",
+      "工具加轻量人工审核"
+    ]
+  }
+}

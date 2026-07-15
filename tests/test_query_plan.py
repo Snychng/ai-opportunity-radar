@@ -65,6 +65,11 @@ class QueryPlanTests(unittest.TestCase):
 
         self.assertEqual(plan["allowed_sensitive_domains"], ["恋爱约会与情感陪伴", "成人内容", "游戏虚拟角色与社交娱乐"])
         self.assertEqual({track["id"] for track in plan["opportunity_tracks"]}, {"needle", "new_form", "regional_gap"})
+        self.assertEqual(plan["output_contract"]["raw_candidates"], [100, 200])
+        self.assertEqual(plan["output_contract"]["validated_quick_ideas"], [20, 40])
+        self.assertEqual(plan["output_contract"]["regional_migration_signals"], [30, 80])
+        self.assertIn("paid_benchmarks", plan["stage_contract"])
+        self.assertIn("tiered_candidates", plan["stage_contract"])
 
     def test_exports_internal_community_plan_without_skill_chaining(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,10 +121,10 @@ class QueryPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / "config").mkdir()
-            (home / "config" / "preferences.json").write_text(json.dumps({"timezone": "UTC", "watchlist_max": 12}))
+            (home / "config" / "preferences.json").write_text(json.dumps({"timezone": "UTC", "validated_quick_ideas_per_day": [10, 25]}))
             plan = build_plan(date(2026, 7, 14), home)
             self.assertEqual(plan["timezone"], "UTC")
-            self.assertEqual(plan["output_contract"]["watchlist_max"], 12)
+            self.assertEqual(plan["output_contract"]["validated_quick_ideas"], [10, 25])
 
             (home / "config" / "preferences.json").write_text(json.dumps({"platform_expansion_enabled": True}))
             with self.assertRaisesRegex(ValueError, "一期只允许"):

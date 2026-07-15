@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI 创业机会雷达 V2 的共享数据契约。"""
+"""AI 创业机会雷达 V3 的共享数据契约。"""
 
 from __future__ import annotations
 
@@ -9,15 +9,17 @@ import re
 import unicodedata
 from datetime import date, datetime
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 
-SCHEMA_VERSION = "2.0"
-QUERY_PLAN_VERSION = "2.0"
-SCORING_VERSION = "2.0"
+SCHEMA_VERSION = "3.0"
+QUERY_PLAN_VERSION = "3.0"
+SCORING_VERSION = "3.0"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 RUN_ID_RE = re.compile(r"^RUN-\d{8}-[A-F0-9]{10}$")
 RECORD_ID_RE = re.compile(r"^(OPP|SIG)-\d{8}-[A-F0-9]{6}$")
+BENCHMARK_ID_RE = re.compile(r"^BENCH-[A-F0-9]{8}$")
 
 
 class ContractError(ValueError):
@@ -43,13 +45,44 @@ def normalize_identity(value: Any) -> str:
 
 
 def fingerprint_record(record: dict[str, Any]) -> str:
-    """用用户、场景、需求和切入口生成稳定指纹。"""
+    """用业务身份生成稳定指纹，并在存在时区分国家和主渠道。"""
     fields = ("target_user", "context", "problem_or_desire", "wedge")
     missing = [field for field in fields if not normalize_identity(record.get(field))]
     if missing:
         raise ContractError(f"生成指纹缺少字段：{', '.join(missing)}")
-    normalized = "|".join(normalize_identity(record[field]) for field in fields)
+    identity_parts = [normalize_identity(record[field]) for field in fields]
+    market_scope = record.get("market_scope")
+    if isinstance(market_scope, dict):
+        for field in ("country", "region", "primary_channel"):
+            value = normalize_identity(market_scope.get(field))
+            if value:
+                identity_parts.append(f"{field}:{value}")
+    normalized = "|".join(identity_parts)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
+
+
+def make_benchmark_id(benchmark: dict[str, Any]) -> str:
+    """根据付费产品、来源市场、付款者与价格生成稳定 BENCH ID。"""
+    if not isinstance(benchmark, dict):
+        raise ContractError("付费对标必须是对象")
+    identity = {
+        "product": normalize_identity(benchmark.get("product") or benchmark.get("title")),
+        "source_market": normalize_identity(benchmark.get("source_market")),
+        "payer": normalize_identity(benchmark.get("payer")),
+        "price": normalize_identity(benchmark.get("price") or benchmark.get("current_spend")),
+    }
+    missing = [field for field, value in identity.items() if field != "price" and not value]
+    if missing:
+        raise ContractError(f"生成 BENCH ID 缺少字段：{', '.join(missing)}")
+    return f"BENCH-{canonical_sha256(identity)[:8].upper()}"
+
+
+def validate_benchmark_id(benchmark_id: Any) -> str:
+    """校验付费对标 ID。"""
+    value = str(benchmark_id or "").strip()
+    if not BENCHMARK_ID_RE.fullmatch(value):
+        raise ContractError(f"无效 BENCH ID：{value or '<empty>'}")
+    return value
 
 
 def stable_record_id(kind: str, observed_on: date, fingerprint: str) -> str:
@@ -113,7 +146,7 @@ def validate_run_as_of(run_id: Any, as_of: Any) -> tuple[str, str]:
 
 
 def evidence_independent_sources(evidence: Any) -> set[str]:
-    """按来源与容器粗略计算独立证据源。"""
+    """优先按来源与容器计算独立证据源，避免同站多链接虚增。"""
     result: set[str] = set()
     if not isinstance(evidence, list):
         return result
@@ -123,7 +156,11 @@ def evidence_independent_sources(evidence: Any) -> set[str]:
         source = normalize_identity(item.get("source"))
         container = normalize_identity(item.get("container"))
         url = str(item.get("url") or "").strip()
-        identity = "|".join(part for part in (source, container, url) if part)
+        hostname = normalize_identity(urlparse(url).hostname) if url else ""
+        if source:
+            identity = "|".join(part for part in (source, container) if part)
+        else:
+            identity = "|".join(part for part in (hostname, container) if part) or url
         if identity:
             result.add(identity)
     return result

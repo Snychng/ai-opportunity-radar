@@ -36,7 +36,7 @@ def _document(
     stage: str = "search_discovery",
 ) -> dict:
     return {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
         "run_id": RUN_ID,
         "as_of": "2026-07-14",
         "stage": stage,

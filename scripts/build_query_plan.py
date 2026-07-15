@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 AI 创业机会雷达 V2 的确定性查询计划。"""
+"""生成 AI 创业机会雷达 V3 的确定性查询计划。"""
 
 from __future__ import annotations
 
@@ -100,19 +100,19 @@ FOCUS_REGIONS: tuple[dict[str, Any], ...] = (
 )
 
 GLOBAL_CONSUMER_QUERIES = (
-    "wish there was an app need a tool still doing manually",
-    "AI companion social app complaint missing feature would pay",
-    "personalized voice camera app frustrating workaround",
+    "paid subscription pricing cancelled switched workaround AI app",
+    "hired freelancer paying monthly wish AI app missing feature",
+    "revenue purchase paid creator tool complaint too expensive",
 )
 GLOBAL_BUSINESS_QUERIES = (
-    "small business manual workflow spreadsheet missing integration",
-    "paid tool too expensive hiring freelancer repetitive task",
-    "AI agent developer tool complaint evaluation workflow",
+    "small business paying software manual spreadsheet missing integration",
+    "hiring outsourcing repetitive task paid tool too expensive switched",
+    "AI SaaS pricing subscription customer complaint workflow",
 )
 CHINA_QUERIES = (
-    "有没有工具 自动处理 一直手工 太贵 替代方案",
-    "AI 应用 不支持中文 难用 缺少功能 愿意付费",
-    "小店 工作流 表格凑合 复制粘贴 求推荐",
+    "付费 订阅 续费 取消 太贵 替代 AI 工具",
+    "外包 招聘 每月花费 手工流程 AI 产品",
+    "小店 付费软件 表格凑合 复制粘贴 更换工具",
 )
 
 
@@ -234,7 +234,7 @@ def _tikhub_plan(
 
 
 def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None) -> dict[str, Any]:
-    """构建独立、可审计且跨阶段共享 run_id 的 V2 计划。"""
+    """构建独立、可审计且跨阶段共享 run_id 的 V3 计划。"""
     home = home.expanduser().resolve()
     preferences = _load_preferences(home)
     platform_phase = preferences.get("platform_phase", PHASE_ONE_ID)
@@ -277,13 +277,32 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None)
             {"id": "new_form", "name": "老产品新形态", "target": 2},
             {"id": "regional_gap", "name": "区域错配型机会", "target": 1},
         ],
+        "query_priority": [
+            "付款、营收、订阅、定价、招聘、外包",
+            "取消、切换、投诉、手工表格与替代方案",
+            "目标地区的语言、支付、渠道与工作流差异",
+            "泛讨论仅作补充，不单独进入正式机会",
+        ],
+        "idea_expansion_axes": ["细分人群", "购买触发", "AI 新形态", "地区与语言", "渠道嵌入", "价格与交付"],
         "allowed_sensitive_domains": ["恋爱约会与情感陪伴", "成人内容", "游戏虚拟角色与社交娱乐"],
         "forbidden_sensitive_domains": ["医疗诊断治疗", "金融投资建议", "法律意见", "儿童敏感产品"],
         "retrieval_plans": {"community": community, "tikhub": tikhub},
         "output_contract": {
+            "raw_candidates": preferences.get("raw_candidates_per_day", [100, 200]),
+            "validated_quick_ideas": preferences.get("validated_quick_ideas_per_day", [20, 40]),
+            "regional_migration_signals": preferences.get("regional_migration_signals_per_day", [30, 80]),
             "deep_opportunities": preferences.get("deep_opportunities_per_day", [3, 5]),
-            "watchlist_max": preferences.get("watchlist_max", 20),
             "stable_id_format": "OPP-YYYYMMDD-XXXXXX",
+            "signal_id_format": "SIG-YYYYMMDD-XXXXXX",
+            "benchmark_id_format": "BENCH-XXXXXXXX",
+            "formal_opportunity_hard_gates": [
+                "existing_paid_market",
+                "clear_payer",
+                "current_alternative",
+                "concrete_product_gap",
+                "clear_acquisition_channel",
+                "mvp_within_30_days",
+            ],
             "preserve_original_quote": True,
             "translate_to_chinese": True,
             "report_source_health": True,
@@ -293,6 +312,9 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None)
             "community_normalized",
             "tikhub_search_results",
             "tikhub_normalized",
+            "paid_benchmarks",
+            "expanded_candidates",
+            "tiered_candidates",
             "candidates_with_ids",
             "scored_candidates",
             "validated_report",
@@ -307,7 +329,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="生成 AI 创业机会雷达 V2 查询计划")
+    parser = argparse.ArgumentParser(description="生成 AI 创业机会雷达 V3 查询计划")
     parser.add_argument("--date", default=beijing_today().isoformat(), help="北京时间截止日期，YYYY-MM-DD")
     parser.add_argument("--home", type=Path, default=DEFAULT_HOME, help="报告与状态根目录")
     focus_group = parser.add_mutually_exclusive_group()

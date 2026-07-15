@@ -29,7 +29,7 @@ class CommunityQueryTests(unittest.TestCase):
             custom_focus="本地语言社交产品",
         )
 
-        self.assertEqual(plan["schema_version"], "2.0")
+        self.assertEqual(plan["schema_version"], "3.0")
         self.assertEqual(plan["run_id"], RUN_ID)
         self.assertEqual(plan["window"]["range_from"], "2026-06-15")
         self.assertEqual(plan["window"]["lookback_days"], 30)
