@@ -30,6 +30,7 @@ MAX_REQUESTS = 100
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_BATCH_RESULT_BYTES = 32 * 1024 * 1024
 SENSITIVE_KEY_PARTS = ("authorization", "cookie", "token", "api_key", "apikey", "secret", "password")
+EVIDENCE_GAP_PROMOTIONS = {"rejected_to_b", "rejected_to_r", "r_to_b", "b_to_a", "confirm_rejection"}
 
 
 class PlanError(ValueError):
@@ -311,6 +312,67 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
     }
 
 
+def build_evidence_gap_plan(
+    *,
+    as_of: str,
+    run_id: str,
+    gaps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """把已经识别的候选证据缺口转换为可审计的定向搜索计划。"""
+    if not isinstance(gaps, list) or not 1 <= len(gaps) <= 10:
+        raise PlanError("付费补证计划每次必须包含 1 到 10 个证据缺口")
+    groups: list[dict[str, Any]] = []
+    gap_metadata: dict[str, dict[str, str]] = {}
+    for index, gap in enumerate(gaps, start=1):
+        if not isinstance(gap, dict):
+            raise PlanError(f"第 {index} 个证据缺口必须是 JSON 对象")
+        candidate_id = str(gap.get("candidate_id") or "").strip()
+        missing_gate = str(gap.get("missing_gate") or "").strip()
+        target_region = str(gap.get("target_region") or "").strip()
+        expected_promotion = str(gap.get("expected_promotion") or "").strip()
+        keyword = str(gap.get("keyword") or "").strip()
+        sources = gap.get("sources")
+        if not re.fullmatch(r"(?:OPP|SIG|CAND)-[A-Za-z0-9._-]{3,64}", candidate_id):
+            raise PlanError(f"第 {index} 个证据缺口 candidate_id 不合法")
+        for label, value in (("missing_gate", missing_gate), ("target_region", target_region)):
+            if not 1 <= len(value) <= 200:
+                raise PlanError(f"第 {index} 个证据缺口 {label} 必须包含 1 到 200 个字符")
+        if expected_promotion not in EVIDENCE_GAP_PROMOTIONS:
+            raise PlanError(
+                f"第 {index} 个证据缺口 expected_promotion 必须为：{', '.join(sorted(EVIDENCE_GAP_PROMOTIONS))}"
+            )
+        if not 1 <= len(keyword) <= 100:
+            raise PlanError(f"第 {index} 个证据缺口 keyword 必须包含 1 到 100 个字符")
+        if not isinstance(sources, list) or not 1 <= len(sources) <= 3:
+            raise PlanError(f"第 {index} 个证据缺口 sources 必须包含 1 到 3 个来源")
+        normalized_sources = [str(source).strip().lower() for source in sources]
+        if any(not source for source in normalized_sources) or len(set(normalized_sources)) != len(normalized_sources):
+            raise PlanError(f"第 {index} 个证据缺口 sources 不能包含空值或重复来源")
+        group_id = _slug(f"gap-{candidate_id}-{index}")
+        groups.append({"id": group_id, "keyword": keyword, "sources": normalized_sources})
+        gap_metadata[group_id] = {
+            "candidate_id": candidate_id,
+            "missing_gate": missing_gate,
+            "target_region": target_region,
+            "expected_promotion": expected_promotion,
+        }
+
+    plan = build_search_plan(as_of=as_of, run_id=run_id, query_groups=groups)
+    per_source: dict[str, int] = defaultdict(int)
+    for item in plan["requests"]:
+        per_source[item["source"]] += 1
+    over_limit = sorted(source for source, count in per_source.items() if count > 3)
+    if over_limit:
+        raise PlanError(f"单次补证计划每个来源最多 3 个请求；请先执行并评估产出：{', '.join(over_limit)}")
+    plan["stage"] = "evidence_gap_verification"
+    plan["evidence_gaps"] = list(gap_metadata.values())
+    for item in plan["requests"]:
+        item["evidence_gap"] = gap_metadata[item["query_group"]]
+    plan["cost_policy"]["purpose"] = "candidate_gate_verification_only"
+    plan["cost_policy"]["stop_after_requests_without_yield"] = 3
+    return plan
+
+
 def _required_identifier(identifiers: dict[str, Any], *names: str) -> str:
     for name in names:
         value = identifiers.get(name)
@@ -528,16 +590,23 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
     if len(requests) > MAX_REQUESTS:
         raise PlanError(f"单个计划最多包含 {MAX_REQUESTS} 个请求")
     stage = str(plan.get("stage") or "search_discovery")
-    if stage not in {"search_discovery", "comment_deep_dive"}:
+    if stage not in {"search_discovery", "evidence_gap_verification", "comment_deep_dive"}:
         raise PlanError(f"不支持的 TikHub 计划阶段：{stage}")
     if stage == "comment_deep_dive":
         if plan.get("parent_search_run_id") != plan.get("run_id"):
             raise PlanError("评论深挖计划缺少合法 parent_search_run_id")
         if len(requests) > 10 or len(requests) % 2 != 0:
             raise PlanError("评论深挖计划应为 1 到 5 个帖子各两次请求")
+    if stage == "evidence_gap_verification":
+        cost_policy = plan.get("cost_policy")
+        if not isinstance(cost_policy, dict) or cost_policy.get("purpose") != "candidate_gate_verification_only":
+            raise PlanError("定向补证计划 cost_policy.purpose 不合法")
+        if cost_policy.get("stop_after_requests_without_yield") != 3:
+            raise PlanError("定向补证计划必须在连续 3 个请求无产出后停止")
 
     catalog = normalize_pricing_rows(pricing_rows)
     seen_ids: set[str] = set()
+    source_request_counts: dict[str, int] = defaultdict(int)
     for index, item in enumerate(requests, start=1):
         if not isinstance(item, dict):
             raise PlanError(f"第 {index} 个请求必须是 JSON 对象")
@@ -550,7 +619,8 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
 
         endpoint = str(item.get("endpoint", "")).strip()
         source = str(item.get("source", "")).lower()
-        if stage == "search_discovery":
+        source_request_counts[source] += 1
+        if stage in {"search_discovery", "evidence_gap_verification"}:
             profile = RADAR_ENDPOINTS.get(source)
             if profile is None:
                 raise PlanError(f"不支持的 TikHub 雷达来源：{source}")
@@ -577,7 +647,7 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
             if key not in profile["allowed_params"]:
                 raise PlanError(f"请求 {request_id} 包含未允许参数：{key}")
             _validate_scalar(value, location=f"请求 {request_id} 参数 {key}")
-        if stage == "search_discovery":
+        if stage in {"search_discovery", "evidence_gap_verification"}:
             for key, expected in profile["defaults"].items():
                 actual = params.get(key, object())
                 if type(actual) is not type(expected) or actual != expected:
@@ -585,6 +655,17 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
             keyword = params.get(profile["keyword_param"])
             if not isinstance(keyword, str) or not 1 <= len(keyword.strip()) <= 100:
                 raise PlanError(f"请求 {request_id} 缺少合法关键词")
+            if stage == "evidence_gap_verification":
+                gap = item.get("evidence_gap")
+                if not isinstance(gap, dict):
+                    raise PlanError(f"请求 {request_id} 缺少 evidence_gap")
+                required_gap_fields = ("candidate_id", "missing_gate", "target_region", "expected_promotion")
+                if any(not str(gap.get(field) or "").strip() for field in required_gap_fields):
+                    raise PlanError(f"请求 {request_id} 的 evidence_gap 字段不完整")
+                if not re.fullmatch(r"(?:OPP|SIG|CAND)-[A-Za-z0-9._-]{3,64}", str(gap["candidate_id"])):
+                    raise PlanError(f"请求 {request_id} 的 evidence_gap.candidate_id 不合法")
+                if str(gap["expected_promotion"]) not in EVIDENCE_GAP_PROMOTIONS:
+                    raise PlanError(f"请求 {request_id} 的 evidence_gap.expected_promotion 不合法")
         else:
             for key in profile["required_all"]:
                 value = params.get(key)
@@ -597,6 +678,10 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
                     for key in group
                 ):
                     raise PlanError(f"请求 {request_id} 至少需要参数：{' 或 '.join(group)}")
+    if stage == "evidence_gap_verification":
+        over_limit = sorted(source for source, count in source_request_counts.items() if count > 3)
+        if over_limit:
+            raise PlanError(f"定向补证计划每个来源最多 3 个请求：{', '.join(over_limit)}")
     return catalog
 
 
@@ -1287,6 +1372,11 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
     comments_parser.add_argument("--parent-search-run-id", required=True, help="来源搜索运行 ID")
     comments_parser.add_argument("--input", type=Path, required=True, help="候选数组或包含 selections 数组的 JSON")
     comments_parser.add_argument("--output", type=Path, required=True, help="评论深挖计划 JSON")
+    gaps_parser = subparsers.add_parser("build-gaps", help="从明确候选证据缺口生成定向付费补证计划")
+    gaps_parser.add_argument("--date", dest="as_of", required=True, help="计划日期 YYYY-MM-DD")
+    gaps_parser.add_argument("--run-id", required=True, help="本次雷达共享的运行 ID")
+    gaps_parser.add_argument("--input", type=Path, required=True, help="缺口数组或包含 gaps 数组的 JSON")
+    gaps_parser.add_argument("--output", type=Path, required=True, help="定向补证计划 JSON")
     estimate_parser = subparsers.add_parser("estimate", help="只读取实时价格并估算，不调用付费接口")
     _add_common_arguments(estimate_parser)
     estimate_parser.add_argument("--pricing-file", type=Path, help="仅供离线估价/测试；省略时读取控制台实时价格")
@@ -1309,6 +1399,15 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
             )
             _write_json(args.output, payload)
             print(f"已生成评论深挖计划：{len(payload['selected_items'])} 个帖子，{len(payload['requests'])} 次请求。")
+            return 0
+        if args.command == "build-gaps":
+            raw_gaps = _read_json(args.input)
+            gaps = raw_gaps.get("gaps") if isinstance(raw_gaps, dict) else raw_gaps
+            if not isinstance(gaps, list):
+                raise PlanError("证据缺口输入必须是数组，或包含 gaps 数组")
+            payload = build_evidence_gap_plan(as_of=args.as_of, run_id=args.run_id, gaps=gaps)
+            _write_json(args.output, payload)
+            print(f"已生成定向补证计划：{len(gaps)} 个缺口，{len(payload['requests'])} 次请求。")
             return 0
         plan = _load_plan(args.plan)
         token = ""

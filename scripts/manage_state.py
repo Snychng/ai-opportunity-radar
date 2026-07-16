@@ -51,6 +51,10 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "validated_quick_ideas_per_day": [20, 40],
     "regional_migration_signals_per_day": [30, 80],
     "deep_opportunities_per_day": [3, 5],
+    "display_full_qualified_ledger": True,
+    "near_miss_display_max": 20,
+    "paid_discovery_budget_share_max": 0.2,
+    "paid_no_yield_stop_requests": 3,
     "allowed_sensitive_domains": [
         "dating_relationship_companionship",
         "adult_content",

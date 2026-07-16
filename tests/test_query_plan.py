@@ -69,7 +69,17 @@ class QueryPlanTests(unittest.TestCase):
         self.assertEqual(plan["output_contract"]["validated_quick_ideas"], [20, 40])
         self.assertEqual(plan["output_contract"]["regional_migration_signals"], [30, 80])
         self.assertIn("paid_benchmarks", plan["stage_contract"])
+        self.assertIn("evidence_gap_plan", plan["stage_contract"])
+        self.assertIn("tikhub_gap_results", plan["stage_contract"])
         self.assertIn("tiered_candidates", plan["stage_contract"])
+        self.assertIn("full_result_digest", plan["stage_contract"])
+        self.assertTrue(plan["output_contract"]["display_full_qualified_ledger"])
+        self.assertEqual(plan["output_contract"]["near_miss_display_max"], 20)
+        self.assertEqual(plan["paid_retrieval_policy"]["strategy"], "free_discovery_then_paid_gap_verification")
+        self.assertEqual(
+            plan["paid_retrieval_policy"]["stop_after_paid_requests_without_new_benchmark_or_qualified_idea"],
+            3,
+        )
 
     def test_exports_internal_community_plan_without_skill_chaining(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

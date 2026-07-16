@@ -124,6 +124,9 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list):
         raise FilterError("输入必须包含 candidates 数组")
+    benchmarks = payload.get("benchmarks") or []
+    if not isinstance(benchmarks, list) or not all(isinstance(item, dict) for item in benchmarks):
+        raise FilterError("benchmarks 必须是对象数组")
 
     buckets: dict[str, list[dict[str, Any]]] = {"A": [], "B": [], "R": [], "rejected": []}
     for candidate in candidates:
@@ -149,6 +152,7 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
     overflow_b = buckets["B"][QUICK_IDEA_MAX:]
     overflow_r = buckets["R"][REGIONAL_SIGNAL_MAX:]
     counts = {
+        "benchmark_count": len(benchmarks),
         "raw": len(candidates),
         "tier_a": len(buckets["A"]),
         "tier_b": len(emitted_b),
@@ -172,6 +176,7 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "run_id": payload.get("run_id"),
         "as_of": payload.get("as_of"),
+        "benchmarks": deepcopy(benchmarks),
         "policy": {"hard_gates": list(HARD_GATES), "tiers": ["A", "B", "R"]},
         "summary": counts,
         "warnings": warnings,

@@ -82,20 +82,18 @@ python3 "$SKILL_DIR/scripts/build_query_plan.py" \
 
 定向扫描把用户范围写入 UTF-8 `focus.txt`，使用 `--focus-file`；不要把用户原文拼进 shell。所有阶段必须共享一个 `run_id`。
 
-### 2. 来源预检、估价与证据采集
+### 2. 先复用旧数据，再运行免费发现
+
+开始任何付费请求前，检查同日及近 30 日 `raw/`、历史状态和已保存证据。已有可核验 URL、原文和日期的证据直接复用；不得为了“流程完整”重复购买相同平台、关键词和帖子。
 
 ```bash
 python3 "$SKILL_DIR/scripts/community_query.py" doctor --json
 python3 "$SKILL_DIR/scripts/community_query.py" run \
   --plan "$RADAR_HOME/raw/YYYY-MM-DD/community-plan.json" \
   --output "$RADAR_HOME/raw/YYYY-MM-DD/community-normalized.json"
-
-python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
-  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-plan.json" \
-  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-cost-estimate.json"
 ```
 
-TikHub 执行前必须报告预计 USD、RMB、免费额度适用与不适用成本。API Key 只从 `TIKHUB_API_KEY` 读取；必须显式给 `--max-cost-usd`。缺密钥、实时价格、余额或预算时不得调用付费端点。
+使用公开 Web、已有社区结果和历史证据，先建立第一批 BENCH。免费证据尚未整理成候选前，不执行广泛 TikHub 搜索。
 
 查询优先级：
 
@@ -106,7 +104,7 @@ TikHub 执行前必须报告预计 USD、RMB、免费额度适用与不适用成
 
 每条证据保留来源、直达 URL、简短原文与中文翻译、语言、发布时间、日期置信度、采集时间、访问方式、互动量和信号类型。无互动量写“未知”，不写 0。
 
-### 3. 建立付费对标
+### 3. 建立初步付费对标
 
 先把已核验的付费产品整理为 `benchmarks.json`。每个对标至少包含：
 
@@ -152,7 +150,33 @@ python3 "$SKILL_DIR/scripts/filter_ideas.py" \
 
 缺一项就进入拒绝池，不用综合分补偿。`R` 级不能进入深度评分；先保存为 `SIG`。
 
-### 6. 只对 A 级候选深度评分
+### 6. 只为明确证据缺口付费
+
+先读取初步过滤结果，列出需要付费补证的具体目标：候选 ID、缺失门槛、目标地区、目标来源，以及新增证据可能把它从 rejected/R/B 升到哪一级。不能用“再看看有没有好点子”作为付费理由。
+
+把目标写入 `evidence-gaps.json`，每项必须包含 `candidate_id`、`missing_gate`、`target_region`、`expected_promotion`、本地语言 `keyword` 和 1–3 个 `sources`。需要 TikHub 时，针对这些缺口生成新的定向计划；步骤 1 导出的通用发现计划只作为查询草稿，不能直接执行：
+
+```bash
+python3 "$SKILL_DIR/scripts/tikhub_query.py" build-gaps \
+  --date YYYY-MM-DD \
+  --run-id RUN-YYYYMMDD-XXXXXXXXXX \
+  --input "$RADAR_HOME/raw/YYYY-MM-DD/evidence-gaps.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-plan.json"
+```
+
+然后估价：
+
+```bash
+python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
+  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-plan.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-cost-estimate.json"
+```
+
+执行前必须报告预计 USD、RMB、免费额度适用与不适用成本。API Key 只从 `TIKHUB_API_KEY` 读取，必须显式给 `--max-cost-usd`。缺密钥、实时价格、余额、预算或目标证据缺口时不得调用付费端点。
+
+付费发现最多使用总预算的 20%，其余预算只用于验证高潜候选。连续 3 个付费请求没有新增 BENCH、A/B/R 或关键门槛证据时，停止该来源。执行后合并证据并重新运行步骤 3–5；不得只保存原始响应而不形成结论或拒绝理由。
+
+### 7. 只对 A 级候选深度评分
 
 为 A 级候选补齐七项主评分与四项辅助评分，再先分配稳定 ID、后评分：
 
@@ -171,7 +195,23 @@ python3 "$SKILL_DIR/scripts/score_candidates.py" \
 
 分别用 `prepare --kind opportunity` 给 B 级快速点子分配 `OPP`，用 `prepare --kind signal` 给 R 级分配 `SIG`。
 
-### 7. 写三层日报并校验
+### 8. 先生成完整结论清单
+
+任何日报写作前，确定性生成完整清单；重复的 `--execution`、`--evidence`、`--research` 参数可以加入所有实际文件，不存在的类型直接省略：
+
+```bash
+python3 "$SKILL_DIR/scripts/build_result_digest.py" \
+  --tiered "$RADAR_HOME/raw/YYYY-MM-DD/tiered-candidates.json" \
+  --execution "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-results.json" \
+  --evidence "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-normalized-search.json" \
+  --research "$RADAR_HOME/raw/YYYY-MM-DD/last30days-small-business.json" \
+  --output "$RADAR_HOME/reports/daily/YYYY-MM-DD-full-results.md" \
+  --metrics-output "$RADAR_HOME/raw/YYYY-MM-DD/result-yield.json"
+```
+
+清单必须包含全部 A/B/R、全部 overflow、最多 20 个最接近合格的拒绝项、证据利用率、单个合格结论成本和来源产出。它是面向用户的主结果，不是内部调试文件。
+
+### 9. 写三层日报并校验
 
 按 [report-template.md](references/report-template.md) 写入：
 
@@ -184,9 +224,9 @@ python3 "$SKILL_DIR/scripts/validate_report.py" \
   "$RADAR_HOME/reports/daily/YYYY-MM-DD.md"
 ```
 
-修复所有 `ERROR`。验证器检查结构和证据层级，不证明市场规模、法律合规或引用真实性。
+日报必须链接完整结论清单，并填写“接近合格但被拒绝”和“费用产出”。修复所有 `ERROR`。验证器检查结构、数量和费用转化一致性，不证明市场规模、法律合规或引用真实性。
 
-### 8. 校验后提交状态
+### 10. 校验后提交状态
 
 按同一 `run_id` 分别提交 OPP 与 SIG：
 
@@ -202,9 +242,11 @@ python3 "$SKILL_DIR/scripts/manage_state.py" record-batch \
 
 同一 `run_id` 重放返回 `replayed`。稳定身份使用“用户 + 场景 + 需求 + 切入口 + 可选国家/地区/主渠道”；标题翻译不影响 ID。
 
-### 9. 返回用户
+### 11. 返回用户
 
-提供日报绝对路径，简要列出：Top 机会、快速点子数量、区域创意数量、被拒绝数量、来源缺口和最大风险。不要在聊天里重复整份日报。
+先给 Top 3–5 的直接判断，再在同一回复中展示完整结论清单里的全部 A/B/R 和 overflow 紧凑卡片，以及最多 20 个接近合格的拒绝项。不得只返回 Top 5、数量摘要或文件链接。
+
+同时提供日报和完整清单的绝对路径。若单条回复较长，按“深度候选 → 快速点子 → 区域创意 → 接近合格 → 费用产出”分段连续展示，不等待用户回复“继续”。原始证据全文留在文件里，但每个结论至少展示付款者、付费对标/现有支出、缺口、渠道、30 天 MVP 和证据链接。
 
 ## SIG 升级为 OPP
 

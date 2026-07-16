@@ -11,15 +11,20 @@
 
 ```text
 query_plan
-  -> community_normalized + tikhub_normalized
+  -> community_normalized
   -> paid_benchmarks
   -> expanded_candidates
   -> tiered_candidates
+  -> evidence_gap_plan -> tikhub_gap_results -> tikhub_normalized
+  -> re-run paid_benchmarks + expanded_candidates + tiered_candidates
+  -> full_result_digest
   -> OPP/SIG stable IDs
   -> A-level scoring
   -> validated_report
   -> state_observations
 ```
+
+`evidence_gap_plan` 必须由 `tikhub_query.py build-gaps` 生成。每个付费搜索请求携带 `candidate_id`、`missing_gate`、`target_region` 和 `expected_promotion`；通用发现草稿不能冒充已批准的补证计划。
 
 ## 2. 付费对标
 
@@ -89,6 +94,8 @@ query_plan
 - `rejected`：附 `rejection_reasons`
 - `overflow`：超过 B 级 40 条或 R 级 80 条的合格候选；不丢弃，但不进入当日日报主卡片
 
+过滤结果同时原样保留 `benchmarks`，并在 `summary.benchmark_count` 记录数量，供费用产出和完整展示使用。
+
 每条保留 `hard_gates`。R 级还必须保留：
 
 - `missing_proof`
@@ -96,7 +103,19 @@ query_plan
 - `source_region`、`target_region`
 - `localization_gap`、`transfer_reason`
 
-## 5. 稳定 OPP/SIG 身份
+## 5. 完整结论清单
+
+`build_result_digest.py` 读取 tiered JSON，并可重复接收：
+
+- `--execution`：TikHub 搜索、评论或重试执行结果
+- `--evidence`：包含 `evidence` 数组的规范化结果
+- `--research`：包含 `ranked_candidates` 或 `clusters` 的研究结果
+
+输出全部 A、全部 B、全部 R、全部 overflow、建议日报展示数量、完整清单额外数量、按失败门槛数量排序的接近合格项，以及请求、费用、证据利用率、单个合格结论成本和来源产出。同一路径重复传入时 CLI 必须去重，避免费用重复计算。
+
+完整清单是用户主交付物；日报负责 Top 深度分析与固定结构，但不能替代完整清单。
+
+## 6. 稳定 OPP/SIG 身份
 
 格式：
 
@@ -117,7 +136,7 @@ query_plan
 
 必须先执行 `manage_state.py prepare` 分配 ID，再写报告和评分。不要手工编造 ID。
 
-## 6. 状态与升级
+## 7. 状态与升级
 
 当前视图：
 
@@ -140,10 +159,11 @@ OPP.promoted_from -> SIG ID
 
 升级在同一文件锁内写入两侧当前视图与观察事件。已升级 SIG 重放返回原 `OPP`。
 
-## 7. 兼容与失败策略
+## 8. 兼容与失败策略
 
 - 阶段版本不一致时失败关闭，不静默混用。
 - 缺六项硬门槛时写拒绝原因，不猜测补齐。
 - 报告校验失败时不写机会状态。
+- 未生成完整结论清单或费用产出时，报告校验失败。
 - 状态文件损坏时明确报错，不自动覆盖。
 - 运行数据永远写入 `RADAR_HOME`，不写入 Skill 目录。

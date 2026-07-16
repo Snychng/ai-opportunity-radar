@@ -20,6 +20,7 @@ from tikhub_query import (  # noqa: E402
     BudgetExceeded,
     PlanError,
     build_comment_plan,
+    build_evidence_gap_plan,
     build_search_plan,
     enforce_budget,
     estimate_plan,
@@ -167,6 +168,83 @@ def comment_pricing_rows() -> list[dict[str, object]]:
 
 
 class TikHubPlanTests(unittest.TestCase):
+    def test_builds_auditable_evidence_gap_plan(self) -> None:
+        plan = build_evidence_gap_plan(
+            as_of="2026-07-14",
+            run_id=RUN_ID,
+            gaps=[
+                {
+                    "candidate_id": "CAND-customer-support-id",
+                    "missing_gate": "目标地区直接付款证据",
+                    "target_region": "印度尼西亚",
+                    "expected_promotion": "r_to_b",
+                    "keyword": "layanan pelanggan AI berbayar usaha kecil",
+                    "sources": ["tiktok", "xiaohongshu"],
+                }
+            ],
+        )
+
+        self.assertEqual(plan["stage"], "evidence_gap_verification")
+        self.assertEqual(len(plan["requests"]), 2)
+        self.assertEqual(plan["cost_policy"]["purpose"], "candidate_gate_verification_only")
+        self.assertEqual(plan["cost_policy"]["stop_after_requests_without_yield"], 3)
+        for request in plan["requests"]:
+            self.assertEqual(request["evidence_gap"]["candidate_id"], "CAND-customer-support-id")
+            self.assertEqual(request["evidence_gap"]["expected_promotion"], "r_to_b")
+
+        validate_plan(plan, pricing_rows())
+
+    def test_rejects_gap_plan_without_a_specific_promotion(self) -> None:
+        with self.assertRaisesRegex(PlanError, "expected_promotion"):
+            build_evidence_gap_plan(
+                as_of="2026-07-14",
+                run_id=RUN_ID,
+                gaps=[
+                    {
+                        "candidate_id": "CAND-customer-support-id",
+                        "missing_gate": "付款证据",
+                        "target_region": "印度尼西亚",
+                        "expected_promotion": "find_more_ideas",
+                        "keyword": "AI customer support",
+                        "sources": ["tiktok"],
+                    }
+                ],
+            )
+
+    def test_caps_each_gap_source_at_three_requests_before_yield_review(self) -> None:
+        gaps = [
+            {
+                "candidate_id": f"CAND-customer-support-{index}",
+                "missing_gate": "付款证据",
+                "target_region": "印度尼西亚",
+                "expected_promotion": "r_to_b",
+                "keyword": f"AI customer support paid {index}",
+                "sources": ["tiktok"],
+            }
+            for index in range(4)
+        ]
+        with self.assertRaisesRegex(PlanError, "每个来源最多 3 个请求"):
+            build_evidence_gap_plan(as_of="2026-07-14", run_id=RUN_ID, gaps=gaps)
+
+    def test_validation_rejects_tampered_gap_metadata(self) -> None:
+        plan = build_evidence_gap_plan(
+            as_of="2026-07-14",
+            run_id=RUN_ID,
+            gaps=[
+                {
+                    "candidate_id": "CAND-customer-support-id",
+                    "missing_gate": "付款证据",
+                    "target_region": "印度尼西亚",
+                    "expected_promotion": "r_to_b",
+                    "keyword": "AI customer support paid",
+                    "sources": ["tiktok"],
+                }
+            ],
+        )
+        plan["requests"][0]["evidence_gap"]["expected_promotion"] = "find_more_ideas"
+        with self.assertRaisesRegex(PlanError, "expected_promotion"):
+            validate_plan(plan, pricing_rows())
+
     def test_tiktok_search_uses_app_v3_after_live_web_endpoint_failure(self) -> None:
         plan = build_search_plan(
             as_of="2026-07-14",

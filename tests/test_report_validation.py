@@ -91,6 +91,49 @@ class ReportValidationTests(unittest.TestCase):
         self.assertTrue(any("数量声明" in error for error in result.errors))
         self.assertTrue(any("数据源覆盖" in error for error in result.errors))
 
+    def test_requires_complete_result_link_and_cost_yield_section(self) -> None:
+        missing_section = validate_report(valid_report().replace("## 六、费用产出", "## 被删除的费用产出", 1))
+        self.assertFalse(missing_section.valid)
+        self.assertTrue(any("费用产出" in error for error in missing_section.errors))
+
+        missing_link = validate_report(
+            valid_report().replace("- 完整结论清单：reports/daily/2026-07-14-full-results.md", "")
+        )
+        self.assertFalse(missing_link.valid)
+        self.assertTrue(any("完整结论清单" in error for error in missing_link.errors))
+
+    def test_validates_cost_yield_consistency(self) -> None:
+        wrong_count = validate_report(valid_report().replace("- 合格结论数量：5", "- 合格结论数量：99", 1))
+        self.assertFalse(wrong_count.valid)
+        self.assertTrue(any("数量之和" in error for error in wrong_count.errors))
+
+        wrong_displayed = validate_report(
+            valid_report().replace("- 日报展示结论数量：5", "- 日报展示结论数量：99", 1)
+        )
+        self.assertFalse(wrong_displayed.valid)
+        self.assertTrue(any("三层实际总数" in error for error in wrong_displayed.errors))
+
+        with_overflow = valid_report().replace(
+            "- 完整清单额外结论数量：0\n- 合格结论数量：5",
+            "- 完整清单额外结论数量：5\n- 合格结论数量：10",
+            1,
+        ).replace("- 单个合格结论估算成本 USD：0.010600", "- 单个合格结论估算成本 USD：0.005300", 1)
+        self.assertTrue(validate_report(with_overflow).valid)
+
+        wrong_utilization = validate_report(valid_report().replace("- 证据利用率：50.00%", "- 证据利用率：90%", 1))
+        self.assertFalse(wrong_utilization.valid)
+        self.assertTrue(any("利用率" in error for error in wrong_utilization.errors))
+
+        wrong_cost = validate_report(
+            valid_report().replace("- 单个合格结论估算成本 USD：0.010600", "- 单个合格结论估算成本 USD：1", 1)
+        )
+        self.assertFalse(wrong_cost.valid)
+        self.assertTrue(any("单个合格结论" in error for error in wrong_cost.errors))
+
+        used_too_many = validate_report(valid_report().replace("- 已利用证据数量：5", "- 已利用证据数量：11", 1))
+        self.assertFalse(used_too_many.valid)
+        self.assertTrue(any("不能大于" in error for error in used_too_many.errors))
+
     def test_requires_quick_and_regional_evidence_contracts(self) -> None:
         quick = validate_report(valid_report().replace("- 付款者：小微企业主", "- 快速付款者被删除：小微企业主", 1))
         self.assertFalse(quick.valid)

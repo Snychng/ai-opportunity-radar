@@ -19,6 +19,8 @@ REQUIRED_REPORT_SECTIONS = (
     "## 二、已验证快速点子",
     "## 三、区域迁移创意池",
     "## 四、今日升级与降级",
+    "## 五、接近合格但被拒绝",
+    "## 六、费用产出",
     "## 方法与局限",
 )
 REQUIRED_TIKHUB_COST_FIELDS = (
@@ -36,6 +38,20 @@ TIKHUB_AMOUNT_FIELDS = (
     "TikHub 免费额度不适用成本 USD",
 )
 TIKHUB_COST_TOLERANCE_USD = Decimal("0.000001")
+REQUIRED_YIELD_FIELDS = (
+    "规范化证据数量",
+    "聚类候选数量",
+    "付费对标数量",
+    "原始候选数量",
+    "日报展示结论数量",
+    "完整清单额外结论数量",
+    "合格结论数量",
+    "被拒绝候选数量",
+    "已利用证据数量",
+    "证据利用率",
+    "单个合格结论估算成本 USD",
+    "完整结论清单",
+)
 REQUIRED_DEEP_SECTIONS = (
     "#### 一句话产品",
     "#### 用户场景与具体触发时刻",
@@ -177,6 +193,88 @@ def _validate_declared_count(
         errors.append(f"{label}少于 {minimum_target} 个时必须填写“{shortage_label}”且不得用弱证据凑数")
 
 
+def _nonnegative_int(section: str, field: str, errors: list[str]) -> int | None:
+    value = _field(section, field)
+    if value is None:
+        return None
+    if not re.fullmatch(r"\d+", value):
+        errors.append(f"费用产出字段“{field}”必须是非负整数")
+        return None
+    return int(value)
+
+
+def _validate_yield(
+    content: str,
+    *,
+    qualified_count: int,
+    expected_cost: Decimal | None,
+    errors: list[str],
+) -> None:
+    section = _report_section(content, "## 六、费用产出")
+    if section is None:
+        return
+    for field in REQUIRED_YIELD_FIELDS:
+        if _field(section, field) is None:
+            errors.append(f"费用产出缺少字段：{field}")
+    integers = {
+        field: _nonnegative_int(section, field, errors)
+        for field in (
+            "规范化证据数量",
+            "聚类候选数量",
+            "付费对标数量",
+            "原始候选数量",
+            "日报展示结论数量",
+            "完整清单额外结论数量",
+            "合格结论数量",
+            "被拒绝候选数量",
+            "已利用证据数量",
+        )
+    }
+    displayed_qualified = integers["日报展示结论数量"]
+    additional_qualified = integers["完整清单额外结论数量"]
+    declared_qualified = integers["合格结论数量"]
+    if displayed_qualified is not None and displayed_qualified != qualified_count:
+        errors.append(f"日报展示结论数量与三层实际总数不一致：声明 {displayed_qualified}，实际 {qualified_count}")
+    if (
+        declared_qualified is not None
+        and displayed_qualified is not None
+        and additional_qualified is not None
+        and declared_qualified != displayed_qualified + additional_qualified
+    ):
+        errors.append("合格结论数量必须等于日报展示结论数量与完整清单额外结论数量之和")
+    normalized = integers["规范化证据数量"]
+    used = integers["已利用证据数量"]
+    if normalized is not None and used is not None and used > normalized:
+        errors.append("已利用证据数量不能大于规范化证据数量")
+
+    utilization_value = _field(section, "证据利用率")
+    if utilization_value is not None:
+        if utilization_value == "未知":
+            if normalized not in {None, 0}:
+                errors.append("存在规范化证据时，证据利用率不能写“未知”")
+        else:
+            match = re.fullmatch(r"(\d+(?:\.\d+)?)%", utilization_value)
+            if not match or Decimal(match.group(1)) > 100:
+                errors.append("证据利用率必须是 0% 到 100% 的百分比或“未知”")
+            elif normalized and used is not None:
+                expected_rate = Decimal(used) / Decimal(normalized) * 100
+                if abs(Decimal(match.group(1)) - expected_rate) > Decimal("0.01"):
+                    errors.append("证据利用率与已利用/规范化证据数量不一致")
+
+    cost_value = _field(section, "单个合格结论估算成本 USD")
+    if cost_value is not None and cost_value != "未知":
+        try:
+            cost_per = Decimal(cost_value)
+        except InvalidOperation:
+            cost_per = None
+        if cost_per is None or not cost_per.is_finite() or cost_per < 0:
+            errors.append("单个合格结论估算成本 USD 必须是非负有限数字或“未知”")
+        elif expected_cost is not None and declared_qualified is not None and declared_qualified > 0:
+            expected_per = expected_cost / declared_qualified
+            if abs(cost_per - expected_per) > TIKHUB_COST_TOLERANCE_USD:
+                errors.append("单个合格结论估算成本与预计费用/合格结论数量不一致")
+
+
 def _validate_deep(blocks: list[tuple[str, str]], errors: list[str], warnings: list[str]) -> None:
     for opportunity_id, block in blocks:
         for section in REQUIRED_DEEP_SECTIONS:
@@ -278,6 +376,20 @@ def validate_report(content: str) -> ValidationResult:
     _validate_deep(deep, errors, warnings)
     _validate_cards(quick, required_fields=REQUIRED_QUICK_FIELDS, expected_tiers={"A", "B"}, errors=errors)
     _validate_cards(regional, required_fields=REQUIRED_REGIONAL_FIELDS, expected_tiers={"R"}, errors=errors)
+    cost_section = _report_section(content, "## 采集费用")
+    expected_cost: Decimal | None = None
+    if cost_section is not None:
+        raw_cost = _field(cost_section, "TikHub 预计费用 USD")
+        try:
+            expected_cost = Decimal(raw_cost) if raw_cost is not None else None
+        except InvalidOperation:
+            expected_cost = None
+    _validate_yield(
+        content,
+        qualified_count=len(deep) + len(quick) + len(regional),
+        expected_cost=expected_cost,
+        errors=errors,
+    )
 
     if "### 已覆盖" not in content or "### 跳过或失败" not in content:
         errors.append("数据源覆盖必须同时列出“已覆盖”和“跳过或失败”")

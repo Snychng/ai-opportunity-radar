@@ -12,11 +12,12 @@
 | 批量点子 | 沿六个维度确定性扩展 100–200 个原始候选，并保留来源对标 |
 | 硬过滤 | 付款市场、付款者、替代方案、产品缺口、获客渠道、30 天 MVP 缺一不可 |
 | 三层日报 | 3–5 个 A 级深度机会、20–40 个 A/B 级快速点子、30–80 个 R 级区域迁移假设 |
+| 完整结论清单 | 展示全部 A/B/R、全部 overflow 和最多 20 个接近合格候选，不只返回 Top 5 |
 | 定向扫描 | 按地区、语言、行业或机会类型复用同一研究流程 |
 | 机会深挖 | 围绕稳定机会 ID 补充独立证据、反证、竞品、MVP 和验证实验 |
 | 历史回顾 | 比较近 7/30/90 天的出现次数、评分和证据变化 |
 | 多语言研究 | 覆盖英语、中文及东南亚、南亚、非洲、中东、拉美的轮换语言查询 |
-| 费用保护 | TikHub 请求执行前强制刷新价格、估算最坏成本、检查账户与显式预算 |
+| 费用产出 | 先免费发现、后付费补证，并计算证据利用率、来源转化和单个合格结论成本 |
 | 可重放状态 | 使用稳定 ID、追加式观察历史、文件锁和原子写入支持安全重跑 |
 | 证据升级 | R/SIG 补齐本地付款证据后，可审计地升级为 A/OPP 并保留双向链接 |
 
@@ -44,22 +45,21 @@ Product Hunt、Indie Hackers、应用商店、G2/Capterra/Trustpilot、V2EX、�
 ```mermaid
 flowchart LR
     A["日期、偏好与定向范围"] --> B["确定性查询计划"]
-    B --> C["HN / GitHub 公开适配器"]
-    B --> D["TikHub 实时估价与预算门禁"]
-    C --> E["规范化证据"]
-    D --> F["社交搜索结果"]
-    F --> G["详情与一级评论"]
-    F --> E
-    G --> E
-    E --> H["真实付费对标 BENCH"]
+    B --> C["历史数据 + 免费来源"]
+    C --> E["初步证据与 BENCH"]
     H --> I["六轴扩展 100–200"]
     I --> J{"六项硬门槛"}
+    J --> R["明确付费补证缺口"]
+    R --> D["TikHub 估价与定向验证"]
+    D --> E
+    E --> H["真实付费对标 BENCH"]
     J -->|A| K["深度评分 3–5"]
     J -->|B| L["快速点子 20–40"]
     J -->|R| M["区域 SIG 30–80"]
-    K --> N["三层 Markdown 日报"]
+    K --> S["全部结论 + 费用产出"]
     L --> N
     M --> N
+    S --> N["三层 Markdown 日报"]
     N --> O{"结构校验通过?"}
     O -->|是| P["当前视图 + 追加历史"]
     O -->|否| Q["修复报告，不写状态"]
@@ -144,13 +144,23 @@ python3 "$SKILL_DIR/scripts/community_query.py" run \
   --output "$RUN_DIR/community-normalized.json"
 ```
 
-### TikHub：先估价，再执行
+### TikHub：先形成候选缺口，再估价执行
+
+先用历史、公开来源和初步过滤结果明确候选 ID、缺失门槛、目标地区、预期升级层级、本地语言关键词和 1–3 个目标来源，写入 `evidence-gaps.json`。初始化阶段导出的通用搜索计划只作草稿，不直接付费执行：
+
+```bash
+python3 "$SKILL_DIR/scripts/tikhub_query.py" build-gaps \
+  --date "$RUN_DATE" \
+  --run-id RUN-YYYYMMDD-XXXXXXXXXX \
+  --input "$RUN_DIR/evidence-gaps.json" \
+  --output "$RUN_DIR/tikhub-gap-plan.json"
+```
 
 估价只读取公开实时价格，不调用付费数据端点：
 
 ```bash
 python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
-  --plan "$RUN_DIR/tikhub-search-plan.json" \
+  --plan "$RUN_DIR/tikhub-gap-plan.json" \
   --output "$RUN_DIR/tikhub-cost-estimate.json"
 ```
 
@@ -158,17 +168,19 @@ python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
 
 ```bash
 python3 "$SKILL_DIR/scripts/tikhub_query.py" run \
-  --plan "$RUN_DIR/tikhub-search-plan.json" \
+  --plan "$RUN_DIR/tikhub-gap-plan.json" \
   --max-cost-usd 0.10 \
-  --output "$RUN_DIR/tikhub-search-results.json"
+  --output "$RUN_DIR/tikhub-gap-results.json"
 
 python3 "$SKILL_DIR/scripts/normalize_tikhub_results.py" \
-  --input "$RUN_DIR/tikhub-search-results.json" \
+  --input "$RUN_DIR/tikhub-gap-results.json" \
   --output "$RUN_DIR/tikhub-normalized-search.json" \
   --selection-output "$RUN_DIR/tikhub-comment-candidates.json"
 ```
 
 执行器会依次检查：实时价格、端点白名单、最坏成本、零费用账户预检端点、账户状态、免费额度和付费余额。任一条件不满足时，不发起付费数据请求。
+
+付费发现最多占预算 20%；每个请求必须服务于候选升级或硬门槛验证。连续 3 个请求没有新增 BENCH、A/B/R 或关键证据时停止该来源。
 
 从评论候选中选择 1–5 条并补充 `selection_reason` 后，可按 [`references/tikhub-integration.md`](references/tikhub-integration.md) 生成独立评论计划。评论翻页必须重新建计划和估价。
 
@@ -188,6 +200,21 @@ python3 "$SKILL_DIR/scripts/filter_ideas.py" \
 ```
 
 过滤结果包含 `deep_candidates`、`validated_ideas`、`regional_signals` 和带失败原因的 `rejected`。目标数量不足时保留真实数量，不用弱证据补齐。
+
+### 完整结论清单与费用产出
+
+日报前生成完整清单。`--execution`、`--evidence`、`--research` 均可重复传入实际存在的文件：
+
+```bash
+python3 "$SKILL_DIR/scripts/build_result_digest.py" \
+  --tiered "$RUN_DIR/tiered-candidates.json" \
+  --execution "$RUN_DIR/tikhub-gap-results.json" \
+  --evidence "$RUN_DIR/tikhub-normalized-search.json" \
+  --output "$RADAR_HOME/reports/daily/$RUN_DATE-full-results.md" \
+  --metrics-output "$RUN_DIR/result-yield.json"
+```
+
+输出会展示全部 A/B/R 和 overflow、接近合格拒绝项、付费请求、费用、证据利用率、单个合格结论成本与来源转化。聊天默认展示这份清单的全部紧凑卡片，不能只给 Top 5 或链接。
 
 ### 稳定 ID、A 级评分与状态提交
 
@@ -304,6 +331,7 @@ $RADAR_HOME/
 ├── references/                    # 研究、评分、安全、数据和报告契约
 ├── scripts/
 │   ├── build_query_plan.py        # 确定性查询计划与平台轮换
+│   ├── build_result_digest.py     # 全部结论与费用产出清单
 │   ├── community_query.py         # HN / GitHub 公开适配器
 │   ├── contracts.py               # schema、run_id、稳定 ID
 │   ├── expand_ideas.py            # 从 BENCH 做六轴确定性扩展
@@ -324,7 +352,7 @@ ruff check scripts tests
 pytest -q
 ```
 
-当前测试覆盖查询计划、多语言轮换、TikHub 费用与账户预检、付费对标扩展、六项硬门槛、A/B/R 分层、跨地区稳定身份、SIG→OPP 升级、评分、三层报告校验、追加式状态和 CLI 主流程。
+当前测试覆盖查询计划、多语言轮换、TikHub 费用与账户预检、付费对标扩展、六项硬门槛、A/B/R 分层、完整结论与费用产出、跨地区稳定身份、SIG→OPP 升级、评分、三层报告校验、追加式状态和 CLI 主流程。
 
 ## 参考文档
 

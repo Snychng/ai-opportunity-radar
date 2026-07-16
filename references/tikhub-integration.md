@@ -52,6 +52,39 @@ python3 "$SKILL_DIR/scripts/build_query_plan.py" \
 - 滚动组三：TikTok、Instagram、微信搜一搜。
 - 当日地区查询使用轮换地区的本地语言表达，不只追加国家名。
 
+这里导出的 `tikhub-search-plan.json` 是通用发现草稿，用于看覆盖范围和形成免费研究方向，不代表已经批准付费执行。免费证据还没有形成候选 ID 与明确缺口时，不得直接运行该计划。
+
+## 从候选证据缺口生成可执行计划
+
+完成初步 BENCH、扩展和过滤后，把值得补证的目标写成：
+
+```json
+{
+  "gaps": [
+    {
+      "candidate_id": "SIG-20260716-ABC123",
+      "missing_gate": "印度尼西亚本地直接付款证据",
+      "target_region": "印度尼西亚",
+      "expected_promotion": "r_to_b",
+      "keyword": "layanan pelanggan AI berbayar usaha kecil",
+      "sources": ["tiktok", "reddit"]
+    }
+  ]
+}
+```
+
+`expected_promotion` 只允许 `rejected_to_b`、`rejected_to_r`、`r_to_b`、`b_to_a` 或 `confirm_rejection`。每个缺口只选 1–3 个最可能给出答案的来源，单次最多 10 个缺口。
+
+```bash
+python3 "$SKILL_DIR/scripts/tikhub_query.py" build-gaps \
+  --date YYYY-MM-DD \
+  --run-id RUN-YYYYMMDD-XXXXXXXXXX \
+  --input "$RADAR_HOME/raw/YYYY-MM-DD/evidence-gaps.json" \
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-plan.json"
+```
+
+生成的每个请求都携带候选 ID、缺失门槛、目标地区和预期升级结果。估价与执行必须使用 `tikhub-gap-plan.json`，不能把“再找更多点子”写成缺口。
+
 评论不在搜索阶段批量获取。先筛选 1–5 个高价值帖子，再生成单独的评论深挖计划并重新估价。
 
 ## 评论深挖计划
@@ -77,7 +110,7 @@ python3 "$SKILL_DIR/scripts/build_query_plan.py" \
 
 ```bash
 python3 "$SKILL_DIR/scripts/normalize_tikhub_results.py" \
-  --input "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-results.json" \
+  --input "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-results.json" \
   --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-normalized-search.json" \
   --selection-output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-comment-candidates.json"
 ```
@@ -119,7 +152,7 @@ python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
 
 ```bash
 python3 "$SKILL_DIR/scripts/tikhub_query.py" estimate \
-  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-plan.json" \
+  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-plan.json" \
   --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-cost-estimate.json"
 ```
 
@@ -142,9 +175,9 @@ API Key 只能通过环境变量提供，不允许作为命令行参数：
 export TIKHUB_API_KEY='由用户在本机安全设置，不写入文件'
 
 python3 "$SKILL_DIR/scripts/tikhub_query.py" run \
-  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-plan.json" \
+  --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-plan.json" \
   --max-cost-usd 0.10 \
-  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-search-results.json"
+  --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-results.json"
 ```
 
 中国大陆默认使用官方 `https://api.tikhub.dev`；其他地区可显式传 `--api-base https://api.tikhub.io`。
@@ -152,6 +185,8 @@ python3 "$SKILL_DIR/scripts/tikhub_query.py" run \
 `--max-cost-usd` 是硬性上限，按“实时目录原价 × 最大尝试次数”的未舍入金额校验；账户折扣不会降低硬预算保护值。`run` 不接受离线价格文件。预算通过后，脚本先确认 `/api/v1/tikhub/user/get_user_info` 在实时目录中的价格仍为 `$0`，再读取账户状态、付费余额和免费额度；只保留这些非敏感摘要，不保存邮箱、API Key 名称或其他账户资料。脚本按端点资格计算免费额度可覆盖部分和最坏情况下所需付费余额，余额不足时会在任何数据请求之前失败关闭。
 
 没有密钥、账户不可用、零费用预检端点涨价、余额不足、实时价格缺失、端点不在白名单或预计费用超过上限时，不发起任何付费数据请求。
+
+付费发现最多占本轮预算的 20%，其余预算只用于上述定向补证。同一来源连续 3 次请求没有新增 BENCH、合格结论或关键门槛证据时，停止该来源，不用更多请求碰运气。
 
 ## 费用报告口径
 

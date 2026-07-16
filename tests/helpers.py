@@ -152,6 +152,8 @@ def valid_report(count: int = 3, *, low_count_reason: bool = False) -> str:
     blocks = "\n".join(opportunity_block(i + 1) for i in range(count))
     quick = quick_idea_block(1)
     regional = regional_signal_block(1)
+    qualified_count = count + 2
+    cost_per = 0.053 / qualified_count
     return f"""# AI 创业机会雷达日报｜2026-07-14
 
 ## 今日摘要
@@ -196,6 +198,26 @@ def valid_report(count: int = 3, *, low_count_reason: bool = False) -> str:
 ## 四、今日升级与降级
 
 - 今日无 SIG 升级或 OPP 降级。
+
+## 五、接近合格但被拒绝
+
+- 展示的接近合格候选数量：1
+- CAND-EXAMPLE：缺少明确获客渠道；补齐行业社群验证后重审。
+
+## 六、费用产出
+
+- 规范化证据数量：10
+- 聚类候选数量：8
+- 付费对标数量：2
+- 原始候选数量：100
+- 日报展示结论数量：{qualified_count}
+- 完整清单额外结论数量：0
+- 合格结论数量：{qualified_count}
+- 被拒绝候选数量：50
+- 已利用证据数量：5
+- 证据利用率：50.00%
+- 单个合格结论估算成本 USD：{cost_per:.6f}
+- 完整结论清单：reports/daily/2026-07-14-full-results.md
 
 ## 方法与局限
 
