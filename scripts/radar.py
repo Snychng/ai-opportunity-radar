@@ -51,9 +51,9 @@ def _management(command: str, arguments: list[str], context: dict) -> int:
         if args.json:
             _json(result)
         else:
-            print(f"AOR 技能：{len(result)} 个")
-            for item in result:
-                print(f"- {item['name']}  {item.get('version', context.get('version'))}  {item.get('path')}")
+            from aor_display import print_skills
+
+            print_skills(context, result)
         return 0
     if command == "doctor":
         from aor_status import doctor
@@ -120,13 +120,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 _json(result)
             else:
-                print(f"AOR {context.get('version') or 'unknown'}  ({context.get('commit') or '无 Git 提交'})")
-                print(f"安装：{context['kind']}；路径：{context['root']}")
-                print(f"技能：{len(result['skills'])}")
+                from aor_display import print_overview
+
+                print_overview(context, result["skills"])
+                sys.stdout.flush()
                 notice = update_notice(result["updates"])
                 if notice:
                     print(notice, file=sys.stderr)
-                print("使用 aor skills 查看技能，aor doctor 检查环境与更新。")
             return 0
         if args.command not in COMMANDS:
             arguments = ["--json", *args.arguments] if args.json else args.arguments

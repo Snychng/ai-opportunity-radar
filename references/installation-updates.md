@@ -1,6 +1,6 @@
 # 安装与更新
 
-AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `3.2.1`，目前登记一个根技能。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
+AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `3.2.2`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
 
 ## 安装稳定版本
 
@@ -40,14 +40,27 @@ python3 scripts/radar.py install \
 
 | 命令 | 行为 |
 |---|---|
-| `aor` / `aor --json` | 查看实际加载版本、提交、目录和技能；文本仅在缓存确认有新版本时提醒，JSON 保留完整缓存状态；不联网 |
+| `aor` | 显示品牌导览、实际加载版本、技能与常用命令；保留技能异常提示，仅在缓存确认有新版本时提醒；不联网 |
+| `aor --json` | 读取完整安装概览、提交、目录、技能和更新缓存状态；不联网 |
 | `aor --version` | 输出当前产品版本 |
+| `aor skills` | 按分组展示本项目技能名称、版本、说明和异常提示；不联网 |
 | `aor skills --json` | 读取本项目清单登记的技能名称、路径、说明和入口状态 |
 | `aor doctor --quiet` | 日常启动检查，仅在确认有新版本或本地致命错误时输出；其余情况保持安静 |
 | `aor doctor --json` | 检查环境、清单、安装来源、技能入口及稳定更新；可复用有效缓存 |
 | `aor doctor --refresh --json` | 跳过检查缓存，重新查询最新稳定 Release |
 | `aor doctor --offline --json` | 仅检查本地与有效缓存，不联网、不写更新缓存 |
 | `aor update --json` | 重新检查稳定 Release，满足条件时升级受管安装 |
+
+普通 TTY 中，`aor` 首页包含五行圆角几何 AOR 青蓝字标、产品名、当前版本、技能和常用命令。`aor` 与 `aor skills` 的日常文本突出技能名称、版本及异常提示，技能列表补充说明，不默认展示 Git 提交 SHA 或绝对安装路径；完整信息可通过 `aor --json`、`aor skills --json` 或 `aor doctor` 查看。品牌导览只调整文本呈现，不改变 JSON 字段、更新提醒或诊断逻辑，也不增加运行时依赖。
+
+| 输出环境 | 显示方式 |
+|---|---|
+| 普通 TTY | 使用分组布局；首页显示字标，内容随终端宽度自动换行 |
+| 非 TTY 或 `TERM=dumb` | 使用紧凑文本，不输出 ANSI 转义序列或字标 |
+| 普通 TTY 且 `NO_COLOR` 非空 | 禁用颜色，保留分组布局和编码支持的字标 |
+| 输出编码不支持默认 UTF-8 符号 | 降级为可输出的文字 |
+
+颜色按终端能力选择；无法确认背景色时使用终端自身的青蓝色盘，避免浅色背景上的亮色文字难以阅读。
 
 `doctor --quiet` 与 `doctor --json` 不能同时使用；安静模式也支持 `--refresh` 或 `--offline`。`doctor --refresh` 与 `doctor --offline` 不能同时使用。诊断的 `health` 为 `ok`、`warning` 或 `error`；前两者退出码为 0，本地致命错误退出码为 1。网络状态未知或有可用更新通常属于 warning，应读取 `checks` 中的具体原因。
 
@@ -64,7 +77,7 @@ python3 scripts/radar.py install \
 
 ## 调用技能时检查更新
 
-Agent 开始使用技能时，按 `SKILL.md` 先运行 `doctor --quiet`。已是最新、当前版本领先或更新状态未知时，不输出例行版本提示，Agent 也不向用户复述“已是最新”“检查通过”等状态。有新版本时，提示真实版本号和更新命令，例如“AOR 发现新版本 v3.2.2，可运行 `aor update` 更新。”同一次研究任务中，相同新版本只由 Agent 转述一次。
+Agent 开始使用技能时，按 `SKILL.md` 先运行 `doctor --quiet`。已是最新、当前版本领先或更新状态未知时，不输出例行版本提示，Agent 也不向用户复述“已是最新”“检查通过”等状态。有新版本时，提示真实版本号和更新命令；假设查到的新版本为 `3.2.3`，示例提示为“AOR 发现新版本 v3.2.3，可运行 `aor update` 更新。”同一次研究任务中，相同新版本只由 Agent 转述一次。
 
 统一 CLI 和兼容业务脚本也会在启动时预检，同一进程只预检一次。提示写入标准错误，业务标准输出保持原格式；网络检查异常不改变正常业务结果或退出码。安静模式没有输出不代表一定已是最新；如需排查，使用完整 `doctor` 或 `doctor --json`。本地致命错误仍会显示并返回非零退出码。
 
@@ -101,14 +114,16 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 
 ## 目录与环境变量
 
+下面以 `3.2.2` 展示目录结构，实际版本和提交前缀以安装结果为准：
+
 ```text
 ~/.local/bin/aor
 ~/.local/share/aor/
 ├── install.json
 ├── update.lock
-├── current -> versions/v3.2.1-<提交前缀>/
+├── current -> versions/v3.2.2-<提交前缀>/
 └── versions/
-    └── v3.2.1-<提交前缀>/
+    └── v3.2.2-<提交前缀>/
         ├── SKILL.md
         ├── agent-manifest.json
         ├── bin/aor
@@ -124,8 +139,10 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 | `AOR_CACHE_HOME` | 更新检查缓存目录，默认 `~/.cache/aor` |
 | `AOR_OFFLINE=1` | 让诊断与业务预检只使用本地更新信息 |
 | `AOR_NO_UPDATE_CHECK=1` | 跳过业务入口更新预检，适合可复现的测试运行；不关闭显式 doctor |
+| `NO_COLOR` | 非空时禁用文本输出的颜色；普通 TTY 仍保留分组布局 |
+| `TERM=dumb` | 使用紧凑文本，不输出 ANSI 转义序列或字标 |
 
-`AOR_OFFLINE` 只约束更新检查，不会阻止 `community`、`paid` 等业务命令访问网络，也不会把显式 `install` 或 `update` 变成离线安装命令。本地安装应使用 `install --source`。研究数据的 `schema_version` 仍为 `3.0`，与产品版本 `3.2.1` 不同；本轮更新不迁移已有研究数据。
+`AOR_OFFLINE` 只约束更新检查，不会阻止 `community`、`paid` 等业务命令访问网络，也不会把显式 `install` 或 `update` 变成离线安装命令。本地安装应使用 `install --source`。研究数据的 `schema_version` 仍为 `3.0`，与产品版本 `3.2.2` 不同；本轮更新不迁移已有研究数据。
 
 ## 常见情况
 
