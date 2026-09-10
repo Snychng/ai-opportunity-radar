@@ -9,11 +9,17 @@ description: 从付费产品、需求行为和地区差异发现创业机会，�
 
 ## 通用入口
 
-本目录记为 SKILL_DIR；任何具备文件读写和 Python 命令执行能力的 AI Agent 都可以运行：
+本目录记为 SKILL_DIR。调用技能时先检查环境和稳定版本；有 `aor` 命令时运行第一条，否则用当前技能目录的兼容入口：
 
 ```bash
-python3 "$SKILL_DIR/scripts/radar.py" --help
+aor doctor --json
+# 没有 aor 命令时使用：
+python3 "$SKILL_DIR/scripts/radar.py" doctor --json
 ```
+
+更新检查失败或状态为 unknown 时保留未知，继续可运行的研究步骤；health 为 error 时先处理具体本地错误。有更新只提示用户执行 `aor update`，不自动替换技能。更新成功后重新读取返回的 `current/SKILL.md` 及本次使用的参考文件，再开始下一轮研究。
+
+统一研究命令为 `aor COMMAND ...`，或 `python3 "$SKILL_DIR/scripts/radar.py" COMMAND ...`；用 `--help` 查看参数。CLI 和兼容业务脚本会做更新预检，成功结果缓存 24 小时，失败短暂缓存为未知。仅阅读本文件不能强制宿主运行预检。离线检查使用 `doctor --offline`；安装与缓存细节见 [installation-updates.md](references/installation-updates.md)。
 
 不依赖特定模型、客户端或技能目录。宿主接入见 [agent-integration.md](references/agent-integration.md)。没有执行工具时只能分析已有内容，不声称已采集或写入。
 

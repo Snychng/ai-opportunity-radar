@@ -1,10 +1,20 @@
 {
   "name": "ai-opportunity-radar",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "instructions": "SKILL.md",
   "entrypoint": [
     "python3",
     "scripts/radar.py"
+  ],
+  "command": "aor",
+  "repository": "https://github.com/Snychng/ai-opportunity-radar.git",
+  "update_channel": "stable",
+  "skills": [
+    {
+      "name": "ai-opportunity-radar",
+      "path": ".",
+      "description": "创业机会研究、证据分层与个人验证"
+    }
   ],
   "runtime": {
     "python": ">=3.10",

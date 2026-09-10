@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在且位于 main 历史中的稳定标签，例如 v3.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    env:
+      AOR_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 核验标签与主分支
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", os.environ["RELEASE_TAG"]), "稳定标签格式错误"'
+          git merge-base --is-ancestor HEAD origin/main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse --verify --end-of-options "$RELEASE_TAG^{commit}")"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -v
+      - run: ruff check scripts tests
+      - name: 构建并校验归档
+        run: |
+          python scripts/build_release.py --ref "$RELEASE_TAG" --output-dir "$RUNNER_TEMP/aor-dist"
+          cd "$RUNNER_TEMP/aor-dist"
+          shasum -a 256 -c SHA256SUMS
+          mkdir "$RUNNER_TEMP/aor-package"
+          tar -xzf aor-*.tar.gz -C "$RUNNER_TEMP/aor-package"
+          python "$RUNNER_TEMP/aor-package/ai-opportunity-radar/scripts/radar.py" doctor --offline --json
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python scripts/build_release.py --ref "$RELEASE_TAG" --output-dir "$RUNNER_TEMP/aor-dist"
+      - name: 上传全部资产后公开稳定版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 已存在的 Release 会拒绝重复创建，重跑前需核对已有发布及资产。
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/aor-dist/"* --draft --verify-tag --title "AOR $RELEASE_TAG" --notes-file CHANGELOG.md
+          gh release edit "$RELEASE_TAG" --draft=false

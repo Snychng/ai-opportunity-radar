@@ -1,6 +1,6 @@
 # 通用 Agent 集成
 
-本项目无需特定模型、客户端、插件或厂商 SDK。克隆到任意目录，让 Agent 读取根 SKILL.md，并按需读取 references/。
+本项目无需特定模型、客户端、插件或厂商 SDK。推荐按 [安装与更新](installation-updates.md) 创建受管安装，让 Agent 读取 `~/.local/share/aor/current/SKILL.md`，并按需读取同目录的 `references/`。源码使用者也可以读取任意克隆目录中的根 `SKILL.md`。
 
 ## 最小能力
 
@@ -8,12 +8,20 @@
 - Python 3.10+ 命令执行；当前状态锁支持 macOS/Linux。
 - 网页研究或数据 API 是可选能力，离线环境可处理已有证据。
 
-纯聊天环境可阅读方法，但需要用户或外部执行器运行命令。宿主若支持技能发现，可复制或链接到它自己的技能目录，不要求固定路径。
+纯聊天环境可阅读方法，但需要用户或外部执行器运行命令。宿主若支持技能发现，可按自身配置引用受管安装的 `current` 入口，不要求固定宿主路径。手动复制出的文件是独立副本，不会跟随原安装更新；固定引用 `versions/` 下某个旧目录也不会自动加载新版本。
 
-统一入口：`python3 /path/to/ai-opportunity-radar/scripts/radar.py COMMAND ...`。固定命令映射通过参数数组转发，不拼 shell。相对路径相对调用目录，自动化建议使用绝对路径。
+统一入口为 `aor COMMAND ...`；兼容入口为 `python3 /path/to/ai-opportunity-radar/scripts/radar.py COMMAND ...`。固定命令映射通过参数数组转发，不拼 shell。相对路径相对调用目录，自动化建议使用绝对路径。
+
+调用技能时先运行 `aor doctor --json`；未安装命令时通过兼容入口运行 `doctor --json`。结果分别包含本地 `health`、`installation`、`skills`、`updates` 与逐项 `checks`。更新未知不等于本地不可运行，需读取具体检查项；本地致命错误才返回非零退出码。
+
+发现稳定更新时提示用户执行 `aor update`，更新后重新读取安装返回的 `current/SKILL.md` 及本次使用的参考文件。业务入口预检只提示，不主动更新；成功检查缓存 24 小时，网络失败缓存 5 分钟为未知。纯 Skill 文档无法保证每个宿主都执行这一步，宿主必须具备并实际调用命令执行工具。
 
 | 命令 | 功能 |
 |---|---|
+| 无参数 / --version | 当前安装概览 / 当前产品版本 |
+| skills | 列出本项目清单登记的技能 |
+| doctor | 检查本地环境、安装和最新稳定版本 |
+| install / update | 创建受管安装 / 显式升级受管安装 |
 | plan / community | 查询计划与免费发现 |
 | paid / normalize | 付费缺口计划、估价执行与结果规范化 |
 | expand / filter | 扩展变体、硬过滤与机会家族 |
@@ -21,7 +29,9 @@
 | digest / report | 完整清单与报告校验 |
 | validation | 个人约束评估与实验记录 |
 
-使用 COMMAND --help 查看参数；有子命令时可继续使用 SUBCOMMAND --help。agent-manifest.json 是项目提供的机器可读索引，不要求宿主实现专用协议。
+使用 COMMAND --help 查看参数；有子命令时可继续使用 SUBCOMMAND --help。管理命令支持 `--json`，例如 `aor doctor --offline --json`；无参数概览使用 `aor --json`。业务预检提示写入标准错误，不混入业务标准输出中的 JSON。
+
+`agent-manifest.json` 是项目提供的机器可读索引，不要求宿主实现专用协议。`skills` 只读取该清单注册表，目前为一个根技能；未来本项目子技能随同一 Release 安装和升级，不管理宿主的其他技能。产品版本与研究数据的 `schema_version` 分开维护。
 
 快速使用可按 `expand → filter → digest` 浏览 CAND 清单；正式研究先为各层准备稳定 OPP/SIG，将返回记录和 A 级评分回填分层结果后再生成清单及日报。实验必须引用稳定 ID，但 planned 实验不依赖日报或研究观察入库。完整可执行示例见 [README](../README.md#为自己选择值得验证的项目)。
 

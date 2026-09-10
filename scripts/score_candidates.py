@@ -180,4 +180,6 @@ def main() -> int:  # pragma: no cover - 由 tests/test_e2e.py 通过独立子�
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    from aor_runtime import run_legacy
+
+    raise SystemExit(run_legacy(main, __file__))

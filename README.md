@@ -20,6 +20,7 @@
 | 费用产出 | 先免费发现、后付费补证，并计算证据利用率、来源转化和单个合格结论成本 |
 | 可重放状态 | 使用稳定 ID、追加式观察历史、文件锁和原子写入支持安全重跑 |
 | 证据升级 | R/SIG 补齐本地付款、独立来源和候选验证后，升级为 A/OPP 并保留双向链接 |
+| 技能与版本管理 | `aor` 查看本项目技能，`doctor` 检查环境和稳定版本，`update` 显式升级受管安装 |
 
 深度机会仍分三条评分轨道：
 
@@ -76,9 +77,9 @@ flowchart LR
 
 任何能够读取文件并运行 Python 命令的 AI Agent 都可以使用本项目；没有特定模型、客户端、SDK 或宿主目录依赖。只支持聊天的环境可以读取方法文档，但需要用户或外部执行器运行脚本。
 
-1. 克隆到任意目录，让 Agent 读取该目录的 `SKILL.md`。
-2. 运行 `python3 scripts/radar.py --help` 查看统一命令，子命令后使用 `--help` 查看参数。
-3. 使用 JSON 文件交换数据；原有独立脚本入口继续兼容。
+1. 按下方步骤安装，让 Agent 读取安装结果中的 `current/SKILL.md`；源码使用者也可以直接读取仓库根 `SKILL.md`。
+2. 调用技能时先运行 `aor doctor --json`，再用 `aor COMMAND ...` 执行研究；子命令后使用 `--help` 查看参数。
+3. 使用 JSON 文件交换数据；`python3 scripts/radar.py` 和原有独立脚本入口继续兼容。下面的相对路径示例在仓库根目录运行。
 
 详细能力要求与宿主接入方式见 [通用 Agent 集成](references/agent-integration.md)。[agent-manifest.json](agent-manifest.json) 是本项目自带的机器可读索引，不要求宿主支持某个专用协议。
 
@@ -146,6 +147,7 @@ R 级选择 `regional_signals`，用 `--kind signal` 准备 SIG，实验 `record
 - Python 3.10 或更高版本。
 - macOS 或 Linux。状态锁使用 `fcntl`，当前不支持原生 Windows。
 - 运行时只依赖 Python 标准库。
+- 安装稳定版本和升级需要 Git，以及访问 GitHub 的网络连接。
 - 开发与测试需要 `pytest` 和 `ruff`。
 - Hacker News 无需凭证；GitHub Token 可选；TikHub 搜索需要 API Key 和显式预算。
 
@@ -161,18 +163,42 @@ export TIKHUB_API_KEY="可选，仅在执行 TikHub 付费查询时需要"
 
 ## 安装为 Agent Skill
 
-可克隆到自选技能目录；下面是普通目录示例，宿主不会因此自动发现技能，需要按该 Agent 的加载方式配置：
+首次安装先取得项目文件，再创建独立的受管安装。已有源码仓库时，直接在仓库根运行最后一条命令：
 
 ```bash
-git clone https://github.com/Snychng/ai-opportunity-radar.git \
-  "$HOME/.local/share/agent-skills/ai-opportunity-radar"
+git clone https://github.com/Snychng/ai-opportunity-radar.git
+cd ai-opportunity-radar
+python3 scripts/radar.py install
 ```
 
-更新：
+安装器从官方最新稳定 Release 对应的 Git 标签取得版本，创建 `~/.local/bin/aor` 命令和 `~/.local/share/aor/current/SKILL.md` 入口。源码目录可继续用于开发，研究数据保存在独立的数据目录。
+
+如果终端尚未包含命令目录，可先为当前会话设置：
 
 ```bash
-git -C "$HOME/.local/share/agent-skills/ai-opportunity-radar" pull --ff-only
+export PATH="$HOME/.local/bin:$PATH"
+aor --version
+aor skills
+aor doctor --refresh
 ```
+
+安装器不会修改 shell 配置，也不会覆盖其他程序已经占用的 `aor` 命令。按宿主自身的加载方式，让 Agent 读取 `~/.local/share/aor/current/SKILL.md`；仅创建这个目录不会让所有宿主自动发现技能。
+
+日常检查与更新：
+
+```bash
+aor                     # 当前版本、安装路径、技能数与已有更新缓存
+aor skills --json       # 只列出本项目登记的技能
+aor doctor --json       # 环境诊断与稳定版本检查
+aor doctor --offline    # 只检查本地与有效缓存
+aor update              # 显式升级受管安装
+```
+
+业务命令启动时会检查更新：成功结果缓存 24 小时，网络失败短暂缓存 5 分钟并显示未知，检查失败不阻断研究。有新版本时只提示；执行 `aor update` 后，让 Agent 重新读取 `current/SKILL.md` 和本次用到的参考文件。纯文档提示不能强制所有宿主执行命令，项目 CLI 与兼容脚本入口提供实际预检。
+
+当前只登记 `ai-opportunity-radar` 一个技能；以后登记的本项目子技能随同一 Release 更新。`aor` 不扫描或管理其他项目的技能。源码副本可直接运行工具，但 `aor update` 只替换 AOR 自己登记的版本目录，不在源码仓库内执行拉取或覆盖。
+
+自定义安装目录、离线开发快照、更新状态含义和故障处理见 [安装与更新](references/installation-updates.md)。稳定发行记录见 [CHANGELOG](CHANGELOG.md) 和 [GitHub Releases](https://github.com/Snychng/ai-opportunity-radar/releases)。
 
 安装后可在 AI Agent 中直接提出：
 
@@ -189,7 +215,7 @@ git -C "$HOME/.local/share/agent-skills/ai-opportunity-radar" pull --ff-only
 以下命令展示底层工具的主要路径。完整日报仍建议由 AI Agent 按 [`SKILL.md`](SKILL.md) 编排。
 
 ```bash
-export SKILL_DIR="$HOME/.local/share/agent-skills/ai-opportunity-radar"
+export SKILL_DIR="${AOR_INSTALL_HOME:-$HOME/.local/share/aor}/current"
 export RADAR_HOME="${AI_OPPORTUNITY_RADAR_HOME:-$HOME/Documents/AI-Opportunity-Radar}"
 RUN_DATE="$(TZ=Asia/Shanghai date +%F)"
 RUN_DIR="$RADAR_HOME/raw/$RUN_DATE"
@@ -404,8 +430,12 @@ $RADAR_HOME/
 ├── examples/                      # 付费对标与六轴扩展示例
 ├── references/                    # 研究、评分、安全、数据和报告契约
 ├── agent-manifest.json            # 平台无关的项目入口描述
+├── bin/aor                        # 可从任意工作目录运行的项目命令
 ├── scripts/
 │   ├── radar.py                   # 通用 CLI 调度入口
+│   ├── aor_runtime.py             # 安装身份、运行锁与调用预检
+│   ├── aor_status.py              # 技能列表、环境诊断与更新缓存
+│   ├── aor_install.py             # 独立版本安装与原子切换
 │   ├── manage_validation.py       # 个人适配与真实验证记录
 │   ├── build_query_plan.py        # 确定性查询计划与平台轮换
 │   ├── build_result_digest.py     # 全部结论与费用产出清单
@@ -429,11 +459,11 @@ $RADAR_HOME/
 python3 -m pip install -r requirements-dev.txt
 python3 -m py_compile scripts/*.py
 ruff check scripts tests
-python3 -m unittest discover -s tests -v
+AOR_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 # 安装开发工具后还可运行：python3 -m pytest -q
 ```
 
-当前测试覆盖查询计划、多语言轮换、TikHub 费用与账户预检、付费对标扩展、六项硬门槛、A/B/R 分层、完整结论与费用产出、跨地区稳定身份、SIG→OPP 升级、评分、三层报告校验、追加式状态和 CLI 主流程。
+当前测试覆盖查询计划、多语言轮换、TikHub 费用与账户预检、付费对标扩展、六项硬门槛、A/B/R 分层、完整结论与费用产出、跨地区稳定身份、SIG→OPP 升级、评分、三层报告校验、追加式状态和 CLI 主流程。版本管理测试还覆盖缓存与离线状态、安装来源与目录边界、独立快照、运行锁以及切换失败后的现有版本保护；模拟网络测试不代表真实 GitHub 发布已经可用。
 
 ## 参考文档
 
@@ -444,6 +474,8 @@ python3 -m unittest discover -s tests -v
 - [`references/scoring.md`](references/scoring.md)：评分契约。
 - [`references/data-contracts.md`](references/data-contracts.md)：阶段与幂等契约。
 - [`references/agent-integration.md`](references/agent-integration.md)：通用宿主接入与定向范围文件。
+- [`references/installation-updates.md`](references/installation-updates.md)：安装、版本检查、显式更新与故障处理。
+- [`CHANGELOG.md`](CHANGELOG.md)：版本变更与兼容边界。
 - [`references/personal-validation.md`](references/personal-validation.md)：个人约束与真实实验回写。
 - [`references/report-template.md`](references/report-template.md)：日报输出格式。
 - [`references/tikhub-integration.md`](references/tikhub-integration.md)：TikHub 费用与评论链路。
