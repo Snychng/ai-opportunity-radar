@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="296" viewBox="0 0 960 296" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">AOR</title>
+  <desc id="desc">沿用 AOR 命令行字形的青蓝渐变像素字标，置于深色终端窗口中。</desc>
+  <defs>
+    <linearGradient id="ink" x1="0" y1="18" x2="0" y2="162" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9CEAE5"/>
+      <stop offset="0.55" stop-color="#63CFDC"/>
+      <stop offset="1" stop-color="#6EABE7"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="958" height="294" rx="16" fill="#101923" stroke="#263646" stroke-width="2"/>
+  <path d="M2 44H958" stroke="#263646"/>
+  <circle cx="25" cy="23" r="5" fill="#577C88"/>
+  <circle cx="43" cy="23" r="5" fill="#405D6C"/>
+  <circle cx="61" cy="23" r="5" fill="#2B4251"/>
+  <text x="480" y="28" text-anchor="middle" fill="#88A1AF" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" letter-spacing="2">aor</text>
+  <!-- 字形与 scripts/aor_display.py 中的 WORDMARK 保持一致。 -->
+  <g transform="translate(252 80)" fill="url(#ink)" shape-rendering="crispEdges">
+    <path d="M24 18h24v18h-24z M48 18h24v18h-24z M72 18h24v18h-24z M192 18h24v18h-24z M216 18h24v18h-24z M240 18h24v18h-24z M336 18h24v18h-24z M360 18h24v18h-24z M384 18h24v18h-24z M408 18h24v18h-24z"/>
+    <path d="M0 36h24v36h-24z M96 36h24v36h-24z M168 36h24v36h-24z M264 36h24v36h-24z M336 36h24v36h-24z M432 36h24v36h-24z"/>
+    <path d="M0 72h24v36h-24z M24 90h24v18h-24z M48 90h24v18h-24z M72 90h24v18h-24z M96 72h24v36h-24z M168 72h24v36h-24z M264 72h24v36h-24z M336 72h24v36h-24z M360 90h24v18h-24z M384 90h24v18h-24z M408 90h24v18h-24z M432 72h24v18h-24z"/>
+    <path d="M0 108h24v36h-24z M96 108h24v36h-24z M168 108h24v36h-24z M264 108h24v36h-24z M336 108h24v36h-24z M408 108h24v18h-24z M432 126h24v18h-24z"/>
+    <path d="M0 144h24v18h-24z M96 144h24v18h-24z M192 144h24v18h-24z M216 144h24v18h-24z M240 144h24v18h-24z M336 144h24v18h-24z M432 144h24v18h-24z"/>
+  </g>
+</svg>

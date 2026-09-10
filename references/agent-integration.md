@@ -42,7 +42,7 @@
 
 严格离线会话设置 `AOR_OFFLINE=1`，并用 `research/resume --offline`；环境变量覆盖 CLI 更新预检，参数禁止研究采集。`sources` 与 `library/eval` 的独立领域脚本只操作本地文件，但统一入口仍应设置环境变量避免预检联网。没有实时采集不得宣称在线覆盖。
 
-旧命令继续支持 `expand → filter → state prepare → score → digest` 手动串联。实验必须引用稳定 ID，planned 不依赖日报或研究观察入库。可运行离线示例见 [README](../README.md#可运行离线示例)。
+旧命令继续支持 `expand → filter → state prepare → score → digest` 手动串联。实验必须引用稳定 ID，planned 不依赖日报或研究观察入库。可运行离线示例见 [快速开始](quick-start.md#可运行离线示例)。
 
 ## 精确定向
 

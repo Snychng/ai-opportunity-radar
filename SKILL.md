@@ -36,7 +36,7 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 
 | 当前任务 | 参考 |
 |---|---|
-| 新研究、恢复、离线示例 | [研究工作流](references/research-workflow.md)、[README](README.md) |
+| 新研究、恢复、离线示例 | [研究工作流](references/research-workflow.md)、[快速开始](references/quick-start.md) |
 | 网页导入、来源诊断、检索意图 | [来源目录](references/source-catalog.md)、[查询模式](references/query-patterns.md) |
 | 对标、主张、A/B/R、评分 | [数据契约](references/data-contracts.md)、[机会政策](references/opportunity-policy.md)、[评分](references/scoring.md) |
 | 历史检索、证据包、离线评估 | [证据库与评估](references/evidence-library.md) |

@@ -177,7 +177,7 @@ A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence`
 
 正式日报、A 级评分及实验引用前，执行 `manage_state.py prepare` 分配 ID；快速摘要不强制准备。A/B 使用 `--kind opportunity`，R 使用 `--kind signal`。实验的 `record_id` 必须引用返回的 `id`，不能填写 `candidate_id`。不要手工编造 ID。
 
-`prepare` 不提交研究观察；准备好稳定 ID 就可以记录 `planned` 实验，不要求先跑真实采集、生成日报或 `record-batch`。个人约束与实验输入见 [个人验证](personal-validation.md)；完整编排示例见 [README](../README.md#可运行离线示例)。
+`prepare` 不提交研究观察；准备好稳定 ID 就可以记录 `planned` 实验，不要求先跑真实采集、生成日报或 `record-batch`。个人约束与实验输入见 [个人验证](personal-validation.md)；完整编排示例见 [快速开始](quick-start.md#可运行离线示例)。
 
 ## 7. 状态与升级
 

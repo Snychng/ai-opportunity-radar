@@ -30,7 +30,7 @@ research → evidence-packet.json → Agent 核验并填写 benchmarks
 
 严格离线会话设置 `AOR_OFFLINE=1`，并使用 `research --offline` 或 `resume RUN_ID --offline`。环境变量避免 CLI 更新预检联网，`--offline` 也跳过本次更新预检并停止编排采集；以离线模式创建的运行会持久保留该约束，付费入口拒绝执行。`--no-collect` 仅用于已有材料处理，不是所有底层命令的网络沙箱。
 
-[README 离线示例](../README.md#可运行离线示例) 可直接完成交接、空结果报告校验与重放提交，所有输入均为 `is_demo: true`。没有采集不等于来源不可用，空演示不等于没有市场。
+[离线示例](quick-start.md#可运行离线示例) 可直接完成交接、空结果报告校验与重放提交，所有输入均为 `is_demo: true`。没有采集不等于来源不可用，空演示不等于没有市场。
 
 ### 社区采集选项
 

@@ -98,4 +98,4 @@ DATA_HOME/
 
 `--offline` 停止编排采集；严格离线会话设置 `AOR_OFFLINE=1`，覆盖入口更新预检。付费估价和执行属于显式联网能力。`sources diagnose` 的配置存在性、社区请求 `ok`、离线 eval 的 `passed` 都不能单独证明真实证据或平台完整覆盖。
 
-日常维护先运行 [README 离线示例](../README.md#可运行离线示例)，再根据改动检查相关测试、`aor eval`、内部链接及 CLI 参数。契约细节见 [数据契约](data-contracts.md)、[来源模块说明](../src/aor/sources/README.md)、[证据库](evidence-library.md)、[付费恢复](tikhub-integration.md)与[报告契约](report-template.md)。
+日常维护先运行 [离线示例](quick-start.md#可运行离线示例)，再根据改动检查相关测试、`aor eval`、内部链接及 CLI 参数。契约细节见 [数据契约](data-contracts.md)、[来源模块说明](../src/aor/sources/README.md)、[证据库](evidence-library.md)、[付费恢复](tikhub-integration.md)与[报告契约](report-template.md)。
