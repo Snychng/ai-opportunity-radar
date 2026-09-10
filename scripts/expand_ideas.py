@@ -10,11 +10,13 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
-from contracts import ContractError, SCHEMA_VERSION, canonical_sha256, make_benchmark_id, validate_benchmark_id
+from contracts import (ContractError, SCHEMA_VERSION, canonical_sha256, make_benchmark_id,
+                       normalize_identity, validate_benchmark_id, validate_stage_envelope)
 
 
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 500
+MAX_COMBINATION_SCANS = 5000
 DIMENSION_KEYS = ("segments", "triggers", "forms", "regions", "channels", "offers")
 
 
@@ -23,7 +25,7 @@ class ExpansionError(ValueError):
 
 
 def _nonempty(value: Any) -> bool:
-    return bool(str(value or "").strip())
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _require(record: dict[str, Any], fields: Iterable[str], label: str) -> None:
@@ -38,7 +40,14 @@ def _items(dimensions: dict[str, Any], key: str, fallback: Any) -> list[Any]:
         return [fallback]
     if not isinstance(values, list) or not values:
         raise ExpansionError(f"扩展维度 {key} 必须是非空数组")
-    return values
+    unique: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        marker = canonical_sha256(value) if isinstance(value, dict) else normalize_identity(value)
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(value)
+    return unique
 
 
 def _text_variant(value: Any, field: str) -> str:
@@ -51,15 +60,9 @@ def _text_variant(value: Any, field: str) -> str:
     return str(result).strip()
 
 
-def _region_variant(value: Any, benchmark: dict[str, Any]) -> dict[str, str]:
+def _region_variant(value: Any, benchmark: dict[str, Any]) -> dict[str, Any]:
     if isinstance(value, str):
-        return {
-            "country": value.strip(),
-            "region": value.strip(),
-            "language": "待验证",
-            "localization_gap": "待验证本地语言、支付、渠道或工作流差异",
-            "transfer_reason": "同类任务在来源市场已有付费，本地供给仍需验证",
-        }
+        value = {"country": value}
     if not isinstance(value, dict):
         raise ExpansionError("regions 中每项必须是字符串或对象")
     country = value.get("country") or value.get("market") or value.get("region")
@@ -68,13 +71,9 @@ def _region_variant(value: Any, benchmark: dict[str, Any]) -> dict[str, str]:
     return {
         "country": str(country).strip(),
         "region": str(value.get("region") or country).strip(),
-        "language": str(value.get("language") or "待验证").strip(),
-        "localization_gap": str(
-            value.get("localization_gap") or "待验证本地语言、支付、渠道或工作流差异"
-        ).strip(),
-        "transfer_reason": str(
-            value.get("transfer_reason") or f"{benchmark['source_market']} 已存在付费对标"
-        ).strip(),
+        "language": value.get("language"),
+        "localization_gap": value.get("localization_gap"),
+        "transfer_reason": value.get("transfer_reason") or benchmark.get("transfer_reason"),
     }
 
 
@@ -97,114 +96,120 @@ def _normalize_benchmark(value: Any) -> dict[str, Any]:
     return benchmark
 
 
+def _benchmark_variants(benchmark: dict[str, Any], dimensions: dict[str, Any]):
+    """逐个产出变体，未经验证的扩展字段独立记录为假设。"""
+    defaults = {
+        "target_user": benchmark.get("target_user") or benchmark["payer"],
+        "context": benchmark.get("buying_trigger") or benchmark.get("job"),
+        "wedge": benchmark.get("new_form") or benchmark.get("wedge"),
+        "target_region": benchmark["source_market"],
+        "acquisition_channel": benchmark.get("acquisition_channel"),
+    }
+    axes = (
+        _items(dimensions, "segments", defaults["target_user"]),
+        _items(dimensions, "triggers", defaults["context"] or "待验证购买触发条件"),
+        _items(dimensions, "forms", defaults["wedge"] or "待验证产品切入口"),
+        _items(dimensions, "regions", defaults["target_region"]),
+        _items(dimensions, "channels", defaults["acquisition_channel"]),
+        _items(dimensions, "offers", benchmark.get("delivery_model")),
+    )
+    for segment, trigger, form, region_value, channel, offer in itertools.product(*axes):
+        region = _region_variant(region_value, benchmark)
+        target_user = _text_variant(segment, "target_user")
+        buying_trigger = _text_variant(trigger, "buying_trigger")
+        wedge = _text_variant(form, "wedge")
+        acquisition_channel = _text_variant(channel, "acquisition_channel") if channel is not None else None
+        delivery_model = _text_variant(offer, "delivery_model") if offer is not None else None
+        identity = {
+            "benchmark_id": benchmark["id"], "target_user": target_user, "buying_trigger": buying_trigger,
+            "wedge": wedge, "country": region["country"], "channel": acquisition_channel,
+            "delivery_model": delivery_model,
+        }
+        marker = canonical_sha256(identity)
+        candidate = {
+            "schema_version": SCHEMA_VERSION,
+            "candidate_id": f"CAND-{marker[:10].upper()}",
+            "variant_id": f"VAR-{marker[:10].upper()}",
+            "title": f"面向{target_user}的{wedge}",
+            "benchmark_ids": [benchmark["id"]], "benchmark_product": benchmark["product"],
+            "target_user": target_user, "context": buying_trigger,
+            "problem_or_desire": benchmark.get("problem_or_desire") or benchmark.get("job") or "待验证用户需求",
+            "wedge": wedge, "payer": str(benchmark["payer"]).strip(), "buying_trigger": buying_trigger,
+            "current_alternative": benchmark.get("current_alternative") or benchmark["product"],
+            "current_spend": benchmark.get("current_spend") or benchmark.get("price"),
+            "payment_signals": deepcopy(benchmark["payment_signals"]),
+            "product_gap": benchmark.get("product_gap"),
+            "acquisition_channel": acquisition_channel, "delivery_model": delivery_model,
+            "mvp_days": benchmark.get("mvp_days"), "mvp_scope": benchmark.get("mvp_scope"),
+            "evidence": deepcopy(benchmark.get("evidence") or []),
+            "demand_signals": deepcopy(benchmark.get("demand_signals") or []),
+            "source_region": str(benchmark["source_market"]).strip(), "target_region": region["country"],
+            "localization_gap": region["localization_gap"], "transfer_reason": region["transfer_reason"],
+            "market_scope": {"country": region["country"], "region": region["region"],
+                             "language": region["language"], "primary_channel": acquisition_channel},
+            "hypotheses": {},
+        }
+        for field, baseline in defaults.items():
+            if normalize_identity(candidate[field]) != normalize_identity(baseline):
+                candidate["hypotheses"][field] = {"value": candidate[field], "basis": "扩展假设，须取得候选范围内的新证据"}
+        for field in ("product_gap", "acquisition_channel", "mvp_days", "mvp_scope"):
+            if candidate[field] is None:
+                candidate["hypotheses"][field] = {"value": None, "basis": "尚无事实或估算依据"}
+        if benchmark.get("is_demo") is True:
+            candidate["is_demo"] = True
+        if isinstance(benchmark.get("candidate_verifications"), dict):
+            candidate["candidate_verifications"] = deepcopy(benchmark["candidate_verifications"])
+        yield candidate
+
+
 def expand_ideas(payload: dict[str, Any], *, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
-    """做有限笛卡尔扩展；相同输入始终产生相同顺序与候选 ID。"""
-    if not isinstance(payload, dict):
-        raise ExpansionError("输入必须是 JSON 对象")
-    if not 1 <= limit <= MAX_LIMIT:
+    """维度先去重，再按对标轮询扩展；扫描预算独立于候选数量。"""
+    try:
+        envelope = validate_stage_envelope(payload)
+    except ContractError as exc:
+        raise ExpansionError(str(exc)) from exc
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
         raise ExpansionError(f"limit 必须在 1 到 {MAX_LIMIT} 之间")
     raw_benchmarks = payload.get("benchmarks")
     if not isinstance(raw_benchmarks, list) or not raw_benchmarks:
         raise ExpansionError("输入必须包含非空 benchmarks 数组")
-    dimensions = payload.get("dimensions") or {}
+    dimensions = payload.get("dimensions", {})
     if not isinstance(dimensions, dict):
         raise ExpansionError("dimensions 必须是对象")
-
     benchmarks = [_normalize_benchmark(item) for item in raw_benchmarks]
+    # 共享维度只去重一次，避免每个对标重复处理大数组。
+    dimensions = {key: _items(dimensions, key, None) for key in DIMENSION_KEYS if key in dimensions}
+    iterators = [iter(_benchmark_variants(item, dimensions)) for item in benchmarks]
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
-    truncated = False
-    for benchmark in benchmarks:
-        segment_fallback = benchmark.get("target_user") or benchmark["payer"]
-        trigger_fallback = benchmark.get("buying_trigger") or benchmark.get("job") or "出现高频重复任务时"
-        form_fallback = benchmark.get("new_form") or benchmark.get("wedge") or "用 AI 缩短一次高成本操作"
-        channel_fallback = benchmark.get("acquisition_channel") or "付费对标用户所在社区"
-        offer_fallback = benchmark.get("delivery_model") or "订阅制数字产品"
-        axes = (
-            _items(dimensions, "segments", segment_fallback),
-            _items(dimensions, "triggers", trigger_fallback),
-            _items(dimensions, "forms", form_fallback),
-            _items(dimensions, "regions", benchmark["source_market"]),
-            _items(dimensions, "channels", channel_fallback),
-            _items(dimensions, "offers", offer_fallback),
-        )
-        for segment, trigger, form, region_value, channel, offer in itertools.product(*axes):
-            region = _region_variant(region_value, benchmark)
-            target_user = _text_variant(segment, "target_user")
-            buying_trigger = _text_variant(trigger, "buying_trigger")
-            wedge = _text_variant(form, "wedge")
-            acquisition_channel = _text_variant(channel, "acquisition_channel")
-            delivery_model = _text_variant(offer, "delivery_model")
-            identity = {
-                "benchmark_id": benchmark["id"],
-                "target_user": target_user,
-                "buying_trigger": buying_trigger,
-                "wedge": wedge,
-                "country": region["country"],
-                "channel": acquisition_channel,
-                "delivery_model": delivery_model,
-            }
-            marker = canonical_sha256(identity)
-            if marker in seen:
+    scanned = 0
+    active = list(iterators)
+    while active and len(candidates) < limit and scanned < MAX_COMBINATION_SCANS:
+        next_active = []
+        for iterator in active:
+            if len(candidates) >= limit or scanned >= MAX_COMBINATION_SCANS:
+                next_active.append(iterator)
                 continue
-            seen.add(marker)
-            source_market = str(benchmark["source_market"]).strip()
-            candidate = {
-                "schema_version": SCHEMA_VERSION,
-                "candidate_id": f"CAND-{marker[:10].upper()}",
-                "title": f"面向{target_user}的{wedge}",
-                "benchmark_ids": [benchmark["id"]],
-                "benchmark_product": benchmark["product"],
-                "target_user": target_user,
-                "context": buying_trigger,
-                "problem_or_desire": str(
-                    benchmark.get("problem_or_desire") or benchmark.get("job") or f"更低成本完成 {benchmark['product']} 对应任务"
-                ).strip(),
-                "wedge": wedge,
-                "payer": str(benchmark["payer"]).strip(),
-                "buying_trigger": buying_trigger,
-                "current_alternative": str(
-                    benchmark.get("current_alternative") or benchmark["product"]
-                ).strip(),
-                "current_spend": str(benchmark.get("current_spend") or benchmark.get("price") or "金额待核实").strip(),
-                "payment_signals": deepcopy(benchmark["payment_signals"]),
-                "product_gap": str(
-                    benchmark.get("product_gap") or region["localization_gap"]
-                ).strip(),
-                "acquisition_channel": acquisition_channel,
-                "delivery_model": delivery_model,
-                "mvp_days": int(benchmark.get("mvp_days", 30)),
-                "mvp_scope": str(benchmark.get("mvp_scope") or f"只完成“{wedge}”单任务闭环").strip(),
-                "evidence": deepcopy(benchmark.get("evidence") or []),
-                "demand_signals": deepcopy(benchmark.get("demand_signals") or []),
-                "source_region": source_market,
-                "target_region": region["country"],
-                "localization_gap": region["localization_gap"],
-                "transfer_reason": region["transfer_reason"],
-                "market_scope": {
-                    "country": region["country"],
-                    "region": region["region"],
-                    "language": region["language"],
-                    "primary_channel": acquisition_channel,
-                },
-            }
-            candidates.append(candidate)
-            if len(candidates) >= limit:
-                truncated = True
-                break
-        if truncated:
-            break
+            candidate = next(iterator, None)
+            if candidate is None:
+                continue
+            next_active.append(iterator)
+            scanned += 1
+            if candidate["candidate_id"] not in seen:
+                seen.add(candidate["candidate_id"])
+                candidates.append(candidate)
+        active = next_active
+    # 达到输出上限时保守标注截断；自然耗尽的输入不会被误报。
+    truncated = bool(active)
     return {
-        "schema_version": SCHEMA_VERSION,
-        "run_id": payload.get("run_id"),
-        "as_of": payload.get("as_of"),
-        "benchmarks": benchmarks,
+        **envelope, "benchmarks": benchmarks,
         "summary": {
-            "benchmark_count": len(benchmarks),
-            "candidate_count": len(candidates),
-            "limit": limit,
-            "truncated": truncated,
-            "expansion_axes": list(DIMENSION_KEYS),
+            "benchmark_count": len(benchmarks), "candidate_count": len(candidates), "limit": limit,
+            "truncated": truncated, "expansion_axes": list(DIMENSION_KEYS),
+            "combinations_scanned": scanned, "scan_budget": MAX_COMBINATION_SCANS,
+            "benchmark_coverage": len({item["benchmark_ids"][0] for item in candidates}),
+            "target_user_coverage": len({item["target_user"] for item in candidates}),
+            "target_region_coverage": len({item["target_region"] for item in candidates}),
         },
         "candidates": candidates,
     }

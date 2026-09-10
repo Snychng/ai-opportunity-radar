@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
-from contracts import SCHEMA_VERSION, canonical_sha256, normalize_identity
+from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, fingerprint_record, normalize_identity, validate_stage_envelope
 
 
 class DigestError(ValueError):
@@ -42,8 +42,33 @@ def _cell(value: Any, default: str = "待验证") -> str:
     return _text(value, default).replace("|", "\\|")
 
 
-def _record_id(record: dict[str, Any]) -> str:
-    return _cell(record.get("id") or record.get("candidate_id") or "未分配 ID")
+def _is_demo(record: dict[str, Any]) -> bool:
+    if record.get("is_demo") is True:
+        return True
+    return any(isinstance(item, dict) and _is_demo(item)
+               for field in ("variants", "evidence")
+               if isinstance(record.get(field), list) for item in record[field])
+
+
+def _record_id(record: dict[str, Any], *, inherited_demo: bool = False) -> str:
+    identifier = _cell(record.get("id") or record.get("candidate_id") or "未分配 ID")
+    return identifier + ("（演示）" if inherited_demo or _is_demo(record) else "")
+
+
+def _family_identity(record: dict[str, Any]) -> str:
+    """展示构成业务身份的实际差异，避免不同场景或渠道呈现为重复点子。"""
+    scope = record.get("market_scope") or {}
+    scope = scope if isinstance(scope, dict) else {}
+    fields = (
+        ("人群", record.get("target_user")),
+        ("触发", record.get("context") or record.get("buying_trigger")),
+        ("任务", record.get("problem_or_desire")),
+        ("切口", record.get("wedge")),
+        ("国家", scope.get("country") or record.get("target_region")),
+        ("区域", scope.get("region")),
+        ("主渠道", scope.get("primary_channel") or record.get("acquisition_channel")),
+    )
+    return _cell("；".join(f"{label}：{_text(value)}" for label, value in fields if value))
 
 
 def _benchmark(record: dict[str, Any]) -> str:
@@ -102,15 +127,22 @@ def _execution_metrics(executions: Iterable[dict[str, Any]]) -> tuple[dict[str, 
     sources: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"requests": 0, "ok": 0, "error": 0, "estimated_cost_usd": Decimal("0")}
     )
+    seen: set[str] = set()
     for payload in executions:
         if not isinstance(payload, dict):
             raise DigestError("execution 输入必须是对象")
+        marker = canonical_sha256(payload)
+        if marker in seen:
+            continue
+        seen.add(marker)
         summary = payload.get("summary") or {}
         if not isinstance(summary, dict):
             raise DigestError("execution.summary 必须是对象")
-        totals["requests"] += int(summary.get("requests") or 0)
-        totals["ok"] += int(summary.get("ok") or 0)
-        totals["error"] += int(summary.get("error") or 0)
+        totals["requests"] += _count(summary.get("requests", 0))
+        totals["ok"] += _count(summary.get("ok", 0))
+        totals["error"] += _count(summary.get("error", 0))
+        if _count(summary.get("ok", 0)) + _count(summary.get("error", 0)) > _count(summary.get("requests", 0)):
+            raise DigestError("成功与错误请求之和不能超过总请求数")
         totals["estimated_cost_usd"] += _decimal(summary.get("estimated_attempted_cost_usd"))
         by_source = summary.get("by_source") or []
         if not isinstance(by_source, list):
@@ -119,11 +151,42 @@ def _execution_metrics(executions: Iterable[dict[str, Any]]) -> tuple[dict[str, 
             if not isinstance(item, dict):
                 continue
             source = normalize_identity(item.get("source")) or "unknown"
-            sources[source]["requests"] += int(item.get("requests") or 0)
-            sources[source]["ok"] += int(item.get("ok") or 0)
-            sources[source]["error"] += int(item.get("error") or 0)
+            sources[source]["requests"] += _count(item.get("requests", 0))
+            sources[source]["ok"] += _count(item.get("ok", 0))
+            sources[source]["error"] += _count(item.get("error", 0))
             sources[source]["estimated_cost_usd"] += _decimal(item.get("estimated_attempted_cost_usd"))
     return totals, sources
+
+
+def _count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DigestError("请求计数必须是非负整数")
+    return value
+
+
+def _validate_inputs(tiered: dict[str, Any], executions: list[dict[str, Any]], evidence: list[dict[str, Any]], research: list[dict[str, Any]]) -> None:
+    try:
+        envelope = validate_stage_envelope(tiered)
+        for kind, payloads in (("execution", executions), ("evidence", evidence), ("research", research)):
+            for payload in payloads:
+                other = validate_stage_envelope(payload)
+                target_run = envelope.get("run_id")
+                if not target_run:
+                    continue
+                if kind == "execution" and other.get("run_id") != target_run:
+                    raise DigestError("执行费用必须属于本次 run_id；历史证据复用不能混入旧费用")
+                if other.get("run_id") and other["run_id"] != target_run:
+                    if kind == "execution" or payload.get("reused_for_run_id") != target_run:
+                        raise DigestError(f"{kind} 跨运行复用必须声明 reused_for_run_id")
+    except ContractError as exc:
+        raise DigestError(str(exc)) from exc
+
+
+def _family_key(record: dict[str, Any]) -> str:
+    try:
+        return fingerprint_record(record)
+    except ContractError:
+        return str(record.get("fingerprint") or record.get("id") or record.get("candidate_id") or canonical_sha256(record))
 
 
 def _normalized_evidence(
@@ -185,20 +248,21 @@ def _used_evidence_markers(records: Iterable[dict[str, Any]]) -> set[str]:
     return result
 
 
-def _opportunity_table(records: list[dict[str, Any]], *, tier: str) -> str:
+def _opportunity_table(records: list[dict[str, Any]], *, tier: str, inherited_demo: bool = False) -> str:
     lines = [
-        "| ID | 点子 | 付款者 | 付费对标/现有支出 | 当前替代 | 产品缺口 | 获客渠道 | 30 天 MVP | 证据 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| ID | 点子 | 人群、场景与市场 | 付款者 | 付费对标/现有支出 | 当前替代 | 产品缺口 | 获客渠道 | 30 天 MVP | 证据 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     if not records:
-        lines.append(f"| - | 没有达到 {tier} 级的候选 | - | - | - | - | - | - | - |")
+        lines.append(f"| - | 没有达到 {tier} 级的候选 | - | - | - | - | - | - | - | - |")
     for record in records:
         lines.append(
             "| "
             + " | ".join(
                 (
-                    _record_id(record),
+                    _record_id(record, inherited_demo=inherited_demo),
                     _cell(record.get("title") or record.get("name")),
+                    _family_identity(record),
                     _cell(record.get("payer")),
                     _benchmark(record),
                     _cell(record.get("current_alternative")),
@@ -213,21 +277,22 @@ def _opportunity_table(records: list[dict[str, Any]], *, tier: str) -> str:
     return "\n".join(lines)
 
 
-def _regional_table(records: list[dict[str, Any]]) -> str:
+def _regional_table(records: list[dict[str, Any]], *, inherited_demo: bool = False) -> str:
     lines = [
-        "| ID | 点子 | 来源 → 目标地区 | 可能付款者 | 付费对标 | 本地差异 | 最小产品 | 缺失证据 | 证据 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| ID | 点子 | 人群、场景与市场 | 来源 → 目标地区 | 可能付款者 | 付费对标 | 本地差异 | 最小产品 | 缺失证据 | 证据 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     if not records:
-        lines.append("| - | 没有达到 R 级的区域迁移候选 | - | - | - | - | - | - | - |")
+        lines.append("| - | 没有达到 R 级的区域迁移候选 | - | - | - | - | - | - | - | - |")
     for record in records:
         route = f"{_text(record.get('source_region'))} → {_text(record.get('target_region'))}"
         lines.append(
             "| "
             + " | ".join(
                 (
-                    _record_id(record),
+                    _record_id(record, inherited_demo=inherited_demo),
                     _cell(record.get("title") or record.get("name")),
+                    _family_identity(record),
                     _cell(route),
                     _cell(record.get("payer")),
                     _benchmark(record),
@@ -242,7 +307,7 @@ def _regional_table(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _rejected_table(records: list[dict[str, Any]]) -> str:
+def _rejected_table(records: list[dict[str, Any]], *, inherited_demo: bool = False) -> str:
     lines = [
         "| ID | 点子 | 未通过门槛 | 已知付款者 | 已知对标 | 补证后可重审 |",
         "|---|---|---|---|---|---|",
@@ -255,7 +320,7 @@ def _rejected_table(records: list[dict[str, Any]]) -> str:
             "| "
             + " | ".join(
                 (
-                    _record_id(record),
+                    _record_id(record, inherited_demo=inherited_demo),
                     _cell(record.get("title") or record.get("name")),
                     _cell(reasons),
                     _cell(record.get("payer")),
@@ -289,6 +354,9 @@ def build_result_digest(
     )[:rejected_limit]
     all_qualified = [*deep, *quick, *regional]
     execution_payloads = list(executions)
+    evidence_payloads = list(evidence_payloads)
+    research_payloads = list(research_payloads)
+    _validate_inputs(tiered, execution_payloads, evidence_payloads, research_payloads)
     execution_totals, execution_sources = _execution_metrics(execution_payloads)
     evidence_markers, evidence_by_source = _normalized_evidence(evidence_payloads)
     cluster_count = _cluster_count(research_payloads)
@@ -296,6 +364,8 @@ def build_result_digest(
     used_normalized = used_markers & evidence_markers
     linked_by_source = _linked_by_source(all_qualified)
     qualified_count = len(all_qualified)
+    family_count = len({_family_key(record) for record in all_qualified})
+    validated_family_count = len({_family_key(record) for record in [*deep, *quick]})
     suggested_report_display_count = min(len(deep), 5) + min(len(quick), 40) + min(len(regional), 80)
     additional_conclusion_count = qualified_count - suggested_report_display_count
     cost = execution_totals["estimated_cost_usd"]
@@ -320,6 +390,16 @@ def build_result_digest(
         )
 
     summary = tiered.get("summary") or {}
+    expansion_summary = tiered.get("expansion_summary") or {}
+    warnings = tiered.get("warnings") or []
+    if not isinstance(expansion_summary, dict):
+        raise DigestError("expansion_summary 必须是对象")
+    if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+        raise DigestError("warnings 必须是字符串数组")
+    inherited_demo = tiered.get("is_demo") is True
+    contains_demo = inherited_demo or any(
+        _is_demo(record) for record in [*all_qualified, *benchmarks, *_as_list(tiered.get("rejected"), label="rejected")]
+    )
     raw_count = int(summary.get("raw") or 0)
     metrics = {
         "schema_version": SCHEMA_VERSION,
@@ -327,12 +407,19 @@ def build_result_digest(
         "run_id": tiered.get("run_id"),
         "benchmark_count": len(benchmarks),
         "raw_candidate_count": raw_count,
+        "contains_demo_data": contains_demo,
+        "demo_family_count": len({_family_key(record) for record in all_qualified if inherited_demo or _is_demo(record)}),
+        "expansion_truncated": expansion_summary.get("truncated"),
         "deep_candidate_count": len(deep),
         "quick_idea_count": len(quick),
         "regional_signal_count": len(regional),
         "suggested_report_display_count": suggested_report_display_count,
         "additional_conclusion_count": additional_conclusion_count,
         "qualified_conclusion_count": qualified_count,
+        "qualified_family_count": family_count,
+        "validated_opportunity_family_count": validated_family_count,
+        "regional_hypothesis_family_count": len({_family_key(record) for record in regional}),
+        "delivery_variant_count": sum(len(record.get("variants") or [record]) for record in all_qualified),
         "rejected_total": len(_as_list(tiered.get("rejected"), label="rejected")),
         "rejected_displayed": len(rejected),
         "normalized_evidence_count": len(evidence_markers),
@@ -344,6 +431,7 @@ def build_result_digest(
         "paid_request_error": execution_totals["error"],
         "estimated_cost_usd": float(cost) if execution_payloads else None,
         "cost_per_qualified_conclusion_usd": None if cost_per_qualified is None else float(cost_per_qualified.quantize(Decimal("0.000001"))),
+        "cost_per_validated_family_usd": None if not execution_payloads or not validated_family_count else float((cost / validated_family_count).quantize(Decimal("0.000001"))),
     }
 
     utilization_text = "未知" if utilization is None else f"{utilization.quantize(Decimal('0.01'))}%"
@@ -362,7 +450,17 @@ def build_result_digest(
             f"{row['normalized_evidence']} | {row['linked_conclusions']} |"
         )
 
+    notices = []
+    if contains_demo:
+        notices.append("> **包含演示数据**：标为“演示”的候选只用于验证流程；对标、分层和费用产出不能作为真实市场验证。")
+    if expansion_summary.get("truncated") is True:
+        notices.append("> **扩展可能受限**：候选数量或扫描达到配置上限，尚未确认是否仍有未生成组合；本清单仅覆盖实际生成的候选，不代表穷尽全部组合。")
+    if warnings:
+        notices.append("运行提示：\n\n" + "\n".join(f"- {_text(item)}" for item in warnings))
+
     markdown = f"""# AI 创业机会完整结论清单｜{_text(tiered.get('as_of'), '未注明日期')}
+
+{chr(10).join(notices)}
 
 > 本文件展示全部合格 A/B/R 候选，包括超出日报数量上限的 overflow；不会只保留 Top 5。
 
@@ -376,6 +474,9 @@ def build_result_digest(
 - 建议日报展示结论数量：{metrics['suggested_report_display_count']}
 - 完整清单额外结论数量：{metrics['additional_conclusion_count']}
 - 合格结论数量：{metrics['qualified_conclusion_count']}
+- 独立机会家族数量：{metrics['qualified_family_count']}
+- A/B 研究资格家族数量：{metrics['validated_opportunity_family_count']}
+- 交付与报价变体数量：{metrics['delivery_variant_count']}
 - 被拒绝候选总数：{metrics['rejected_total']}
 - 展示的接近合格候选数量：{metrics['rejected_displayed']}
 
@@ -394,19 +495,19 @@ def build_result_digest(
 
 ## 一、全部 A 级深度候选
 
-{_opportunity_table(deep, tier='A')}
+{_opportunity_table(deep, tier='A', inherited_demo=inherited_demo)}
 
 ## 二、全部 B 级快速点子
 
-{_opportunity_table(quick, tier='B')}
+{_opportunity_table(quick, tier='B', inherited_demo=inherited_demo)}
 
 ## 三、全部 R 级区域迁移创意
 
-{_regional_table(regional)}
+{_regional_table(regional, inherited_demo=inherited_demo)}
 
 ## 四、最接近合格但被拒绝
 
-{_rejected_table(rejected)}
+{_rejected_table(rejected, inherited_demo=inherited_demo)}
 
 ## 五、说明
 
@@ -414,6 +515,7 @@ def build_result_digest(
 - 拒绝池按未通过门槛数量从少到多展示前 {rejected_limit} 个；完整拒绝池保留在 tiered JSON。
 - 费用为执行文件中的尝试成本估算，实际账单仍以服务商日志为准。
 - 证据利用率只统计传入的规范化证据中，被合格候选直接引用的唯一证据。
+- 合格结论包含 R 级假设；低单价不代表市场已验证。A/B 研究资格也不等于你的产品已获得付款。
 """
     return {"metrics": metrics, "source_yield": source_rows, "markdown": markdown}
 

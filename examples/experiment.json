@@ -1,0 +1,14 @@
+{
+  "schema_version": "3.0",
+  "experiment_id": "EXP-20260910-001",
+  "record_id": "OPP-20260910-ABCDEF",
+  "run_id": "RUN-20260910-ABCDEF1234",
+  "as_of": "2026-09-10",
+  "status": "planned",
+  "hypothesis": "示例：愿为准确订单答复付费",
+  "offer": "示例：人工辅助交付一次答复",
+  "success_criteria": "示例：接受报价",
+  "stop_criteria": "示例：无法获得真实任务",
+  "counts": {},
+  "evidence": []
+}

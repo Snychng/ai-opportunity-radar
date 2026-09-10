@@ -1,5 +1,7 @@
 # A 级深度候选评分契约
 
+最后更新：2026-09-10。
+
 ## 1. 评分不是过滤器
 
 先执行六项硬门槛和 A/B/R 分层。只有 A 级候选进入本评分；B 级直接形成快速卡片，R 级保持 `SIG`。
@@ -35,25 +37,52 @@
 - `personal_influence`：开源项目或代表作价值
 - `confidence`：证据置信度
 
-单一独立来源的 `confidence` 自动封顶 4。来源多但都转述同一事件时，人工仍按单来源处理。
+单一独立来源直接拒绝评分，不能通过降低 `confidence` 绕过 A 级门槛。来源数按有效原始内容和发布主体归并，采集渠道名称不代表独立来源。所有主评分和辅助评分必须是有限的 0–10 数字，不接受布尔值。
 
 ## 4. 输入示例
 
-评分前必须先用 `manage_state.py prepare` 分配 OPP：
+评分前必须先用 `manage_state.py prepare` 分配 OPP。以下是完整的离线契约样例：金额、域名、事实均为虚构，专用于测试结构，不能作为真实研究结果。把 JSON 保存为临时文件后可用 `score_candidates.py --input /tmp/a-candidate.json` 检查结构；实际生产记录必须换成已核验事实，仓库演示候选仍保留 `is_demo: true` 并拒绝 A 级。
 
 ```json
 {
-  "id": "OPP-20260715-A1B2C3",
+  "id": "OPP-20260910-A1B2C3",
   "evidence_tier": "A",
   "benchmark_ids": ["BENCH-1234ABCD"],
-  "payer": "独立站商家",
+  "payer": "美国独立站商家",
   "buying_trigger": "大促前客服量翻倍",
-  "acquisition_channel": "Shopify 商家社区",
+  "current_alternative": "人工客服与现有服务",
+  "product_gap": "每天仍需人工重复回复常见问题",
+  "acquisition_channel": "商家社区",
+  "mvp_days": 21,
+  "mvp_scope": "导入 FAQ 并生成一次回复",
+  "source_region": "美国",
+  "target_region": "美国",
   "track": "needle",
-  "target_user": "印尼独立站商家",
+  "target_user": "美国独立站商家",
   "context": "大促前 FAQ 激增",
   "problem_or_desire": "人工客服成本过高",
-  "wedge": "WhatsApp 内自动回复一个 FAQ",
+  "wedge": "自动生成一条 FAQ 回复",
+  "payment_signals": [
+    {
+      "type": "purchase",
+      "region": "美国",
+      "payer": "美国独立站商家",
+      "url": "https://vendor.example/receipt",
+      "fact": "美国商家已支付49美元购买客服服务"
+    }
+  ],
+  "evidence": [
+    {
+      "source": "vendor",
+      "url": "https://vendor.example/receipt",
+      "fact": "美国商家已支付49美元购买客服服务"
+    },
+    {
+      "source": "merchant-forum",
+      "url": "https://merchant-forum.example/problem",
+      "fact": "另一位商家表示每天仍需两小时重复回复问题"
+    }
+  ],
   "scores": {
     "demand": 8,
     "new_form": 7,
@@ -68,15 +97,11 @@
     "scale": 7,
     "personal_influence": 5,
     "confidence": 7
-  },
-  "evidence": [
-    {"source": "vendor", "url": "https://..."},
-    {"source": "community", "url": "https://..."}
-  ]
+  }
 }
 ```
 
-脚本写入 `scoring_version=3.0`、实际权重、独立来源数和置信度封顶状态。
+输入不得丢弃过滤器输出的 `hypotheses`、`candidate_verifications` 和原始证据。脚本重新运行分层检查，写入 `scoring_version=3.0`、实际权重和 `independent_source_count`。`confidence_capped=false` 仅为兼容旧输出字段；单来源已经在入口被拒绝。
 
 ## 5. 评分锚点
 
@@ -87,3 +112,5 @@
 - 9–10：非常强且直接，谨慎使用
 
 合规、平台政策、数据获取、内容审核、巨头复制和一人运营压力作为独立风险标签，不偷偷混入总分。
+
+市场分数不合并个人技能、时间或预算适配分；个人行动建议通过 [个人适配与验证](personal-validation.md) 单独给出。

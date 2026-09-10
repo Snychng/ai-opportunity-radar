@@ -309,6 +309,25 @@ class TikHubPlanTests(unittest.TestCase):
                 query_groups=[{"id": "bad-date", "keyword": "test", "sources": ["tiktok"]}],
             )
 
+    def test_explicit_query_locale_is_validated_without_new_endpoints(self) -> None:
+        plan = build_search_plan(as_of="2026-07-14", run_id=RUN_ID, query_groups=[{"keyword": "注文対応", "sources": ["tiktok"], "country": "JP", "language": "ja"}])
+        self.assertEqual(plan["requests"][0]["params"]["region"], "JP")
+        validate_plan(plan, pricing_rows())
+        plan["requests"][0]["params"]["region"] = "GB"
+        with self.assertRaises(PlanError):
+            validate_plan(plan, pricing_rows())
+        with self.assertRaises(PlanError):
+            build_search_plan(as_of="2026-07-14", run_id=RUN_ID, query_groups=[{"keyword": "tool", "sources": ["tiktok"], "country": "ZZ"}])
+
+    def test_gap_execution_retains_metadata_for_normalizer(self) -> None:
+        plan = build_evidence_gap_plan(as_of="2026-07-14", run_id=RUN_ID, gaps=[{"candidate_id": "CAND-example", "missing_gate": "local_payment", "target_region": "JP", "expected_promotion": "b_to_a", "keyword": "invoice paid", "sources": ["tiktok"]}])
+        result = execute_plan(plan, pricing_rows=pricing_rows(), token="synthetic-test-key", max_cost_usd=1, account_transport=healthy_account_transport, transport=lambda **kwargs: {"code": 200, "data": {"search_item_list": [{"aweme_info": {"aweme_id": "test", "desc": "invoice paid"}}]}})
+        self.assertEqual(result["results"][0]["evidence_gap"], plan["requests"][0]["evidence_gap"])
+        from normalize_tikhub_results import normalize_documents
+        normalized = normalize_documents([result])
+        self.assertEqual(normalized["stats"]["valid_items"], 1)
+        self.assertEqual(normalized["evidence"][0]["evidence_gap"]["candidate_id"], "CAND-example")
+
     def test_rejects_modified_or_missing_fixed_search_parameters(self) -> None:
         plan = sample_plan()
         plan["requests"][0]["params"]["count"] = -1

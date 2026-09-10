@@ -1,0 +1,34 @@
+{
+  "name": "ai-opportunity-radar",
+  "version": "3.1.0",
+  "instructions": "SKILL.md",
+  "entrypoint": [
+    "python3",
+    "scripts/radar.py"
+  ],
+  "runtime": {
+    "python": ">=3.10",
+    "platforms": [
+      "macOS",
+      "Linux"
+    ],
+    "dependencies": []
+  },
+  "required_capabilities": [
+    "read_files",
+    "write_files",
+    "execute_commands"
+  ],
+  "optional_capabilities": [
+    "web_research"
+  ],
+  "references": {
+    "integration": "references/agent-integration.md",
+    "contracts": "references/data-contracts.md",
+    "validation": "references/personal-validation.md"
+  },
+  "data_home": {
+    "environment": "AI_OPPORTUNITY_RADAR_HOME",
+    "default": "~/Documents/AI-Opportunity-Radar"
+  }
+}

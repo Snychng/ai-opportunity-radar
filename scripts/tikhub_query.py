@@ -31,6 +31,33 @@ MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_BATCH_RESULT_BYTES = 32 * 1024 * 1024
 SENSITIVE_KEY_PARTS = ("authorization", "cookie", "token", "api_key", "apikey", "secret", "password")
 EVIDENCE_GAP_PROMOTIONS = {"rejected_to_b", "rejected_to_r", "r_to_b", "b_to_a", "confirm_rejection"}
+# 仅校验已有地域参数；不据此扩展端点或宣称证据来自该地区。
+COUNTRY_CODES = frozenset("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW".split())
+TIKHUB_RESULT_STAGES = {"search_discovery", "evidence_gap_verification", "comment_deep_dive"}
+
+
+def validate_query_locale(country: Any = None, language: Any = None) -> dict[str, str]:
+    """显式代码可校验，未知地域与语言保留 unknown。"""
+    country = "unknown" if country in (None, "", "unknown") else country
+    language = "unknown" if language in (None, "", "unknown") else language
+    if not isinstance(country, str) or (country != "unknown" and country not in COUNTRY_CODES):
+        raise PlanError("country 必须为已知大写两字母地区代码或 unknown")
+    if not isinstance(language, str) or (language != "unknown" and not re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}", language)):
+        raise PlanError("language 必须为语言代码，例如 ja、pt-BR，或 unknown")
+    return {"country": country, "language": language}
+
+
+def _localized_defaults(source: str, locale: dict[str, str]) -> dict[str, Any]:
+    defaults = dict(RADAR_ENDPOINTS[source]["defaults"])
+    if source == "tiktok" and locale["country"] != "unknown":
+        defaults["region"] = locale["country"]
+    if source == "youtube":
+        if locale["country"] != "unknown":
+            defaults["country_code"] = locale["country"].lower()
+        if locale["language"] != "unknown":
+            defaults["language_code"] = locale["language"].lower()
+    return defaults
+
 
 
 class PlanError(ValueError):
@@ -273,6 +300,7 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
         keyword = str(group.get("keyword", "")).strip()
         if not 1 <= len(keyword) <= 100:
             raise PlanError(f"关键词组 {group_id} 必须包含 1 到 100 个字符")
+        locale = validate_query_locale(group.get("country"), group.get("language"))
         sources = group.get("sources")
         if not isinstance(sources, list) or not sources:
             raise PlanError(f"关键词组 {group_id} 必须指定来源")
@@ -281,11 +309,12 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
             profile = RADAR_ENDPOINTS.get(source)
             if profile is None:
                 raise PlanError(f"不支持的 TikHub 雷达来源：{source}")
-            params = {profile["keyword_param"]: keyword, **profile["defaults"]}
+            params = {profile["keyword_param"]: keyword, **_localized_defaults(source, locale)}
             requests.append(
                 {
                     "id": f"{group_id}-{source}-{source_index}",
                     "query_group": group_id,
+                    "query_scope": dict(locale),
                     "source": source,
                     "endpoint": profile["endpoint"],
                     "method": profile["method"],
@@ -349,7 +378,8 @@ def build_evidence_gap_plan(
         if any(not source for source in normalized_sources) or len(set(normalized_sources)) != len(normalized_sources):
             raise PlanError(f"第 {index} 个证据缺口 sources 不能包含空值或重复来源")
         group_id = _slug(f"gap-{candidate_id}-{index}")
-        groups.append({"id": group_id, "keyword": keyword, "sources": normalized_sources})
+        groups.append({"id": group_id, "keyword": keyword, "sources": normalized_sources,
+                       "country": gap.get("country"), "language": gap.get("language")})
         gap_metadata[group_id] = {
             "candidate_id": candidate_id,
             "missing_gate": missing_gate,
@@ -459,6 +489,9 @@ def build_comment_plan(
         source = str(selection.get("source", "")).strip().lower()
         selected_item_id = str(selection.get("selected_item_id", "")).strip()
         reason = str(selection.get("selection_reason", "")).strip()
+        parent_url = selection.get("parent_url")
+        if parent_url is not None and (not isinstance(parent_url, str) or len(parent_url) > 2000 or not parent_url.startswith(("https://", "http://"))):
+            raise PlanError(f"第 {index} 个候选 parent_url 必须为公开网页 URL")
         if not selected_item_id or len(selected_item_id) > 200:
             raise PlanError(f"第 {index} 个候选缺少合法 selected_item_id")
         if not reason or len(reason) > 500:
@@ -481,6 +514,7 @@ def build_comment_plan(
                     "source": source,
                     "kind": request_item["kind"],
                     "selected_item_id": selected_item_id,
+                    "parent_url": parent_url,
                     "selection_reason": reason,
                     "content_type": content_type,
                     "endpoint": request_item["endpoint"],
@@ -590,7 +624,7 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
     if len(requests) > MAX_REQUESTS:
         raise PlanError(f"单个计划最多包含 {MAX_REQUESTS} 个请求")
     stage = str(plan.get("stage") or "search_discovery")
-    if stage not in {"search_discovery", "evidence_gap_verification", "comment_deep_dive"}:
+    if stage not in TIKHUB_RESULT_STAGES:
         raise PlanError(f"不支持的 TikHub 计划阶段：{stage}")
     if stage == "comment_deep_dive":
         if plan.get("parent_search_run_id") != plan.get("run_id"):
@@ -648,7 +682,11 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
                 raise PlanError(f"请求 {request_id} 包含未允许参数：{key}")
             _validate_scalar(value, location=f"请求 {request_id} 参数 {key}")
         if stage in {"search_discovery", "evidence_gap_verification"}:
-            for key, expected in profile["defaults"].items():
+            query_scope = item.get("query_scope", {})
+            if not isinstance(query_scope, dict) or set(query_scope) - {"country", "language"}:
+                raise PlanError(f"请求 {request_id} 的 query_scope 不合法")
+            locale = validate_query_locale(query_scope.get("country"), query_scope.get("language"))
+            for key, expected in _localized_defaults(source, locale).items():
                 actual = params.get(key, object())
                 if type(actual) is not type(expected) or actual != expected:
                     raise PlanError(f"请求 {request_id} 参数 {key} 必须固定为 {expected!r}")
@@ -879,7 +917,7 @@ class _SameOriginRedirectHandler(request.HTTPRedirectHandler):
         old = parse.urlsplit(req.full_url)
         new = parse.urlsplit(parse.urljoin(req.full_url, newurl))
         if old.scheme != new.scheme or old.netloc != new.netloc:
-            raise error.HTTPError(req.full_url, code, "TikHub 拒绝跨域或降级重定向", headers, fp)
+            raise error.HTTPError(req.full_url, code, "拒绝跨域或降级重定向", headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -1129,7 +1167,7 @@ def _execute_plan_with_pricing(
                 "error": "批次结果已达到安全上限，未发起请求",
                 "error_code": "skipped_batch_limit",
             }
-            for field in ("selected_item_id", "kind", "content_type", "selection_reason"):
+            for field in ("selected_item_id", "parent_url", "kind", "content_type", "selection_reason", "evidence_gap", "query_scope"):
                 if field in item:
                     result_item[field] = _sanitize(item[field], secret)
             results.append(result_item)
@@ -1196,7 +1234,7 @@ def _execute_plan_with_pricing(
             "attempts": attempts,
             "estimated_attempted_cost_usd": _money(request_prices[item["id"]] * attempts),
         }
-        for field in ("selected_item_id", "kind", "content_type", "selection_reason"):
+        for field in ("selected_item_id", "parent_url", "kind", "content_type", "selection_reason", "evidence_gap", "query_scope"):
             if field in item:
                 result_item[field] = _sanitize(item[field], secret)
         if status == "ok":

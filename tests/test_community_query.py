@@ -3,11 +3,16 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from urllib import error, request
+from unittest import mock
+
 from pathlib import Path
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+
+import community_query as cq
 
 from community_query import (  # noqa: E402
     CommunityPlanError,
@@ -91,6 +96,28 @@ class CommunityQueryTests(unittest.TestCase):
         self.assertGreater(result["evidence"][0]["local_relevance"], 0)
         self.assertTrue(any(headers.get("Authorization") == "Bearer top-secret-token" for headers in seen_headers))
         self.assertNotIn("top-secret-token", json.dumps(result))
+
+    def test_targeted_queries_contain_topic_and_remain_short(self) -> None:
+        plan = build_community_plan(as_of="2026-07-14", run_id=RUN_ID, focus_name="unknown", custom_focus="invoice reconciliation for small merchants")
+        for item in plan["requests"]:
+            query = item["params"].get("query", item["params"].get("q"))
+            self.assertIn("invoice", query)
+            self.assertIn("reconciliation", query)
+            if item["source"] == "hackernews":
+                self.assertLessEqual(len(query), 100)
+
+    def test_transport_rejects_cross_origin_and_downgrade_redirects(self) -> None:
+        req = request.Request("https://api.github.com/search/issues", headers={"Authorization": "Bearer synthetic-test-value"})
+        handler = cq._SameOriginRedirectHandler()
+        for destination in ("https://example.com/capture", "http://api.github.com/capture"):
+            with self.assertRaises(error.HTTPError):
+                handler.redirect_request(req, None, 302, "Found", {}, destination)
+        redirected = handler.redirect_request(req, None, 302, "Found", {}, "https://api.github.com/search/issues?page=2")
+        self.assertEqual(redirected.get_header("Authorization"), "Bearer synthetic-test-value")
+        with mock.patch.object(cq.request, "build_opener") as opener:
+            opener.return_value.open.return_value.__enter__.return_value.read.return_value = b'{"items": []}'
+            cq._default_transport(endpoint=cq.GITHUB_ENDPOINT, params={}, headers={}, timeout=1)
+            self.assertIsInstance(opener.call_args.args[0], cq._SameOriginRedirectHandler)
 
     def test_records_partial_source_failure_without_aborting_other_sources(self) -> None:
         plan = build_community_plan(as_of="2026-07-14", run_id=RUN_ID, focus_name="东南亚")

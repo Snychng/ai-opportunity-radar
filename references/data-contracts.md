@@ -1,11 +1,13 @@
 # V3 数据契约与阶段连接
 
+最后更新：2026-09-10。以下字段与当前脚本实现对应；证据真实性仍需研究者核验。
+
 ## 1. 共享运行契约
 
 - `schema_version`、`query_plan_version`、`scoring_version`：当前为 `3.0`。
 - `run_id`：`RUN-YYYYMMDD-XXXXXXXXXX`，由日期、模式、定向范围和版本确定。
 - `as_of`：北京时间 `YYYY-MM-DD`，必须与 `run_id` 日期一致。
-- 所有原始、规范化、扩展、过滤、评分和状态文件都保留同一 `run_id`。
+- 同一轮原始、规范化、扩展、过滤、评分和状态文件保留同一 `run_id`。历史证据或研究结果跨轮复用时，显式声明 `reused_for_run_id`；执行费用只能属于本轮，不能通过复用标记合并旧费用。
 
 阶段顺序：
 
@@ -17,9 +19,9 @@ query_plan
   -> tiered_candidates
   -> evidence_gap_plan -> tikhub_gap_results -> tikhub_normalized
   -> re-run paid_benchmarks + expanded_candidates + tiered_candidates
-  -> full_result_digest
   -> OPP/SIG stable IDs
   -> A-level scoring
+  -> full_result_digest
   -> validated_report
   -> state_observations
 ```
@@ -28,26 +30,45 @@ query_plan
 
 ## 2. 付费对标
 
-最小结构：
+下面是结构示例，域名和金额为虚构占位值。真实使用时替换为已核验的原文；演示数据必须标记 `is_demo: true`，不会进入 A 级。
 
 ```json
 {
-  "id": "BENCH-A1B2C3D4",
-  "product": "已有产品或服务",
+  "product": "现有客服服务",
   "source_market": "美国",
   "payer": "独立站商家",
   "price": "每月 49 美元",
+  "job": "重复回复售前问题",
+  "wedge": "自动生成 FAQ 回复",
   "payment_signals": [
-    {"type": "subscription", "region": "美国", "url": "https://..."}
+    {
+      "type": "purchase",
+      "region": "美国",
+      "payer": "独立站商家",
+      "url": "https://vendor.example/receipt",
+      "fact": "美国商家已支付49美元购买客服服务"
+    }
   ],
-  "current_alternative": "人工客服",
-  "product_gap": "价格高且不支持印尼语",
-  "acquisition_channel": "Shopify 商家社区",
+  "current_alternative": "人工客服与现有服务",
+  "product_gap": "每天仍要人工重复回复常见问题",
+  "acquisition_channel": "商家社区",
   "mvp_days": 21,
   "mvp_scope": "导入 FAQ 并生成一次回复",
-  "evidence": []
+  "is_demo": true,
+  "evidence": [
+    {
+      "source": "vendor",
+      "url": "https://vendor.example/receipt",
+      "fact": "美国商家已支付49美元购买客服服务",
+      "is_demo": true
+    }
+  ]
 }
 ```
+
+`pricing`、`subscription`、`invoice`、`contract`、`preorder` 仅表示收费方式、报价或未确认交易；不能单独证明成交。确认已付款才使用 `purchase`、`paid_subscription`、`paid_invoice`、`paid_contract` 等直接交易类型。没有直接链接及支持文本的字符串标签不构成付款证据。
+
+A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence` 目录中有效、未撤回、非演示的证据。目标地区、付款者、交易类型和支持事实必须属于同一条记录；不能拼接本地定价页与国外购买记录，也不能用 `local: true` 代替地区证据。支持文本字段接受 `fact`、`supporting_fact`、`quote`、`text`、`supports` 或 `original_text`。
 
 `BENCH` ID 根据产品、来源市场、付款者和价格生成；相同对标重跑保持稳定。
 
@@ -71,7 +92,9 @@ query_plan
 }
 ```
 
-六个维度都是可选非空数组；缺失时使用对标自身值。脚本按固定顺序做有限笛卡尔扩展、稳定去重，并生成 `CAND-XXXXXXXXXX`。
+六个维度都是可选非空数组；缺失时使用对标已有值，缺失事实保持未知。维度先去重，再按对标轮询扩展，生成 `CAND-XXXXXXXXXX` 和 `VAR-XXXXXXXXXX`。`--limit` 默认 200、最大 500；另有 5000 次组合扫描预算，达到任一上限时通过 `summary.truncated` 提示截断，并报告扫描次数及对标、人群和地区覆盖数。
+
+过滤结果以 `expansion_summary` 保留上游扩展摘要，并将截断写入 `warnings`。`truncated=true` 是达到上限后的保守提示，包含刚好穷尽的可能；不证明一定还有遗漏。完整清单展示这些提示，不能把“展示全部已生成候选”描述为“穷尽所有组合”。费用指标附带 `expansion_truncated`（缺少上游信息时为 null）、`contains_demo_data` 和 `demo_family_count`；继承顶层演示标记并检查变体内证据，混合数据中的演示家族逐行标记，演示数据不作为市场验证。
 
 扩展候选必须携带：
 
@@ -84,9 +107,27 @@ query_plan
 - `source_region`、`target_region`、`localization_gap`、`transfer_reason`
 - `market_scope.country/region/language/primary_channel`
 
+扩展改变的用户、触发、形态、地区和渠道字段记入 `hypotheses`；缺失的缺口、渠道和 MVP 字段也记为未知假设。A 级前必须逐项提供匹配候选当前值的 `candidate_verifications`，并引用有效证据。例如：
+
+```json
+{
+  "hypotheses": {
+    "target_user": {"value": "小型商家", "basis": "待验证的新细分人群"}
+  },
+  "candidate_verifications": {
+    "target_user": {
+      "value": "小型商家",
+      "evidence": [{"url": "https://merchant.example/interview", "fact": "受访者经营一家小型商店"}]
+    }
+  }
+}
+```
+
+此片段需并入完整候选，且引用原文也必须位于该候选的 `evidence` 中。不能仅删除假设标记来绕过验证。
+
 ## 4. 过滤输出
 
-`filter_ideas.py` 输出四个数组：
+`filter_ideas.py` 按业务身份归并为 `opportunity_family`，保留报价与交付 `variants`，选取单个实际合格变体作为代表，不拼凑不同变体的门槛。输出以下集合：
 
 - `deep_candidates`：A 级，`record_kind=opportunity`
 - `validated_ideas`：B 级，`record_kind=opportunity`
@@ -96,7 +137,7 @@ query_plan
 
 过滤结果同时原样保留 `benchmarks`，并在 `summary.benchmark_count` 记录数量，供费用产出和完整展示使用。
 
-每条保留 `hard_gates`。R 级还必须保留：
+每条保留 `hard_gates`、`variants` 与 `unverified_hypotheses`；`summary.raw` 是原始变体数，`summary.families` 是归并后的机会数。缺失、`unknown`、待验证等占位事实不会通过硬门槛。A 级另需至少两个有支持文本的独立原始来源；同一 URL、转载原文或同一发布主体的不同采集标签不能增加来源数。R 级还必须保留：
 
 - `missing_proof`
 - `promotion_triggers`
@@ -105,13 +146,13 @@ query_plan
 
 ## 5. 完整结论清单
 
-`build_result_digest.py` 读取 tiered JSON，并可重复接收：
+`build_result_digest.py` 读取 tiered JSON。快速摘要可以直接使用 `CAND`；正式研究先为全部 A/B 准备 OPP、R 准备 SIG（含 overflow），将返回记录和 A 级评分按 ID 回填分层数组，再生成完整清单与日报。可重复接收：
 
 - `--execution`：TikHub 搜索、评论或重试执行结果
 - `--evidence`：包含 `evidence` 数组的规范化结果
 - `--research`：包含 `ranked_candidates` 或 `clusters` 的研究结果
 
-输出全部 A、全部 B、全部 R、全部 overflow、建议日报展示数量、完整清单额外数量、按失败门槛数量排序的接近合格项，以及请求、费用、证据利用率、单个合格结论成本和来源产出。同一路径重复传入时 CLI 必须去重，避免费用重复计算。
+输出全部 A、全部 B、全部 R、全部 overflow、建议日报展示数量、完整清单额外数量、按失败门槛数量排序的接近合格项，以及请求、费用、证据利用率、单个合格结论成本和来源产出。同一路径和相同内容的执行结果副本均去重，避免费用重复计算。额外报告 `qualified_family_count`、`validated_opportunity_family_count`、`regional_hypothesis_family_count` 与 `cost_per_validated_family_usd`；R 级是迁移假设，不能计为已验证市场。
 
 完整清单是用户主交付物；日报负责 Top 深度分析与固定结构，但不能替代完整清单。
 
@@ -134,7 +175,9 @@ query_plan
 
 标题、翻译、总分和证据增删不改变 ID。国家或主渠道真正不同时应生成不同 ID。旧记录没有 `market_scope` 时继续使用四字段身份，保持兼容。
 
-必须先执行 `manage_state.py prepare` 分配 ID，再写报告和评分。不要手工编造 ID。
+正式日报、A 级评分及实验引用前，执行 `manage_state.py prepare` 分配 ID；快速摘要不强制准备。A/B 使用 `--kind opportunity`，R 使用 `--kind signal`。实验的 `record_id` 必须引用返回的 `id`，不能填写 `candidate_id`。不要手工编造 ID。
+
+`prepare` 不提交研究观察；准备好稳定 ID 就可以记录 `planned` 实验，不要求先跑真实采集、生成日报或 `record-batch`。单条候选提取、准备和实验文件生成的可执行样例见 [README](../README.md#为自己选择值得验证的项目)。
 
 ## 7. 状态与升级
 
@@ -148,7 +191,11 @@ query_plan
 - `state/opportunity-observations.jsonl`
 - `state/signal-observations.jsonl`
 
-同一 `run_id + kind + fingerprint` 重放不重复写事件；`occurrences` 按唯一日期计数。
+同一 `run_id + kind + fingerprint` 且输入相同的重放不重复写事件；同一运行修改输入会明确报冲突，应使用新的运行保存修订。`occurrences` 按唯一日期计数。
+
+写入通过文件锁、写前 journal 与原子替换覆盖当前视图和观察历史；中断后下一次访问先恢复事务。`history --date YYYY-MM-DD` 返回截止日内最近快照（该参数对应内部 `as_of`），不混入未来字段；不允许倒写日期污染过去快照。
+
+同一链接的纠错保存到 `evidence_history`，保留 `evidence_id`、递增 `version`、`revision_id` 和 `supersedes`。撤回或修订使旧付款信号、需求信号及验证引用失效，并重新检查层级。新运行重新引用修订证据时，必须提供当前 `evidence_revision_id` 和与该版本一致的支持事实；只改版本号不能复活旧主张。
 
 R 级补齐本地直接付款和独立来源后，通过 `manage_state.py promote` 升级：
 
@@ -157,7 +204,7 @@ SIG.promoted_to -> OPP ID
 OPP.promoted_from -> SIG ID
 ```
 
-升级在同一文件锁内写入两侧当前视图与观察事件。已升级 SIG 重放返回原 `OPP`。
+升级在同一可恢复事务内写入两侧当前视图与观察事件，重新核验 A 级门槛及业务身份。已升级 SIG 的相同运行、相同输入重放返回原 `OPP`。
 
 ## 8. 兼容与失败策略
 
@@ -166,4 +213,5 @@ OPP.promoted_from -> SIG ID
 - 报告校验失败时不写机会状态。
 - 未生成完整结论清单或费用产出时，报告校验失败。
 - 状态文件损坏时明确报错，不自动覆盖。
-- 运行数据永远写入 `RADAR_HOME`，不写入 Skill 目录。
+- 持久研究数据统一写入 `RADAR_HOME`；示例临时输出可指定其他位置，不写入项目或技能目录。
+- 通用 CLI、定向范围文件见 [Agent 集成](agent-integration.md)；个人约束和实验日志见 [个人验证](personal-validation.md)。

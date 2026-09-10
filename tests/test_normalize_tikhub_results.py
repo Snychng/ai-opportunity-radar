@@ -175,6 +175,71 @@ class NormalizeTikHubResultsTests(unittest.TestCase):
         )
         self.assertEqual(normalized["source_files"], ["a.json", "b.json"])
 
+    def test_gap_stage_preserves_candidate_context(self) -> None:
+        result = _result("youtube", {"videos": [{"video_id": "yt1", "title": "Local paid invoice tool"}]})
+        result["evidence_gap"] = {"candidate_id": "CAND-example", "missing_gate": "local_payment", "target_region": "JP", "expected_promotion": "b_to_a"}
+        result["query_scope"] = {"country": "JP", "language": "ja"}
+        normalized = normalize_documents([_document([result], stage="evidence_gap_verification")])
+        self.assertEqual(normalized["stage"], "tikhub_normalized_gaps")
+        self.assertEqual(normalized["evidence"][0]["evidence_gap"], result["evidence_gap"])
+        self.assertEqual(normalized["evidence"][0]["query_language"], "ja")
+        self.assertEqual(normalized["evidence"][0]["source_region"], "unknown")
+
+    def test_details_keep_full_text_and_nested_comment_context(self) -> None:
+        detail = {"id": "detail-1", "source": "youtube", "kind": "detail", "selected_item_id": "youtube:yt1", "parent_url": "https://www.youtube.com/watch?v=yt1", "status": "ok", "response": {"data": {"video_id": "yt1", "title": "Invoice task", "description": "完整详情 " + "manual work " * 500, "published_at": "2026-07-13T10:00:00Z"}}}
+        comments = {"id": "comments-1", "source": "youtube", "kind": "top_level_comments", "selected_item_id": "youtube:yt1", "parent_url": detail["parent_url"], "status": "ok", "response": {"data": {"comments": [{"comment_id": "c1", "text": "paid customer", "replies": [{"comment_id": "c2", "text": "Correction: trial only"}]}]}}}
+        normalized = normalize_documents([_document([detail, comments], stage="comment_deep_dive")])
+        self.assertEqual(len(normalized["evidence"]), 1)
+        evidence = normalized["evidence"][0]
+        self.assertIn("manual work " * 400, evidence["original_text"])
+        self.assertEqual(evidence["published_at"], "2026-07-13T10:00:00Z")
+        self.assertEqual(evidence["url"], detail["parent_url"])
+        reply = next(row for row in normalized["comments"] if row["source_item_id"] == "c2")
+        self.assertEqual(reply["parent_comment_id"], "c1")
+        self.assertEqual(reply["url"], detail["parent_url"])
+        self.assertEqual(reply["url_kind"], "parent_post")
+        self.assertEqual(reply["origin_id"], evidence["origin_id"])
+        self.assertTrue(reply["raw_json_pointer"].endswith("/comments/0/replies/0"))
+
+    def test_missing_comment_ids_stay_scoped_to_post_and_reply_parent(self) -> None:
+        results = []
+        for post in ("one", "two"):
+            results.append({"id": post, "source": "youtube", "kind": "top_level_comments", "selected_item_id": "youtube:" + post, "status": "ok", "response": {"data": {"comments": [{"text": "same root text", "author": "person", "replies": [{"text": "same reply", "author": "person"}]}]}}})
+        normalized = normalize_documents([_document(results, stage="comment_deep_dive")])
+        self.assertEqual(len({row["id"] for row in normalized["comments"]}), 4)
+        for post in ("one", "two"):
+            rows = [row for row in normalized["comments"] if row["parent_item_id"] == "youtube:" + post]
+            self.assertEqual(rows[1]["parent_comment_id"], rows[0]["source_item_id"])
+
+    def test_comment_candidate_url_survives_plan_and_detail_order(self) -> None:
+        search = normalize_documents([_document([_result("youtube", {"videos": [{"video_id": "yt1", "title": "Invoice task"}]})])])
+        candidate = dict(search["comment_candidates"][0], selection_reason="具体任务需要补证")
+        plan = build_comment_plan(as_of="2026-07-14", parent_search_run_id=RUN_ID, selections=[candidate])
+        self.assertTrue(all(row["parent_url"] == candidate["parent_url"] for row in plan["requests"]))
+        results = []
+        for request_item in reversed(plan["requests"]):
+            data = {"comments": [{"comment_id": "c1", "text": "manual"}]} if request_item["kind"] == "top_level_comments" else {"video_info": {"video_id": "yt1", "description": "full text"}}
+            item = dict(request_item, status="ok", response={"data": data})
+            item.pop("parent_url")
+            results.append(item)
+        normalized = normalize_documents([_document(results, stage="comment_deep_dive")])
+        self.assertEqual(normalized["comments"][0]["url"], candidate["parent_url"])
+
+    def test_unknown_latin_languages_are_not_assumed_english(self) -> None:
+        examples = ["herramienta demasiado cara", "ferramenta muito cara", "outil trop cher", "công cụ đắt", "日本語の注文対応"]
+        results = [_result("youtube", {"videos": [{"video_id": str(index), "title": value}]}, query_id=str(index)) for index, value in enumerate(examples)]
+        results.append(_result("bilibili", {"result": [{"bvid": "explicit", "title": "outil cher", "language": "fr"}]}))
+        normalized = normalize_documents([_document(results)])
+        for item in normalized["evidence"][:-1]:
+            self.assertNotEqual(item["language"], "en")
+        self.assertEqual(normalized["evidence"][-1]["language"], "fr")
+
+    def test_rejects_unsupported_schema(self) -> None:
+        document = _document([])
+        document["schema_version"] = "2.0"
+        with self.assertRaises(ValueError):
+            normalize_documents([document])
+
     def test_cli_writes_normalized_json(self) -> None:
         doc = _document([_result("youtube", {"videos": [{
             "video_id": "yt1", "title": "Niche pain", "description": "Details", "author": "Channel",
