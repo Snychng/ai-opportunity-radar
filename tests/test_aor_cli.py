@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -8,8 +10,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import radar
 
 
 class AorCliTests(unittest.TestCase):
@@ -27,7 +33,60 @@ class AorCliTests(unittest.TestCase):
             skills = json.loads(result.stdout)
             self.assertEqual([row["name"] for row in skills], ["ai-opportunity-radar"])
             self.assertEqual(Path(skills[0]["path"]).resolve(), ROOT)
-            self.assertEqual(self.invoke("--version", cwd=base).stdout.strip(), "3.2.0")
+            expected = json.loads((ROOT / "agent-manifest.json").read_text())["version"]
+            self.assertEqual(self.invoke("--version", cwd=base).stdout.strip(), expected)
+
+    def quiet_doctor(self, result: dict) -> tuple[int, str, str]:
+        output, errors = io.StringIO(), io.StringIO()
+        with patch("aor_status.doctor", return_value=result), \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = radar.main(["doctor", "--quiet"])
+        return code, output.getvalue(), errors.getvalue()
+
+    def test_quiet_doctor_is_silent_without_confirmed_new_version(self) -> None:
+        for status in ("up_to_date", "ahead", "unknown"):
+            with self.subTest(status=status):
+                result = {"health": "warning" if status == "unknown" else "ok",
+                          "updates": {"status": status, "latest_version": "3.2.1"}, "checks": []}
+                self.assertEqual(self.quiet_doctor(result), (0, "", ""))
+
+    def test_quiet_doctor_notifies_version_and_update_command(self) -> None:
+        result = {"health": "warning", "updates": {"status": "update_available", "latest_version": "3.2.2"},
+                  "checks": [{"name": "updates", "status": "warning", "message": "有更新"}]}
+        code, output, errors = self.quiet_doctor(result)
+        self.assertEqual((code, output), (0, ""))
+        self.assertIn("v3.2.2", errors)
+        self.assertIn("aor update", errors)
+        self.assertEqual(len(errors.splitlines()), 1)
+
+    def test_quiet_doctor_keeps_actionable_local_errors_visible(self) -> None:
+        result = {"health": "error", "updates": {"status": "up_to_date", "latest_version": "3.2.1"},
+                  "checks": [{"name": "manifest", "status": "error", "message": "技能清单损坏"}]}
+        code, output, errors = self.quiet_doctor(result)
+        self.assertEqual((code, output), (1, ""))
+        self.assertIn("技能清单损坏", errors)
+        self.assertNotIn("up_to_date", errors)
+        self.assertNotIn("aor update", errors)
+
+    def test_quiet_offline_doctor_works_outside_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            result = self.invoke("doctor", "--quiet", "--offline", cwd=base)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+            self.assertFalse((base / "cache").exists())
+
+    def test_overview_only_notifies_available_updates(self) -> None:
+        for status in ("up_to_date", "update_available"):
+            output, errors = io.StringIO(), io.StringIO()
+            with patch("aor_status.check_update", return_value={"status": status, "latest_version": "3.2.2"}), \
+                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                self.assertEqual(radar.main([]), 0)
+            self.assertNotIn("up_to_date", output.getvalue())
+            if status == "update_available":
+                self.assertIn("v3.2.2", errors.getvalue())
+                self.assertIn("aor update", errors.getvalue())
+            else:
+                self.assertEqual(errors.getvalue(), "")
 
     def test_offline_doctor_separates_local_health_from_network_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

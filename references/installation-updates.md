@@ -1,6 +1,6 @@
 # 安装与更新
 
-AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `3.2.0`，目前登记一个根技能。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
+AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `3.2.1`，目前登记一个根技能。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
 
 ## 安装稳定版本
 
@@ -40,15 +40,16 @@ python3 scripts/radar.py install \
 
 | 命令 | 行为 |
 |---|---|
-| `aor` / `aor --json` | 查看实际加载版本、提交、目录、技能和有效更新缓存；不联网 |
+| `aor` / `aor --json` | 查看实际加载版本、提交、目录和技能；文本仅在缓存确认有新版本时提醒，JSON 保留完整缓存状态；不联网 |
 | `aor --version` | 输出当前产品版本 |
 | `aor skills --json` | 读取本项目清单登记的技能名称、路径、说明和入口状态 |
+| `aor doctor --quiet` | 日常启动检查，仅在确认有新版本或本地致命错误时输出；其余情况保持安静 |
 | `aor doctor --json` | 检查环境、清单、安装来源、技能入口及稳定更新；可复用有效缓存 |
 | `aor doctor --refresh --json` | 跳过检查缓存，重新查询最新稳定 Release |
 | `aor doctor --offline --json` | 仅检查本地与有效缓存，不联网、不写更新缓存 |
 | `aor update --json` | 重新检查稳定 Release，满足条件时升级受管安装 |
 
-`doctor --refresh` 与 `doctor --offline` 不能同时使用。诊断的 `health` 为 `ok`、`warning` 或 `error`；前两者退出码为 0，本地致命错误退出码为 1。网络状态未知或有可用更新通常属于 warning，应读取 `checks` 中的具体原因。
+`doctor --quiet` 与 `doctor --json` 不能同时使用；安静模式也支持 `--refresh` 或 `--offline`。`doctor --refresh` 与 `doctor --offline` 不能同时使用。诊断的 `health` 为 `ok`、`warning` 或 `error`；前两者退出码为 0，本地致命错误退出码为 1。网络状态未知或有可用更新通常属于 warning，应读取 `checks` 中的具体原因。
 
 `updates.status` 的含义：
 
@@ -63,7 +64,9 @@ python3 scripts/radar.py install \
 
 ## 调用技能时检查更新
 
-Agent 开始使用技能时，按 `SKILL.md` 先运行 `doctor --json`。统一 CLI 和兼容业务脚本也会在启动时预检，同一进程只预检一次。有新版本时提示写入标准错误，业务标准输出保持原格式；网络检查异常不改变正常业务结果或退出码。
+Agent 开始使用技能时，按 `SKILL.md` 先运行 `doctor --quiet`。已是最新、当前版本领先或更新状态未知时，不输出例行版本提示，Agent 也不向用户复述“已是最新”“检查通过”等状态。有新版本时，提示真实版本号和更新命令，例如“AOR 发现新版本 v3.2.2，可运行 `aor update` 更新。”同一次研究任务中，相同新版本只由 Agent 转述一次。
+
+统一 CLI 和兼容业务脚本也会在启动时预检，同一进程只预检一次。提示写入标准错误，业务标准输出保持原格式；网络检查异常不改变正常业务结果或退出码。安静模式没有输出不代表一定已是最新；如需排查，使用完整 `doctor` 或 `doctor --json`。本地致命错误仍会显示并返回非零退出码。
 
 成功结果缓存 24 小时，网络错误短暂缓存 5 分钟为 `unknown`；`--refresh` 可跳过缓存。缓存按安装路径、当前版本和提交区分，失效或损坏的缓存不用于声称已是最新版本。离线模式没有有效缓存时保持未知。
 
@@ -103,9 +106,9 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 ~/.local/share/aor/
 ├── install.json
 ├── update.lock
-├── current -> versions/v3.2.0-<提交前缀>/
+├── current -> versions/v3.2.1-<提交前缀>/
 └── versions/
-    └── v3.2.0-<提交前缀>/
+    └── v3.2.1-<提交前缀>/
         ├── SKILL.md
         ├── agent-manifest.json
         ├── bin/aor
@@ -122,7 +125,7 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 | `AOR_OFFLINE=1` | 让诊断与业务预检只使用本地更新信息 |
 | `AOR_NO_UPDATE_CHECK=1` | 跳过业务入口更新预检，适合可复现的测试运行；不关闭显式 doctor |
 
-`AOR_OFFLINE` 只约束更新检查，不会阻止 `community`、`paid` 等业务命令访问网络，也不会把显式 `install` 或 `update` 变成离线安装命令。本地安装应使用 `install --source`。研究数据的 `schema_version` 仍为 `3.0`，与产品版本 `3.2.0` 不同；本轮更新不迁移已有研究数据。
+`AOR_OFFLINE` 只约束更新检查，不会阻止 `community`、`paid` 等业务命令访问网络，也不会把显式 `install` 或 `update` 变成离线安装命令。本地安装应使用 `install --source`。研究数据的 `schema_version` 仍为 `3.0`，与产品版本 `3.2.1` 不同；本轮更新不迁移已有研究数据。
 
 ## 常见情况
 

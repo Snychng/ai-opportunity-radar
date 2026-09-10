@@ -78,7 +78,7 @@ flowchart LR
 任何能够读取文件并运行 Python 命令的 AI Agent 都可以使用本项目；没有特定模型、客户端、SDK 或宿主目录依赖。只支持聊天的环境可以读取方法文档，但需要用户或外部执行器运行脚本。
 
 1. 按下方步骤安装，让 Agent 读取安装结果中的 `current/SKILL.md`；源码使用者也可以直接读取仓库根 `SKILL.md`。
-2. 调用技能时先运行 `aor doctor --json`，再用 `aor COMMAND ...` 执行研究；子命令后使用 `--help` 查看参数。
+2. 调用技能时先运行 `aor doctor --quiet`，再用 `aor COMMAND ...` 执行研究；已是最新时不提示，发现新版本才显示版本号和 `aor update` 命令。子命令后使用 `--help` 查看参数。
 3. 使用 JSON 文件交换数据；`python3 scripts/radar.py` 和原有独立脚本入口继续兼容。下面的相对路径示例在仓库根目录运行。
 
 详细能力要求与宿主接入方式见 [通用 Agent 集成](references/agent-integration.md)。[agent-manifest.json](agent-manifest.json) 是本项目自带的机器可读索引，不要求宿主支持某个专用协议。
@@ -190,6 +190,7 @@ aor doctor --refresh
 aor                     # 当前版本、安装路径、技能数与已有更新缓存
 aor skills --json       # 只列出本项目登记的技能
 aor doctor --json       # 环境诊断与稳定版本检查
+aor doctor --quiet      # 日常启动检查，仅提示新版本或本地致命错误
 aor doctor --offline    # 只检查本地与有效缓存
 aor update              # 显式升级受管安装
 ```
