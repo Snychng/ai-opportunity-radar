@@ -117,13 +117,41 @@ class RequestJournal:
 
     def snapshot(self) -> dict[str, Any]:
         """金额包含成功、失败、未知以及尚在执行的所有尝试，不能当作已对账账单。"""
-        rows = self.connection.execute("SELECT * FROM attempts").fetchall()
+        # 来源取尝试所属批次的请求元数据，不能从可能尚未写出的结果反推。
+        # 同时关联批次和指纹，防止跨批复用将一条历史尝试重复计入。
+        rows = self.connection.execute("""
+            SELECT attempts.*, batch_requests.metadata
+            FROM attempts LEFT JOIN batch_requests
+                ON attempts.batch_id = batch_requests.batch_id
+                AND attempts.fingerprint = batch_requests.fingerprint
+        """).fetchall()
         list_cost = sum((Decimal(row["list_cost_usd"]) for row in rows), Decimal(0))
         estimated_cost = sum((Decimal(row["estimated_cost_usd"]) for row in rows), Decimal(0))
         states = dict(self.connection.execute("SELECT state, COUNT(*) FROM requests GROUP BY state").fetchall())
+        attempt_states = dict.fromkeys(("succeeded", "failed", "outcome_unknown", "started"), 0)
+        by_source: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            source = json.loads(row["metadata"])["source"] if row["metadata"] else "unknown"
+            if source not in by_source:
+                by_source[source] = {
+                    "source": source, "attempts": 0, **dict.fromkeys(attempt_states, 0),
+                    "list_attempted_cost_usd_exact": Decimal(0),
+                    "estimated_attempted_cost_usd_exact": Decimal(0),
+                }
+            attempt_states[row["state"]] += 1
+            source_row = by_source[source]
+            source_row["attempts"] += 1
+            source_row[row["state"]] += 1
+            source_row["list_attempted_cost_usd_exact"] += Decimal(row["list_cost_usd"])
+            source_row["estimated_attempted_cost_usd_exact"] += Decimal(row["estimated_cost_usd"])
+        for source_row in by_source.values():
+            for field in ("list_attempted_cost_usd_exact", "estimated_attempted_cost_usd_exact"):
+                source_row[field] = format(source_row[field], "f")
         return {
             "run_id": self.run_id, "as_of": self.as_of,
             "attempts": len(rows), "request_states": states,
+            "attempt_states": attempt_states,
+            "by_source": [by_source[source] for source in sorted(by_source)],
             "batch_count": self.connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0],
             "list_attempted_cost_usd_exact": format(list_cost, "f"),
             "estimated_attempted_cost_usd_exact": format(estimated_cost, "f"),

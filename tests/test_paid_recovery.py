@@ -58,16 +58,26 @@ class PaidRecoveryTests(unittest.TestCase):
 
         def interrupt_second(**kwargs: object) -> dict[str, Any]:
             if first_transport.call_count == 1:
+                raise RuntimeError("TikHub HTTP 429")
+            if first_transport.call_count == 2:
                 return {"data": ["saved"]}
             during_second_request.append(read_run_ledger(self.journal))
             raise KeyboardInterrupt()
 
         first_transport = mock.Mock(side_effect=interrupt_second)
         with self.assertRaises(KeyboardInterrupt):
-            self.execute(plan, transport=first_transport)
-        self.assertEqual(first_transport.call_count, 2)
+            self.execute(plan, transport=first_transport, max_attempts=2)
+        self.assertEqual(first_transport.call_count, 3)
         self.assertEqual(during_second_request[0]["request_states"], {"succeeded": 1, "started": 1})
-        self.assertEqual(Decimal(during_second_request[0]["list_attempted_cost_usd_exact"]), Decimal("0.011"))
+        self.assertEqual(Decimal(during_second_request[0]["list_attempted_cost_usd_exact"]), Decimal("0.012"))
+        self.assertEqual(during_second_request[0]["attempt_states"],
+                         {"succeeded": 1, "failed": 1, "started": 1, "outcome_unknown": 0})
+        self.assertEqual(during_second_request[0]["by_source"], [
+            {"source": "tiktok", "attempts": 2, "succeeded": 1, "failed": 1, "started": 0, "outcome_unknown": 0,
+             "list_attempted_cost_usd_exact": "0.002", "estimated_attempted_cost_usd_exact": "0.0020"},
+            {"source": "xiaohongshu", "attempts": 1, "succeeded": 0, "failed": 0, "started": 1, "outcome_unknown": 0,
+             "list_attempted_cost_usd_exact": "0.01", "estimated_attempted_cost_usd_exact": "0.01"},
+        ])
 
         resume_transport = mock.Mock()
         result = self.execute(plan, transport=resume_transport, resume=True)
@@ -79,7 +89,20 @@ class PaidRecoveryTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["cache"], "journal")
         self.assertEqual(result["results"][1]["status"], "outcome_unknown")
         self.assertEqual(result["summary"]["estimated_attempted_cost_usd"], 0)
-        self.assertEqual(Decimal(result["run_ledger"]["estimated_attempted_cost_usd_exact"]), Decimal("0.011"))
+        self.assertEqual(Decimal(result["run_ledger"]["estimated_attempted_cost_usd_exact"]), Decimal("0.012"))
+        self.assertEqual(result["run_ledger"]["attempt_states"],
+                         {"succeeded": 1, "failed": 1, "started": 0, "outcome_unknown": 1})
+        # 在另一批复用同一指纹，来源 JOIN 不应把旧尝试按批次数重复累计。
+        self.execute(plan, transport=resume_transport, batch_id="reused-batch")
+        resume_transport.assert_not_called()
+        ledger = read_run_ledger(self.journal)
+        self.assertEqual(ledger["attempts"], 3)
+        self.assertEqual(ledger["attempt_states"], result["run_ledger"]["attempt_states"])
+        self.assertEqual(ledger["by_source"], result["run_ledger"]["by_source"])
+        self.assertEqual(ledger["by_source"][1]["outcome_unknown"], 1)
+        self.assertEqual(ledger["by_source"][1]["started"], 0)
+        self.assertEqual(sum(Decimal(row["list_attempted_cost_usd_exact"]) for row in ledger["by_source"]),
+                         Decimal(ledger["list_attempted_cost_usd_exact"]))
 
     def test_resume_continues_unstarted_requests_after_an_interrupted_request(self) -> None:
         plan = sample_plan()
