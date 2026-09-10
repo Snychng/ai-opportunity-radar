@@ -30,7 +30,42 @@ class AorRuntimeTests(unittest.TestCase):
             aor_runtime.preflight({"kind": "source"})
         check.assert_called_once()
         self.assertEqual(output.getvalue(), "")
-        self.assertIn("aor update", errors.getvalue())
+        self.assertEqual(errors.getvalue(), "AOR 发现新版本 v3.3.0，可运行 `aor update` 更新。更新后请重新读取技能说明。\n")
+
+    def test_update_notice_only_describes_a_valid_new_stable_version(self) -> None:
+        self.assertEqual(
+            aor_runtime.update_notice({"status": "update_available", "latest_version": "3.3.0"}),
+            "AOR 发现新版本 v3.3.0，可运行 `aor update` 更新。更新后请重新读取技能说明。",
+        )
+        for status in ("up_to_date", "ahead", "unknown", None, ""):
+            with self.subTest(status=status):
+                self.assertIsNone(aor_runtime.update_notice({"status": status, "latest_version": "3.3.0"}))
+
+    def test_malformed_update_version_has_no_notice(self) -> None:
+        for version in (None, "", 3, [], {}, "v3.3.0", "3.3", "3.3.0-beta.1", "03.3.0", "3.3.0\n", "3.٣.0"):
+            with self.subTest(version=version):
+                self.assertIsNone(aor_runtime.update_notice({"status": "update_available", "latest_version": version}))
+        self.assertIsNone(aor_runtime.update_notice({"status": "update_available"}))
+
+    def test_non_updates_and_malformed_updates_are_completely_silent(self) -> None:
+        for result in (
+            {"status": "up_to_date", "latest_version": "3.2.0"},
+            {"status": "ahead", "latest_version": "3.1.0"},
+            {"status": "unknown"},
+            {"status": "update_available"},
+            {"status": "update_available", "latest_version": "invalid"},
+        ):
+            with self.subTest(result=result):
+                output, errors = io.StringIO(), io.StringIO()
+                with patch.object(aor_runtime, "_preflight_done", False), \
+                     patch.dict(os.environ, {"AOR_NO_UPDATE_CHECK": "0"}), \
+                     patch.object(sys, "argv", ["aor", "expand"]), \
+                     patch("aor_status.check_update", return_value=result) as check, \
+                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    aor_runtime.preflight({"kind": "source"})
+                check.assert_called_once()
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(errors.getvalue(), "")
 
     def test_failed_preflight_never_prevents_research(self) -> None:
         with patch.object(aor_runtime, "_preflight_done", False), \

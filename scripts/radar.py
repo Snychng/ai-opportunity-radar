@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from aor_runtime import AorError, enabled, installation_context, lock, preflight, process_environment
+from aor_runtime import AorError, enabled, installation_context, lock, preflight, process_environment, update_notice
 
 COMMANDS = {
     "plan": "build_query_plan.py",
@@ -32,8 +32,10 @@ def _json(value: object) -> None:
 
 def _management(command: str, arguments: list[str], context: dict) -> int:
     parser = argparse.ArgumentParser(prog=f"aor {command}")
-    parser.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     if command == "doctor":
+        output.add_argument("--quiet", action="store_true", help="仅提示新版本或本地致命错误，适合调用技能时检查")
         options = parser.add_mutually_exclusive_group()
         options.add_argument("--refresh", action="store_true", help="跳过缓存并检查稳定 Release")
         options.add_argument("--offline", action="store_true", help="仅检查本地与已有缓存")
@@ -57,7 +59,17 @@ def _management(command: str, arguments: list[str], context: dict) -> int:
         from aor_status import doctor
 
         result = doctor(context, refresh=args.refresh, offline=args.offline or enabled("AOR_OFFLINE"))
-        if args.json:
+        if args.quiet:
+            notice = update_notice(result.get("updates", {}))
+            if notice:
+                print(notice, file=sys.stderr)
+            if result["health"] == "error":
+                errors = [check for check in result.get("checks", []) if check["status"] == "error"]
+                for check in errors:
+                    print(f"AOR 检查失败 [{check['name']}]：{check['message']}", file=sys.stderr)
+                if not errors:
+                    print("AOR 本地检查失败；运行 aor doctor 查看详情。", file=sys.stderr)
+        elif args.json:
             _json(result)
         else:
             print(f"AOR 诊断：{result['health']}")
@@ -66,8 +78,9 @@ def _management(command: str, arguments: list[str], context: dict) -> int:
             print(f"版本：{context.get('version')}；路径：{context['root']}")
             updates = result.get("updates", {})
             print(f"稳定更新：{updates.get('status')}；最新版本：{updates.get('latest_version') or '未知'}")
-            if updates.get("status") == "update_available":
-                print("执行 aor update 升级后重新读取技能说明。")
+            notice = update_notice(updates)
+            if notice:
+                print(notice)
         return 1 if result["health"] == "error" else 0
     from aor_install import install, install_local, update
 
@@ -109,8 +122,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"AOR {context.get('version') or 'unknown'}  ({context.get('commit') or '无 Git 提交'})")
                 print(f"安装：{context['kind']}；路径：{context['root']}")
-                print(f"技能：{len(result['skills'])}；更新：{result['updates'].get('status')}（本地缓存）")
-                print("使用 aor skills 查看技能，aor doctor 检查环境与更新，aor update 升级。")
+                print(f"技能：{len(result['skills'])}")
+                notice = update_notice(result["updates"])
+                if notice:
+                    print(notice, file=sys.stderr)
+                print("使用 aor skills 查看技能，aor doctor 检查环境与更新。")
             return 0
         if args.command not in COMMANDS:
             arguments = ["--json", *args.arguments] if args.json else args.arguments

@@ -12,12 +12,14 @@ description: 从付费产品、需求行为和地区差异发现创业机会，�
 本目录记为 SKILL_DIR。调用技能时先检查环境和稳定版本；有 `aor` 命令时运行第一条，否则用当前技能目录的兼容入口：
 
 ```bash
-aor doctor --json
-# 没有 aor 命令时使用：
-python3 "$SKILL_DIR/scripts/radar.py" doctor --json
+aor doctor --quiet
+# 没有 aor 命令或现有命令不支持 --quiet 时使用：
+python3 "$SKILL_DIR/scripts/radar.py" doctor --quiet
 ```
 
-更新检查失败或状态为 unknown 时保留未知，继续可运行的研究步骤；health 为 error 时先处理具体本地错误。有更新只提示用户执行 `aor update`，不自动替换技能。更新成功后重新读取返回的 `current/SKILL.md` 及本次使用的参考文件，再开始下一轮研究。
+没有新版本提示时，直接开始研究，不向用户汇报“已是最新版本”“版本检查通过”等例行状态，也不复述检查命令。安静检查没有输出不代表一定已是最新，网络未知也会保持安静；如需排查，运行 `aor doctor --json` 查看具体状态。本地致命错误仍会输出并返回非零退出码，先处理具体错误。
+
+发现新版本时，用一句话告知用户和调用方 AI：**AOR 发现新版本 vX.Y.Z，可运行 `aor update` 更新。** 将 vX.Y.Z 替换为检查得到的真实版本号，不猜测；同一次研究任务中相同版本只转述一次。不要自动替换技能。更新成功后重新读取返回的 `current/SKILL.md` 及本次使用的参考文件，再开始下一轮研究。
 
 统一研究命令为 `aor COMMAND ...`，或 `python3 "$SKILL_DIR/scripts/radar.py" COMMAND ...`；用 `--help` 查看参数。CLI 和兼容业务脚本会做更新预检，成功结果缓存 24 小时，失败短暂缓存为未知。仅阅读本文件不能强制宿主运行预检。离线检查使用 `doctor --offline`；安装与缓存细节见 [installation-updates.md](references/installation-updates.md)。
 

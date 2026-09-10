@@ -169,6 +169,15 @@ def lock(home: Path, exclusive: bool = False, blocking: bool = False) -> Iterato
         os.close(fd)
 
 
+def update_notice(result: dict[str, Any]) -> str | None:
+    """仅为有效的新稳定版本生成提示，其余检查结果保持静默。"""
+    version = result.get("latest_version")
+    if (result.get("status") != "update_available" or not isinstance(version, str)
+            or not version.isascii() or not SEMVER_RE.fullmatch(version)):
+        return None
+    return f"AOR 发现新版本 v{version}，可运行 `aor update` 更新。更新后请重新读取技能说明。"
+
+
 def preflight(context: dict[str, Any] | None = None) -> None:
     """首次业务调用仅检查版本，失败不影响研究结果或标准输出。"""
     global _preflight_done
@@ -181,8 +190,9 @@ def preflight(context: dict[str, Any] | None = None) -> None:
         from aor_status import check_update
 
         result = check_update(context or installation_context(), offline=enabled("AOR_OFFLINE"))
-        if result.get("status") == "update_available":
-            print(f"AOR 有稳定更新 {result.get('latest_version')}；执行 aor update 后重新读取技能。", file=sys.stderr)
+        notice = update_notice(result)
+        if notice is not None:
+            print(notice, file=sys.stderr)
     except Exception:
         # 在线诊断的错误在 doctor 中展示，不能改写正常业务命令的结果或退出码。
         return
