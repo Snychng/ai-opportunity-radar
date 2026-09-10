@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import hashlib
-import json
 import re
 import unicodedata
 from typing import Any
+
+from aor.request_identity import request_fingerprint
 
 from .registry import COMMUNITY_SOURCES, EVIDENCE_ROLES, source_catalog
 
@@ -64,14 +64,6 @@ def validate_intent_plan(plan: Any) -> dict[str, Any]:
     return {"intents": result}
 
 
-def request_fingerprint(item: dict[str, Any]) -> str:
-    """仅以实际 source/endpoint/method/params 判重；不以意图标签增加成本。"""
-    data = {key: item[key] for key in ("source", "endpoint", "params")}
-    data["method"] = item["method"].upper()
-    canonical = json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 def deduplicate_requests(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """保留首个请求 ID，合并全部 provenance 和别名，可重复调用且不修改输入。"""
     result: dict[str, dict[str, Any]] = {}
@@ -121,6 +113,7 @@ def route_community_focus(plan: dict[str, Any], focus: str | None, scope: dict[s
                 item["query_group"] += f"-scope-{index}"
                 key = "query" if item["source"] == "hackernews" else "q"
                 item["params"][key] = query
+                item["relevance_query"] = query
                 if key == "q":
                     item["params"][key] += f" is:issue created:{plan['window']['range_from']}..{plan['as_of']}"
                 item["query_scope"] = {"country": "unknown", "language": "en"}
@@ -157,7 +150,7 @@ def compile_intents(intent_plan: dict[str, Any], *, as_of: str, run_id: str) -> 
         by_id[intent["id"]] = intent
         if source in COMMUNITY_SOURCES:
             item = deepcopy(templates[source])
-            item.update(id=intent["id"], query_group=intent["id"], ranking_query=intent["ranking_query"],
+            item.update(id=intent["id"], query_group=intent["id"], ranking_query=intent["ranking_query"], relevance_query=intent["search_query"],
                         query_scope=intent["locale"], provenance=[intent])
             key = "query" if source == "hackernews" else "q"
             item["params"][key] = intent["search_query"]

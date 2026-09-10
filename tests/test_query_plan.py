@@ -15,6 +15,35 @@ from build_query_plan import build_plan, parse_date, resolve_focus  # noqa: E402
 
 
 class QueryPlanTests(unittest.TestCase):
+    def test_host_intents_survive_plan_deduplication_and_executors(self):
+        from aor.sources.planning import compile_intents
+        from community_query import execute_plan
+        from tikhub_query import estimate_plan
+        from tests.test_tikhub_query import pricing_rows
+
+        intents = [{"id": f"{source}-{kind}", "question": "确认发票工作流的付款与痛点", "evidence_type": kind,
+                    "search_query": "invoice workflow", "ranking_query": f"保留 {kind} 原文", "source": source,
+                    "locale": {"country": "US", "language": "en"}, "candidate_gaps": []}
+                   for source in ("hackernews", "tiktok") for kind in ("payment", "workflow_pain")]
+        plans = compile_intents({"intents": intents}, as_of="2026-09-10", run_id="RUN-20260910-ABCDEF1234")
+
+        def transport(**kwargs):
+            if '/api/v1/items/' in kwargs['endpoint']:
+                return {'children': [{'id': 2, 'type': 'comment', 'text': 'Paid for invoice workflow', 'author': 'synthetic-buyer',
+                                      'created_at': '2026-09-10'}]}
+            return {'hits': [{'objectID': '1', 'title': 'Invoice workflow', 'num_comments': 1, 'created_at': '2026-09-10'}]}
+
+        result = execute_plan(plans["community"], transport=transport, include_comments=True)
+        expected = {'hackernews-payment', 'hackernews-workflow_pain'}
+        self.assertEqual(set(result['evidence'][0]['intent_refs']), expected)
+        self.assertEqual(set(result['comments'][0]['intent_refs']), expected)
+        self.assertTrue(expected <= set(result['comments'][0]['request_ids']))
+        estimate = estimate_plan(plans['tikhub'], pricing_rows())
+        self.assertEqual((estimate['request_count'], estimate['logical_request_count']), (1, 2))
+        self.assertEqual(estimate['requests'][0]['request_fingerprint'], plans['tikhub']['requests'][0]['request_fingerprint'])
+        self.assertEqual(set(estimate['requests'][0]['request_ids']), {'tiktok-payment-tiktok-1', 'tiktok-workflow_pain-tiktok-1'})
+        self.assertEqual(set(estimate['requests'][0]['intent_refs']), {'tiktok-payment', 'tiktok-workflow_pain'})
+
     def test_phase_one_is_locked_to_existing_platform_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             plan = build_plan(date(2026, 7, 14), Path(tmp))

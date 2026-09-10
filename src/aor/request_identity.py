@@ -34,11 +34,17 @@ def deduplicate_requests(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]
                 "request_fingerprint": fingerprint, "request_ids": [], "intent_refs": [], "query_metadata": [],
             }
         row = grouped[fingerprint]
-        row["request_ids"].append(item["id"])
+        for request_id in [item["id"], *item.get("request_ids", []), *item.get("request_aliases", [])]:
+            if request_id not in row["request_ids"]:
+                row["request_ids"].append(request_id)
         for intent in item.get("intent_refs", []):
             if intent not in row["intent_refs"]:
                 row["intent_refs"].append(intent)
-        row["query_metadata"].append({
-            key: value for key, value in item.items() if key not in {"source", "endpoint", "method", "params"}
-        })
+        metadata = item.get("query_metadata") or [{
+            key: value for key, value in item.items()
+            if key not in {"source", "endpoint", "method", "params", "query_metadata"}
+        }]
+        for value in metadata:
+            if value not in row["query_metadata"]:
+                row["query_metadata"].append(value)
     return list(grouped.values())

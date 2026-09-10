@@ -143,6 +143,10 @@ def collect_community(
                 rows = (normalize_hn if item['source'] == 'hackernews' else normalize_github)(payload, item, started)
             counts['parsed'] = len(rows)
             for row in rows:
+                origin = parent or item
+                row['request_ids'] = list(dict.fromkeys([item['id'], *origin.get('request_ids', []), *origin.get('request_aliases', [])]))
+                row['intent_refs'] = list(origin.get('intent_refs', []))
+                row['query_metadata'] = list(origin.get('query_metadata') or origin.get('provenance') or [])
                 row['query'] = _query(item)
                 row.update(assess_quality(row, query=row['query'], as_of=plan['as_of'], window=plan['window']))
                 if parent and row['relevance_status'] == 'unrelated':
@@ -180,6 +184,10 @@ def collect_community(
                 duplicates += 1
                 existing = seen[marker]
                 existing['query_ids'] = list(dict.fromkeys([*existing['query_ids'], row['query_id']]))
+                for key in ('request_ids', 'intent_refs', 'query_metadata'):
+                    for value in row[key]:
+                        if value not in existing[key]:
+                            existing[key].append(value)
                 quality = assess_quality(existing, query=row['query'], as_of=plan['as_of'], window=plan['window'])
                 if _rank({**existing, **quality}) > _rank(existing):
                     existing.update(quality, query=row['query'])
@@ -221,5 +229,4 @@ def collect_community(
             'plan_sha256': plan_sha256, 'window': plan['window'], 'status': status,
             'required_queries': plan.get('required_queries', []), 'stats': stats,
             'requests': request_results, 'evidence': evidence, 'comments': comments}
-
 
