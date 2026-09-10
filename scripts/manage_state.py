@@ -20,6 +20,7 @@ from contracts import (
     SCHEMA_VERSION,
     ContractError,
     beijing_today,
+    canonical_evidence_url,
     canonical_sha256,
     evidence_independent_sources,
     fingerprint_record as contract_fingerprint_record,
@@ -27,6 +28,7 @@ from contracts import (
     stable_record_id,
     validate_record_id,
     validate_run_as_of,
+    validate_stage_envelope,
 )
 from filter_ideas import classify_candidate
 
@@ -38,6 +40,8 @@ OBSERVATION_FILES = {
     "signal": "signal-observations.jsonl",
 }
 SOURCE_STATUSES = {"ok", "no-results", "auth-required", "rate-limited", "blocked", "skipped-policy", "error"}
+JOURNAL_FILENAME = "pending-transaction.json"
+STATE_FILES = {*KINDS.values(), *OBSERVATION_FILES.values(), "source-health.json", "source-health-events.jsonl"}
 
 DEFAULT_PREFERENCES: dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
@@ -85,7 +89,19 @@ def _atomic_write_text(path: Path, content: str) -> None:
         handle.flush()
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
-    os.replace(temp_path, path)
+    try:
+        os.replace(temp_path, path)
+        _sync_directory(path.parent)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 @contextmanager
@@ -96,6 +112,8 @@ def _exclusive_lock(home: Path) -> Iterator[None]:
     with lock_path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
+            _recover_transaction(home)
+            _repair_legacy_views(home)
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -171,26 +189,240 @@ def _write_jsonl(path: Path, records: Iterable[dict[str, Any]], *, sort_current:
     _atomic_write_text(path, payload)
 
 
-def load_records(home: Path, kind: str) -> list[dict[str, Any]]:
+def _load_records_unlocked(home: Path, kind: str) -> list[dict[str, Any]]:
     return _load_jsonl(_state_path(home, kind))
 
 
-def load_observations(home: Path, kind: str) -> list[dict[str, Any]]:
+def _load_observations_unlocked(home: Path, kind: str) -> list[dict[str, Any]]:
     return _load_jsonl(_observation_path(home, kind))
 
 
-def _merge_evidence(old: Any, new: Any) -> list[Any]:
-    merged: list[Any] = []
-    seen: set[str] = set()
-    for item in [*(old if isinstance(old, list) else []), *(new if isinstance(new, list) else [])]:
-        if isinstance(item, dict):
-            marker = str(item.get("url") or item.get("id") or canonical_sha256(item))
+def load_records(home: Path, kind: str) -> list[dict[str, Any]]:
+    with _exclusive_lock(home):
+        return _load_records_unlocked(home, kind)
+
+
+def load_observations(home: Path, kind: str) -> list[dict[str, Any]]:
+    with _exclusive_lock(home):
+        return _load_observations_unlocked(home, kind)
+
+
+def _validate_transaction(files: Any) -> dict[str, Any]:
+    if not isinstance(files, dict) or not files:
+        raise StateError("事务 files 必须是非空对象")
+    for filename, payload in files.items():
+        if filename not in STATE_FILES:
+            raise StateError(f"事务包含未允许的状态文件：{filename}")
+        if filename.endswith(".jsonl"):
+            if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+                raise StateError(f"事务 {filename} 必须是对象数组")
+        elif not isinstance(payload, dict) or not isinstance(payload.get("sources"), dict):
+            raise StateError("来源健康事务必须包含 sources 对象")
+    return files
+
+
+def _recover_transaction(home: Path) -> None:
+    """先完成已持久化的事务，再允许读取；多文件中断可安全重放。"""
+    journal = home / "state" / JOURNAL_FILENAME
+    if not journal.exists():
+        return
+    try:
+        value = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise StateError(f"无法读取待恢复事务：{exc}") from exc
+    if not isinstance(value, dict):
+        raise StateError("待恢复事务必须是对象")
+    files = _validate_transaction(value.get("files"))
+    for filename, payload in files.items():
+        path = home / "state" / filename
+        if filename.endswith(".jsonl"):
+            _write_jsonl(path, payload, sort_current=filename in KINDS.values())
         else:
-            marker = canonical_sha256(item)
-        if marker not in seen:
-            seen.add(marker)
-            merged.append(item)
-    return merged
+            _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    journal.unlink()
+    _sync_directory(journal.parent)
+
+
+def _commit_state(home: Path, files: dict[str, Any]) -> None:
+    _validate_transaction(files)
+    journal = {"schema_version": SCHEMA_VERSION, "files": files}
+    _atomic_write_text(home / "state" / JOURNAL_FILENAME, json.dumps(journal, ensure_ascii=False) + "\n")
+    _recover_transaction(home)
+
+
+def _repair_legacy_views(home: Path) -> None:
+    """从旧版已提交观察恢复缺失或落后的派生视图，保留无历史的旧记录。"""
+    repairs: dict[str, Any] = {}
+    for kind, filename in KINDS.items():
+        current = _load_records_unlocked(home, kind)
+        by_id = {row.get("id"): row for row in current}
+        for event in _load_observations_unlocked(home, kind):
+            snapshot = event.get("snapshot")
+            if not isinstance(snapshot, dict) or not snapshot.get("id"):
+                continue
+            record_id = snapshot["id"]
+            previous = by_id.get(record_id)
+            if previous is None or str(snapshot.get("last_seen", "")) >= str(previous.get("last_seen", "")):
+                by_id[record_id] = deepcopy(snapshot)
+        repaired = list(by_id.values())
+        changed = canonical_sha256(sorted(current, key=lambda row: str(row.get("id")))) != canonical_sha256(
+            sorted(repaired, key=lambda row: str(row.get("id")))
+        )
+        if changed:
+            repairs[filename] = repaired
+    if repairs:
+        _commit_state(home, repairs)
+
+
+EVIDENCE_METADATA = {"evidence_id", "version", "revision_id", "supersedes", "recorded_on"}
+
+
+def _evidence_content(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    content = {key: value for key, value in item.items() if key not in EVIDENCE_METADATA}
+    if canonical_evidence_url(item.get("url")):
+        content["url"] = canonical_evidence_url(item["url"])
+    return content
+
+
+def _evidence_key(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(canonical_evidence_url(item.get("url")) or item.get("evidence_id")
+                   or item.get("id") or canonical_sha256(item))
+    return canonical_sha256(item)
+
+
+def _evidence_references(item: dict[str, Any]) -> set[str]:
+    references = {str(item[key]) for key in ("evidence_id", "id") if item.get(key)}
+    url = canonical_evidence_url(item.get("url"))
+    if url:
+        references.add(url)
+    return references
+
+
+def _register_evidence_aliases(aliases: dict[str, str], value: dict[str, Any], key: str) -> None:
+    for alias in _evidence_references(value) | {key}:
+        if alias in aliases and aliases[alias] != key:
+            raise StateError("证据身份冲突：同一 URL 或 ID 指向多个证据，请先明确纠错关系")
+        aliases[alias] = key
+
+
+def _has_current_support(item: Any, revised: list[dict[str, Any]]) -> bool:
+    """修订来源的旧事实不得再次复用；需绑定有效版本及该版本的原文事实。"""
+    if not isinstance(item, dict):
+        return True
+    references = _evidence_references(item)
+    for evidence in revised:
+        if not references.intersection(_evidence_references(evidence)):
+            continue
+        if evidence.get("retracted") is True or evidence.get("status") == "retracted":
+            return False
+        if item.get("evidence_revision_id") != evidence.get("revision_id"):
+            return False
+        fact_fields = ("fact", "supporting_fact", "quote", "text", "supports", "original_text")
+        facts = {str(evidence[field]).strip() for field in fact_fields if evidence.get(field)}
+        cited_facts = {str(item[field]).strip() for field in fact_fields if item.get(field)}
+        if not cited_facts or not cited_facts.issubset(facts):
+            return False
+    return True
+
+
+def _apply_evidence(merged: dict[str, Any], base: dict[str, Any], incoming: dict[str, Any], observed_on: date) -> None:
+    archive = deepcopy(base.get("evidence_history") or base.get("evidence") or [])
+    if not isinstance(archive, list) or not isinstance(incoming.get("evidence", []), list):
+        raise StateError("evidence 和 evidence_history 必须是数组")
+    latest: dict[str, Any] = {}
+    aliases: dict[str, str] = {}
+    normalized: list[Any] = []
+    for item in archive:
+        value = deepcopy(item)
+        key = _evidence_key(value)
+        if isinstance(value, dict):
+            value.setdefault("evidence_id", "EVID-" + canonical_sha256(key)[:16].upper())
+            value.setdefault("version", 1)
+            value.setdefault("revision_id", f"{value['evidence_id']}:v{value['version']}")
+            key = value["evidence_id"]
+            _register_evidence_aliases(aliases, value, key)
+        latest[key] = value
+        normalized.append(value)
+    for item in incoming.get("evidence", []):
+        value = deepcopy(item)
+        raw_key = _evidence_key(value)
+        key = aliases.get(raw_key, raw_key)
+        if isinstance(value, dict):
+            known_keys = {aliases[alias] for alias in _evidence_references(value) if alias in aliases}
+            if len(known_keys) > 1:
+                raise StateError("证据身份冲突：输入 URL 与 ID 对应不同证据")
+            if known_keys:
+                key = next(iter(known_keys))
+        previous = latest.get(key)
+        if previous is not None and _evidence_content(previous) == _evidence_content(value):
+            continue
+        if isinstance(value, dict):
+            evidence_id = previous.get("evidence_id") if isinstance(previous, dict) else value.get("evidence_id")
+            evidence_id = evidence_id or "EVID-" + canonical_sha256(raw_key)[:16].upper()
+            version = previous.get("version", 1) + 1 if isinstance(previous, dict) else 1
+            value.update({"evidence_id": evidence_id, "version": version,
+                          "revision_id": f"{evidence_id}:v{version}", "recorded_on": observed_on.isoformat()})
+            if isinstance(previous, dict):
+                value["supersedes"] = previous["revision_id"]
+            key = evidence_id
+            _register_evidence_aliases(aliases, value, key)
+        latest[key] = value
+        normalized.append(value)
+    retracted = [item for item in latest.values() if isinstance(item, dict)
+                 and (item.get("retracted") is True or item.get("status") == "retracted")]
+    merged["evidence"] = [item for item in latest.values() if item not in retracted]
+    merged["evidence_history"] = normalized
+    revised = [item for item in latest.values() if isinstance(item, dict)
+               and (item.get("version", 1) > 1 or item in retracted)]
+    for field in ("payment_signals", "demand_signals"):
+        if isinstance(merged.get(field), list):
+            merged[field] = [item for item in merged[field] if _has_current_support(item, revised)]
+    checks = merged.get("candidate_verifications")
+    if isinstance(checks, dict):
+        for check in checks.values():
+            if isinstance(check, dict) and isinstance(check.get("evidence"), list):
+                check["evidence"] = [item for item in check["evidence"] if _has_current_support(item, revised)]
+
+
+def _validate_record_kind(kind: str, record: dict[str, Any]) -> None:
+    tier = record.get("evidence_tier")
+    if tier is None:
+        return
+    allowed = {"opportunity": {"A", "B"}, "signal": {"R"}}
+    if tier not in allowed.get(kind, set()):
+        raise StateError(f"证据层级 {tier} 不能写入 {kind}")
+    actual, _, _ = classify_candidate(record)
+    if actual != tier:
+        raise StateError(f"证据层级 {tier} 与重新核验结果 {actual or '未合格'} 不一致")
+
+
+def _validate_record_envelope(record: dict[str, Any], observed_on: date | None = None,
+                              run_id: str | None = None) -> None:
+    try:
+        envelope = validate_stage_envelope(record)
+    except ContractError as exc:
+        raise StateError(str(exc)) from exc
+    if observed_on is not None and envelope.get("as_of", observed_on.isoformat()) != observed_on.isoformat():
+        raise StateError("输入 as_of 与状态提交日期不一致")
+    if run_id is not None and envelope.get("run_id", run_id) != run_id:
+        raise StateError("输入 run_id 与状态提交运行不一致")
+
+
+def _input_digest(record: dict[str, Any]) -> str:
+    return canonical_sha256({key: value for key, value in record.items() if key not in {"id", "fingerprint"}})
+
+
+def _validate_replay(event: dict[str, Any], record: dict[str, Any]) -> None:
+    if event.get("input_sha256"):
+        identical = event["input_sha256"] == _input_digest(record)
+    else:
+        snapshot = event.get("snapshot") or {}
+        identical = all(snapshot.get(key) == value for key, value in record.items() if key not in {"id", "fingerprint"})
+    if not identical:
+        raise StateError("同一 run_id 的输入内容不同；纠错请使用新的 run_id")
 
 
 def _expected_id(kind: str, record: dict[str, Any], observed_on: date, existing: dict[str, Any] | None) -> str:
@@ -214,13 +446,14 @@ def resolve_record_ids(home: Path, kind: str, records: list[dict[str, Any]], obs
         raise StateError("待解析记录必须是非空数组")
     home = initialize_home(home)
     with _exclusive_lock(home):
-        current = load_records(home, kind)
+        current = _load_records_unlocked(home, kind)
         by_fingerprint = {item.get("fingerprint"): item for item in current if item.get("fingerprint")}
         prepared: list[dict[str, Any]] = []
         seen_fingerprints: set[str] = set()
         for record in records:
             if not isinstance(record, dict):
                 raise StateError("每条待解析记录必须是对象")
+            _validate_record_envelope(record, observed_on)
             fingerprint = fingerprint_record(record)
             if fingerprint in seen_fingerprints:
                 raise StateError(f"输入批次包含重复机会指纹：{fingerprint}")
@@ -272,29 +505,41 @@ def upsert_records(
         validate_run_as_of(run_id, observed_on.isoformat())
     except ContractError as exc:
         raise StateError(str(exc)) from exc
+    if not isinstance(records, list) or not records:
+        raise StateError("待提交记录必须是非空数组")
     home = initialize_home(home)
     with _exclusive_lock(home):
-        current = load_records(home, kind)
-        observations = load_observations(home, kind)
-        event_ids = {item.get("event_id") for item in observations}
+        current = _load_records_unlocked(home, kind)
+        observations = _load_observations_unlocked(home, kind)
+        events_by_id = {item.get("event_id"): item for item in observations}
         by_fingerprint = {item.get("fingerprint"): item for item in current if item.get("fingerprint")}
         results: list[dict[str, Any]] = []
         seen_batch: set[str] = set()
         for input_record in records:
             if not isinstance(input_record, dict):
                 raise StateError("记录必须是 JSON 对象")
+            _validate_record_envelope(input_record, observed_on, run_id)
             fingerprint = fingerprint_record(input_record)
             if fingerprint in seen_batch:
                 raise StateError(f"输入批次包含重复机会指纹：{fingerprint}")
             seen_batch.add(fingerprint)
             existing = by_fingerprint.get(fingerprint)
             record_id = _expected_id(kind, input_record, observed_on, existing)
+            event_id = hashlib.sha256(f"{run_id}|{kind}|{fingerprint}".encode("utf-8")).hexdigest()[:24]
+            if event_id in events_by_id:
+                _validate_replay(events_by_id[event_id], input_record)
+                results.append({"status": "replayed", "id": record_id, "fingerprint": fingerprint})
+                continue
+            if existing is not None and observed_on.isoformat() < existing.get("last_seen", ""):
+                raise StateError("不能在较新观察之后倒填历史；请按日期顺序导入，避免未来信息进入过去快照")
             base = deepcopy(existing) if existing is not None else {}
             merged = deepcopy(base)
             merged.update(deepcopy(input_record))
             merged.update(
                 {
                     "schema_version": SCHEMA_VERSION,
+                    "run_id": run_id,
+                    "as_of": observed_on.isoformat(),
                     "id": record_id,
                     "fingerprint": fingerprint,
                     "first_seen": base.get("first_seen", observed_on.isoformat()),
@@ -304,12 +549,11 @@ def upsert_records(
             )
             merged["seen_dates"] = sorted(set([*base.get("seen_dates", []), observed_on.isoformat()]))
             merged["occurrences"] = len(merged["seen_dates"])
-            merged["evidence"] = _merge_evidence(base.get("evidence"), input_record.get("evidence"))
+            _apply_evidence(merged, base, input_record, observed_on)
+            _validate_record_kind(kind, merged)
             event = _observation_event(kind=kind, run_id=run_id, observed_on=observed_on, record=merged)
-            if event["event_id"] in event_ids:
-                results.append({"status": "replayed", "id": record_id, "fingerprint": fingerprint})
-                continue
-            event_ids.add(event["event_id"])
+            event["input_sha256"] = _input_digest(input_record)
+            events_by_id[event["event_id"]] = event
             observations.append(event)
             if existing is None:
                 current.append(merged)
@@ -319,8 +563,7 @@ def upsert_records(
                 status = "updated"
             by_fingerprint[fingerprint] = merged
             results.append({"status": status, "id": record_id, "fingerprint": fingerprint})
-        _write_jsonl(_observation_path(home, kind), observations)
-        _write_jsonl(_state_path(home, kind), current, sort_current=True)
+        _commit_state(home, {OBSERVATION_FILES[kind]: observations, KINDS[kind]: current})
         return results
 
 
@@ -357,23 +600,33 @@ def promote_signal(
         raise StateError(str(exc)) from exc
     if not isinstance(opportunity, dict):
         raise StateError("升级后的机会必须是 JSON 对象")
+    _validate_record_envelope(opportunity, observed_on, run_id)
 
     home = initialize_home(home)
     with _exclusive_lock(home):
-        signals = load_records(home, "signal")
+        signals = _load_records_unlocked(home, "signal")
         signal = next((item for item in signals if item.get("id") == signal_id), None)
         if signal is None:
             raise StateError(f"未找到待升级信号：{signal_id}")
         if signal.get("promoted_to"):
+            promotion_events = _load_observations_unlocked(home, "opportunity")
+            prior = next((event for event in promotion_events
+                          if event.get("run_id") == run_id and event.get("id") == signal["promoted_to"]
+                          and (event.get("event_type") == "promotion"
+                               or event.get("snapshot", {}).get("promoted_from") == signal_id)), None)
+            if prior is not None and prior.get("input_sha256"):
+                _validate_replay(prior, opportunity)
             return {
                 "status": "replayed",
                 "signal_id": signal_id,
                 "opportunity_id": signal["promoted_to"],
             }
+        if observed_on.isoformat() < signal.get("last_seen", ""):
+            raise StateError("不能在较新观察之前升级信号；请按日期顺序导入")
 
-        opportunities = load_records(home, "opportunity")
-        opportunity_observations = load_observations(home, "opportunity")
-        signal_observations = load_observations(home, "signal")
+        opportunities = _load_records_unlocked(home, "opportunity")
+        opportunity_observations = _load_observations_unlocked(home, "opportunity")
+        signal_observations = _load_observations_unlocked(home, "signal")
         value = deepcopy(opportunity)
         value["promoted_from"] = signal_id
         tier, reasons, gates = classify_candidate(value)
@@ -385,6 +638,8 @@ def promote_signal(
         if fingerprint != signal.get("fingerprint"):
             raise StateError("升级后的 OPP 必须与原 SIG 保持相同业务身份；用户、场景、需求、切入口和市场范围不能改变")
         existing = next((item for item in opportunities if item.get("fingerprint") == fingerprint), None)
+        if existing is not None and observed_on.isoformat() < existing.get("last_seen", ""):
+            raise StateError("不能在较新观察之前升级已有机会；请按日期顺序导入")
         opportunity_id = _expected_id("opportunity", value, observed_on, existing)
         base = deepcopy(existing) if existing is not None else {}
         merged = deepcopy(base)
@@ -392,6 +647,8 @@ def promote_signal(
         merged.update(
             {
                 "schema_version": SCHEMA_VERSION,
+                "run_id": run_id,
+                "as_of": observed_on.isoformat(),
                 "id": opportunity_id,
                 "fingerprint": fingerprint,
                 "first_seen": base.get("first_seen", observed_on.isoformat()),
@@ -401,10 +658,16 @@ def promote_signal(
         )
         merged["seen_dates"] = sorted(set([*base.get("seen_dates", []), observed_on.isoformat()]))
         merged["occurrences"] = len(merged["seen_dates"])
-        merged["evidence"] = _merge_evidence(base.get("evidence"), value.get("evidence"))
+        _apply_evidence(merged, base, value, observed_on)
+        _validate_record_kind("opportunity", merged)
         opportunity_event = _observation_event(
             kind="opportunity", run_id=run_id, observed_on=observed_on, record=merged
         )
+        opportunity_event["event_id"] = hashlib.sha256(
+            f"{run_id}|opportunity-promotion|{fingerprint}".encode("utf-8")
+        ).hexdigest()[:24]
+        opportunity_event["event_type"] = "promotion"
+        opportunity_event["input_sha256"] = _input_digest(opportunity)
         if opportunity_event["event_id"] not in {item.get("event_id") for item in opportunity_observations}:
             opportunity_observations.append(opportunity_event)
         if existing is None:
@@ -419,6 +682,8 @@ def promote_signal(
         promoted_signal.update(
             {
                 "promoted_to": opportunity_id,
+                "run_id": run_id,
+                "as_of": observed_on.isoformat(),
                 "promotion_status": "promoted",
                 "promoted_on": observed_on.isoformat(),
                 "last_seen": max(signal.get("last_seen", observed_on.isoformat()), observed_on.isoformat()),
@@ -440,42 +705,49 @@ def promote_signal(
         if signal_event["event_id"] not in {item.get("event_id") for item in signal_observations}:
             signal_observations.append(signal_event)
 
-        _write_jsonl(_state_path(home, "opportunity"), opportunities, sort_current=True)
-        _write_jsonl(_observation_path(home, "opportunity"), opportunity_observations)
-        _write_jsonl(_state_path(home, "signal"), signals, sort_current=True)
-        _write_jsonl(_observation_path(home, "signal"), signal_observations)
+        _commit_state(home, {KINDS["opportunity"]: opportunities,
+                             OBSERVATION_FILES["opportunity"]: opportunity_observations,
+                             KINDS["signal"]: signals,
+                             OBSERVATION_FILES["signal"]: signal_observations})
         return {"status": status, "signal_id": signal_id, "opportunity_id": opportunity_id}
 
 
 def history(home: Path, kind: str, as_of: date, days: int) -> list[dict[str, Any]]:
-    """返回窗口内当前记录及逐次评分和证据观察历史。"""
+    """按观察时间返回截止日期的快照，避免当前视图泄漏未来信息。"""
     if days <= 0:
         raise StateError("days 必须大于 0")
     home = initialize_home(home)
     threshold = as_of - timedelta(days=days - 1)
     with _exclusive_lock(home):
-        current = load_records(home, kind)
-        observations = load_observations(home, kind)
+        current = _load_records_unlocked(home, kind)
+        observations = _load_observations_unlocked(home, kind)
     grouped: dict[str, list[dict[str, Any]]] = {}
+    observed_ids: set[str] = set()
     for event in observations:
         try:
             observed_on = datetime.strptime(event["observed_on"], "%Y-%m-%d").date()
         except (KeyError, ValueError, TypeError) as exc:
             raise StateError(f"观察事件 {event.get('event_id', '<unknown>')} 日期无效") from exc
+        observed_ids.add(str(event.get("id")))
         if threshold <= observed_on <= as_of:
             grouped.setdefault(str(event.get("id")), []).append(event)
     result: list[dict[str, Any]] = []
+    for events in grouped.values():
+        events = sorted(events, key=lambda item: item["observed_on"])
+        snapshot = events[-1].get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise StateError("观察事件缺少有效 snapshot，无法安全回顾历史")
+        value = deepcopy(snapshot)
+        value["observation_history"] = deepcopy(events)
+        result.append(value)
     for record in current:
         try:
             last_seen = datetime.strptime(record["last_seen"], "%Y-%m-%d").date()
         except (KeyError, ValueError, TypeError) as exc:
             raise StateError(f"记录 {record.get('id', '<unknown>')} 的 last_seen 无效") from exc
-        if threshold <= last_seen <= as_of:
+        if str(record.get("id")) not in observed_ids and threshold <= last_seen <= as_of:
             value = deepcopy(record)
-            value["observation_history"] = sorted(
-                grouped.get(str(record.get("id")), []),
-                key=lambda item: (item.get("observed_on", ""), item.get("run_id", "")),
-            )
+            value["observation_history"] = []
             result.append(value)
     return sorted(result, key=lambda item: (item["last_seen"], item.get("id", "")), reverse=True)
 
@@ -487,7 +759,7 @@ def find_record(home: Path, kind: str, record_id: str) -> dict[str, Any]:
         raise StateError(str(exc)) from exc
     home = initialize_home(home)
     with _exclusive_lock(home):
-        for record in load_records(home, kind):
+        for record in _load_records_unlocked(home, kind):
             if record.get("id") == record_id:
                 return record
     raise StateError(f"未找到记录：{record_id}")
@@ -551,8 +823,7 @@ def update_source_health(
         else:
             event = events[existing_index]
             data.setdefault("sources", {})[source] = {key: value for key, value in event.items() if key != "event_id"}
-        _write_jsonl(events_path, events)
-        _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        _commit_state(home, {"source-health-events.jsonl": events, "source-health.json": data})
     return data["sources"][source]
 
 
@@ -570,8 +841,11 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return value
 
 
-def _read_records(path: Path) -> list[dict[str, Any]]:
+def _read_records(path: Path, *, observed_on: date | None = None,
+                  run_id: str | None = None) -> list[dict[str, Any]]:
     value = _read_json(path)
+    if isinstance(value, dict):
+        _validate_record_envelope(value, observed_on, run_id)
     if isinstance(value, list):
         records = value
     elif isinstance(value, dict) and isinstance(value.get("candidates"), list):
@@ -652,16 +926,19 @@ def main() -> int:
         if args.command == "init":
             result: Any = {"status": "initialized", "home": str(initialize_home(args.home))}
         elif args.command == "prepare":
-            result = resolve_record_ids(args.home, args.kind, _read_records(args.input), _parse_date(args.date))
+            observed_on = _parse_date(args.date)
+            result = resolve_record_ids(args.home, args.kind,
+                                        _read_records(args.input, observed_on=observed_on), observed_on)
             if args.output:
                 _write_json(args.output, result)
         elif args.command in {"record", "record-batch"}:
-            records = _read_records(args.input)
+            observed_on = _parse_date(args.date)
+            records = _read_records(args.input, observed_on=observed_on, run_id=args.run_id)
             batch_result = upsert_records(
                 args.home,
                 args.kind,
                 records,
-                _parse_date(args.date),
+                observed_on,
                 run_id=args.run_id,
             )
             result = batch_result[0] if args.command == "record" and len(batch_result) == 1 else batch_result

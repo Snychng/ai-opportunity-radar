@@ -1,6 +1,6 @@
 # AI Opportunity Radar
 
-一个面向 Codex 的 AI 创业机会研究 Skill。它先寻找真实付费产品与现有支出，再围绕细分人群、购买触发、AI 新形态、地区、渠道和交付方式批量扩展点子，最后用硬门槛过滤并输出三层机会。
+一个面向通用 AI Agent 的创业机会研究与个人验证工具。它先寻找真实付费产品与现有支出，再围绕细分人群、购买触发、AI 新形态、地区、渠道和交付方式批量扩展点子，最后用硬门槛过滤并输出三层机会。
 
 项目坚持“先付费事实，后需求行为，再产品形态”：批量生成可以宽，进入正式机会必须严。热门话题、愿望表达和单次搜索无结果都不会被直接包装成市场结论。
 
@@ -9,9 +9,9 @@
 | 能力 | 说明 |
 |---|---|
 | 付费对标 | 为每条候选建立稳定 `BENCH`，记录产品、付款者、价格/支出和付款证据 |
-| 批量点子 | 沿六个维度确定性扩展 100–200 个原始候选，并保留来源对标 |
+| 批量点子 | 沿六个维度扩展原始变体，按业务身份归并机会，保留来源对标与验证假设 |
 | 硬过滤 | 付款市场、付款者、替代方案、产品缺口、获客渠道、30 天 MVP 缺一不可 |
-| 三层日报 | 3–5 个 A 级深度机会、20–40 个 A/B 级快速点子、30–80 个 R 级区域迁移假设 |
+| 三层日报 | 深度 A、快速 A/B、区域 R 分层；数量不足时保留真实结果，不凑数 |
 | 完整结论清单 | 展示全部 A/B/R、全部 overflow 和最多 20 个接近合格候选，不只返回 Top 5 |
 | 定向扫描 | 按地区、语言、行业或机会类型复用同一研究流程 |
 | 机会深挖 | 围绕稳定机会 ID 补充独立证据、反证、竞品、MVP 和验证实验 |
@@ -19,7 +19,7 @@
 | 多语言研究 | 覆盖英语、中文及东南亚、南亚、非洲、中东、拉美的轮换语言查询 |
 | 费用产出 | 先免费发现、后付费补证，并计算证据利用率、来源转化和单个合格结论成本 |
 | 可重放状态 | 使用稳定 ID、追加式观察历史、文件锁和原子写入支持安全重跑 |
-| 证据升级 | R/SIG 补齐本地付款证据后，可审计地升级为 A/OPP 并保留双向链接 |
+| 证据升级 | R/SIG 补齐本地付款、独立来源和候选验证后，升级为 A/OPP 并保留双向链接 |
 
 深度机会仍分三条评分轨道：
 
@@ -57,8 +57,8 @@ flowchart LR
     J -->|B| L["快速点子 20–40"]
     J -->|R| M["区域 SIG 30–80"]
     K --> S["全部结论 + 费用产出"]
-    L --> N
-    M --> N
+    L --> S
+    M --> S
     S --> N["三层 Markdown 日报"]
     N --> O{"结构校验通过?"}
     O -->|是| P["当前视图 + 追加历史"]
@@ -68,9 +68,78 @@ flowchart LR
 项目分为两层：
 
 - `SKILL.md` 与 `references/` 定义研究方法、机会政策、查询语言、安全边界和报告契约。
-- `scripts/` 提供确定性工具，负责查询计划、数据采集、费用保护、规范化、稳定 ID、评分、报告校验和状态写入。
+- `scripts/` 提供确定性工具，负责查询计划、数据采集、费用保护、规范化、稳定 ID、评分、报告校验、状态恢复和个人验证实验记录。
 
-付费证据核验、反证判断、维度设计、中文翻译和报告撰写仍由 Codex 完成；扩展、硬过滤、ID、评分、报告结构与状态由脚本确定性约束。
+付费证据核验、反证判断、维度设计、中文翻译和报告撰写仍由 AI Agent 完成；扩展、硬过滤、ID、评分、报告结构与状态由脚本确定性约束。
+
+## 通用 Agent 使用方式
+
+任何能够读取文件并运行 Python 命令的 AI Agent 都可以使用本项目；没有特定模型、客户端、SDK 或宿主目录依赖。只支持聊天的环境可以读取方法文档，但需要用户或外部执行器运行脚本。
+
+1. 克隆到任意目录，让 Agent 读取该目录的 `SKILL.md`。
+2. 运行 `python3 scripts/radar.py --help` 查看统一命令，子命令后使用 `--help` 查看参数。
+3. 使用 JSON 文件交换数据；原有独立脚本入口继续兼容。
+
+详细能力要求与宿主接入方式见 [通用 Agent 集成](references/agent-integration.md)。[agent-manifest.json](agent-manifest.json) 是本项目自带的机器可读索引，不要求宿主支持某个专用协议。
+
+```bash
+python3 scripts/radar.py plan --date 2026-09-10 --output /tmp/query-plan.json
+python3 scripts/radar.py expand --input examples/benchmarks-and-dimensions.json --output /tmp/expanded.json
+python3 scripts/radar.py filter --input /tmp/expanded.json --output /tmp/tiered.json
+```
+
+示例带 `is_demo` 标签，不会成为 A 级真实付款机会；演示的 B/R 也不代表已验证的真实市场。报价方式只作为同一机会的变体保留，不增加独立机会计数。快速摘要可以直接使用这些 `CAND` 标识；正式日报、A 级评分和实验引用使用下面准备的稳定 `OPP/SIG`。
+
+## 为自己选择值得验证的项目
+
+市场证据和个人适配分别展示。先填写 [个人约束示例](examples/founder-profile.json)，为候选补充 `validation_plan`，再执行：
+
+```bash
+python3 scripts/radar.py validation assess \
+  --profile examples/founder-profile.json \
+  --input /tmp/tiered.json --output /tmp/personal-review.json
+```
+
+结果为 `validate`（可安排验证）、`clarify`（补齐未知项）或 `park`（先解决资源冲突），不把未知技能、渠道、时间或预算默认判为适配。默认建议一个主验证项目、最多两个备选。
+
+准备实验前，先把选中的 A/B 候选交给 `state prepare --kind opportunity`，取回稳定 OPP。下面承接 `/tmp/tiered.json`，仅选择首条 A/B 演示串联；实际选择应依据个人评估结果：
+
+```bash
+python3 - <<'PYTHON'
+import json
+from pathlib import Path
+payload = json.loads(Path('/tmp/tiered.json').read_text())
+choices = payload['deep_candidates'] + payload['validated_ideas']
+if not choices:
+    raise SystemExit('没有 A/B 候选；如选择 R，请提取 regional_signals 并使用 --kind signal')
+selected = dict(choices[0])
+selected.update(run_id=payload['run_id'], as_of=payload['as_of'])
+Path('/tmp/selected-candidate.json').write_text(json.dumps(selected, ensure_ascii=False))
+PYTHON
+
+python3 scripts/radar.py state prepare \
+  --home /tmp/radar-demo --kind opportunity \
+  --date "$(python3 -c 'import json; print(json.load(open("/tmp/selected-candidate.json"))["as_of"])')" \
+  --input /tmp/selected-candidate.json --output /tmp/selected-with-id.json
+
+python3 - <<'PYTHON'
+import json
+from pathlib import Path
+candidate = json.loads(Path('/tmp/selected-with-id.json').read_text())[0]
+experiment = json.loads(Path('examples/experiment.json').read_text())
+experiment.update(record_id=candidate['id'], run_id=candidate['run_id'],
+                  as_of=candidate['as_of'], experiment_id='EXP-' + candidate['id'] + '-001')
+Path('/tmp/planned-experiment.json').write_text(json.dumps(experiment, ensure_ascii=False))
+PYTHON
+
+python3 scripts/radar.py validation record-experiment \
+  --home /tmp/radar-demo --input /tmp/planned-experiment.json
+python3 scripts/radar.py validation experiments --home /tmp/radar-demo
+```
+
+R 级选择 `regional_signals`，用 `--kind signal` 准备 SIG，实验 `record_id` 引用该 SIG。`prepare` 只解析 ID，不提交研究观察；计划实验可立即记录，无需先生成日报或执行 `record-batch`。上例仅保存 `planned` 与空行为证据，不能当作已完成验证。执行真实实验后另开新运行记录客户行为、费用、投入时间及决定。
+
+实验不会自动联系客户或改变 A/B/R。口头反馈、真实任务、接受报价、付费试点分开记录。完整字段和幂等规则见 [个人适配与验证](references/personal-validation.md)。
 
 ## 环境要求
 
@@ -90,22 +159,22 @@ export TIKHUB_API_KEY="可选，仅在执行 TikHub 付费查询时需要"
 
 不要把令牌写入计划、报告、状态文件或仓库。
 
-## 安装为 Codex Skill
+## 安装为 Agent Skill
 
-直接克隆到 Codex Skills 目录：
+可克隆到自选技能目录；下面是普通目录示例，宿主不会因此自动发现技能，需要按该 Agent 的加载方式配置：
 
 ```bash
 git clone https://github.com/Snychng/ai-opportunity-radar.git \
-  "$HOME/.codex/skills/ai-opportunity-radar"
+  "$HOME/.local/share/agent-skills/ai-opportunity-radar"
 ```
 
 更新：
 
 ```bash
-git -C "$HOME/.codex/skills/ai-opportunity-radar" pull --ff-only
+git -C "$HOME/.local/share/agent-skills/ai-opportunity-radar" pull --ff-only
 ```
 
-安装后可在 Codex 中直接提出：
+安装后可在 AI Agent 中直接提出：
 
 ```text
 运行今天的 AI 创业机会雷达
@@ -117,10 +186,10 @@ git -C "$HOME/.codex/skills/ai-opportunity-radar" pull --ff-only
 
 ## 脚本快速开始
 
-以下命令展示底层工具的主要路径。完整日报仍建议由 Codex 按 [`SKILL.md`](SKILL.md) 编排。
+以下命令展示底层工具的主要路径。完整日报仍建议由 AI Agent 按 [`SKILL.md`](SKILL.md) 编排。
 
 ```bash
-export SKILL_DIR="$HOME/.codex/skills/ai-opportunity-radar"
+export SKILL_DIR="$HOME/.local/share/agent-skills/ai-opportunity-radar"
 export RADAR_HOME="${AI_OPPORTUNITY_RADAR_HOME:-$HOME/Documents/AI-Opportunity-Radar}"
 RUN_DATE="$(TZ=Asia/Shanghai date +%F)"
 RUN_DIR="$RADAR_HOME/raw/$RUN_DATE"
@@ -180,7 +249,7 @@ python3 "$SKILL_DIR/scripts/normalize_tikhub_results.py" \
 
 执行器会依次检查：实时价格、端点白名单、最坏成本、零费用账户预检端点、账户状态、免费额度和付费余额。任一条件不满足时，不发起付费数据请求。
 
-付费发现最多占预算 20%；每个请求必须服务于候选升级或硬门槛验证。连续 3 个请求没有新增 BENCH、A/B/R 或关键证据时停止该来源。
+付费发现最多占预算 20%；每个请求必须服务于候选升级或硬门槛验证。定向搜索补证每来源每批最多 3 请求是脚本硬限制，两个来源合计 4 请求合法。每批后由 Agent 评估新增 BENCH、A/B/R 或关键证据，无产出时停止该来源，不追加新批；执行器不能自动判断商业价值。
 
 从评论候选中选择 1–5 条并补充 `selection_reason` 后，可按 [`references/tikhub-integration.md`](references/tikhub-integration.md) 生成独立评论计划。评论翻页必须重新建计划和估价。
 
@@ -201,24 +270,11 @@ python3 "$SKILL_DIR/scripts/filter_ideas.py" \
 
 过滤结果包含 `deep_candidates`、`validated_ideas`、`regional_signals` 和带失败原因的 `rejected`。目标数量不足时保留真实数量，不用弱证据补齐。
 
-### 完整结论清单与费用产出
+### 稳定 ID 与 A 级评分
 
-日报前生成完整清单。`--execution`、`--evidence`、`--research` 均可重复传入实际存在的文件：
+完整研究顺序为：过滤 → A/B 准备 OPP、R 准备 SIG → A 级评分 → 完整清单 → 日报校验 → 提交研究观察。过滤器已聚合报价变体；对 `deep_candidates`、`validated_ideas`、`regional_signals` 及 overflow 分别准备稳定 ID，把返回记录替换回对应数组并另存 `tiered-candidates-with-ids.json`。单条提取和准备命令见上方实验示例。
 
-```bash
-python3 "$SKILL_DIR/scripts/build_result_digest.py" \
-  --tiered "$RUN_DIR/tiered-candidates.json" \
-  --execution "$RUN_DIR/tikhub-gap-results.json" \
-  --evidence "$RUN_DIR/tikhub-normalized-search.json" \
-  --output "$RADAR_HOME/reports/daily/$RUN_DATE-full-results.md" \
-  --metrics-output "$RUN_DIR/result-yield.json"
-```
-
-输出会展示全部 A/B/R 和 overflow、接近合格拒绝项、付费请求、费用、证据利用率、单个合格结论成本与来源转化。聊天默认展示这份清单的全部紧凑卡片，不能只给 Top 5 或链接。
-
-### 稳定 ID、A 级评分与状态提交
-
-候选评分前必须先分配稳定 ID：
+下面展示已提取 A 级数组 `deep-candidates.json` 的评分路径；A 级为空时跳过。准备 B/R 不需要评分。
 
 ```bash
 python3 "$SKILL_DIR/scripts/manage_state.py" prepare \
@@ -232,6 +288,23 @@ python3 "$SKILL_DIR/scripts/score_candidates.py" \
   --input "$RUN_DIR/deep-candidates-with-ids.json" \
   --output "$RUN_DIR/scored-deep-candidates.json"
 ```
+
+### 完整结论清单与费用产出
+
+使用准备好稳定 ID 的分层结果生成正式完整清单；A 级评分结果按 ID 回填对应候选后再输出日报。快速浏览也可直接传原始 `tiered-candidates.json`，此时清单使用 `CAND`，不能把它当实验 `record_id`。`--execution`、`--evidence`、`--research` 均可重复传入实际存在的文件：
+
+```bash
+python3 "$SKILL_DIR/scripts/build_result_digest.py" \
+  --tiered "$RUN_DIR/tiered-candidates-with-ids.json" \
+  --execution "$RUN_DIR/tikhub-gap-results.json" \
+  --evidence "$RUN_DIR/tikhub-normalized-search.json" \
+  --output "$RADAR_HOME/reports/daily/$RUN_DATE-full-results.md" \
+  --metrics-output "$RUN_DIR/result-yield.json"
+```
+
+输出会展示全部 A/B/R 和 overflow、接近合格拒绝项、独立机会家族、付费请求、费用、证据利用率及来源转化。A/B 研究资格与 R 级迁移假设分别计数；执行结果重复副本去重，旧运行费用不能混入当前运行。聊天默认展示这份清单的全部紧凑卡片，不能只给 Top 5 或链接。
+
+### 状态提交
 
 Markdown 日报结构校验通过后才能写入历史：
 
@@ -249,7 +322,7 @@ python3 "$SKILL_DIR/scripts/manage_state.py" record-batch \
 
 R 级区域创意应使用 `--kind signal` 独立分配和提交。实际 `run_id` 从 `query-plan.json` 读取，不手工构造或跨日期复用。
 
-R/SIG 补齐目标地区直接付款证据后可升级：
+R/SIG 补齐目标地区直接付款、两个独立来源及全部候选验证后可升级为 A/OPP：
 
 ```bash
 python3 "$SKILL_DIR/scripts/manage_state.py" promote \
@@ -268,7 +341,7 @@ python3 "$SKILL_DIR/scripts/manage_state.py" promote \
 - 机会 ID：`OPP-YYYYMMDD-XXXXXX`。
 - 信号 ID：`SIG-YYYYMMDD-XXXXXX`。
 - 机会身份由 `target_user + context + problem_or_desire + wedge`，以及存在时的国家、地区和主渠道决定；不依赖标题或翻译。
-- 同一 `run_id + kind + fingerprint` 重放不会重复创建观察事件。
+- 同一 `run_id + kind + fingerprint` 且输入相同的重放不会重复创建事件；同一运行更改输入会报冲突，修订需新运行。
 - 同日不同运行可以保存新的评分快照，但 `occurrences` 只按唯一日期计数。
 
 详细阶段输入输出见 [`references/data-contracts.md`](references/data-contracts.md)。
@@ -290,10 +363,11 @@ $RADAR_HOME/
     ├── signals.jsonl
     ├── signal-observations.jsonl
     ├── source-health.json
-    └── source-health-events.jsonl
+    ├── source-health-events.jsonl
+    └── experiment-events.jsonl
 ```
 
-`opportunities.jsonl` 和 `signals.jsonl` 是当前视图；`*-observations.jsonl` 是追加式历史。所有状态更新都经过文件锁和原子替换。
+`opportunities.jsonl` 和 `signals.jsonl` 是当前视图；`*-observations.jsonl` 是追加式历史。记录、升级和来源健康更新使用文件锁、原子替换和写前 journal；中断后下次读取先恢复。实验记录使用独立的单文件原子日志。同链接纠错保留版本并使旧引用失效，恢复引用须绑定当前修订及事实；历史查询只返回截止日快照。
 
 ## 评分模型
 
@@ -309,7 +383,7 @@ $RADAR_HOME/
 | MVP 可行性 | 2.0 | 1.5 | 1.0 |
 | 证据质量 | 1.5 | 1.0 | 1.0 |
 
-单一独立来源的 `confidence` 自动限制为不高于 4。评分只排序已通过六项门槛的 A 级候选；B/R 的分层由证据契约决定。
+评分入口会重新核验 A 级资格；不足两个独立来源、缺少目标市场直接付款或存在未验证的扩展假设时拒绝评分。B/R 的分层由证据契约决定。
 
 ## 安全边界
 
@@ -329,7 +403,10 @@ $RADAR_HOME/
 ├── SKILL.md                       # Skill 入口与完整执行流程
 ├── examples/                      # 付费对标与六轴扩展示例
 ├── references/                    # 研究、评分、安全、数据和报告契约
+├── agent-manifest.json            # 平台无关的项目入口描述
 ├── scripts/
+│   ├── radar.py                   # 通用 CLI 调度入口
+│   ├── manage_validation.py       # 个人适配与真实验证记录
 │   ├── build_query_plan.py        # 确定性查询计划与平台轮换
 │   ├── build_result_digest.py     # 全部结论与费用产出清单
 │   ├── community_query.py         # HN / GitHub 公开适配器
@@ -346,10 +423,14 @@ $RADAR_HOME/
 
 ## 开发与测试
 
+可在自己的虚拟环境中安装开发依赖后检查：
+
 ```bash
+python3 -m pip install -r requirements-dev.txt
 python3 -m py_compile scripts/*.py
 ruff check scripts tests
-pytest -q
+python3 -m unittest discover -s tests -v
+# 安装开发工具后还可运行：python3 -m pytest -q
 ```
 
 当前测试覆盖查询计划、多语言轮换、TikHub 费用与账户预检、付费对标扩展、六项硬门槛、A/B/R 分层、完整结论与费用产出、跨地区稳定身份、SIG→OPP 升级、评分、三层报告校验、追加式状态和 CLI 主流程。
@@ -362,6 +443,8 @@ pytest -q
 - [`references/query-patterns.md`](references/query-patterns.md)：多语言查询模式。
 - [`references/scoring.md`](references/scoring.md)：评分契约。
 - [`references/data-contracts.md`](references/data-contracts.md)：阶段与幂等契约。
+- [`references/agent-integration.md`](references/agent-integration.md)：通用宿主接入与定向范围文件。
+- [`references/personal-validation.md`](references/personal-validation.md)：个人约束与真实实验回写。
 - [`references/report-template.md`](references/report-template.md)：日报输出格式。
 - [`references/tikhub-integration.md`](references/tikhub-integration.md)：TikHub 费用与评论链路。
 - [`references/safety-and-legality.md`](references/safety-and-legality.md)：安全和合规边界。
@@ -370,6 +453,17 @@ pytest -q
 
 - 报告校验器只验证结构、字段和部分一致性，不证明市场规模、引用真实性或法律结论。
 - 社交平台数据受第三方服务、地区、限流和平台策略影响，不能承诺完整覆盖。
-- 聚类、反证和产品判断仍需要 Codex 或人工复核。
+- 聚类、反证和产品判断仍需要 AI Agent 或人工复核。
 - TikHub 估算不是账单；实际扣费以 TikHub 使用日志为准。
 - 当前没有原生 Windows 状态锁实现。
+
+## 本轮可靠性改进
+
+- 未知事实保持未知；收费方案与已成交分开，A 级付款主张须引用候选有效证据，在同一条记录验证地区、付款者和事实。
+- 独立证据先规范 URL 与原始主体；不同采集标签不会增加独立来源。
+- 对标轮询扩展、维度去重与扫描预算，过滤后按业务身份归并报价变体。
+- 定向扫描支持 `--scope-file`，可显式填写地区、语言和短查询；自由文本不被自动当成地区事实。
+- 付费补证可进入规范化；详情、评论上下文、父帖定位与未知语言保留。
+- 状态写入中断后可恢复；同链接纠错保留版本，历史查询按截止日前快照返回。
+- 费用只统计本次执行；跨运行证据复用需要 `reused_for_run_id`，不会把旧费用混入本次。
+- 当前 JSONL 与稳定 ID 保持兼容。带证据等级的旧记录会重新校验，缺少新契约字段时需要补证；不静默改判。

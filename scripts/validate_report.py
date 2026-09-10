@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from dataclasses import asdict, dataclass
 from decimal import Decimal, DecimalException, InvalidOperation
 from pathlib import Path
+
+from contracts import evidence_independent_sources
 
 
 REQUIRED_REPORT_SECTIONS = (
@@ -141,8 +144,8 @@ def _validate_costs(content: str, errors: list[str]) -> None:
             errors.append(f"采集费用缺少字段：{field}")
 
     request_count = cost_values["TikHub 请求次数"]
-    if request_count is not None and (not re.fullmatch(r"\d+", request_count) or int(request_count) <= 0):
-        errors.append("TikHub 请求次数必须是正整数")
+    if request_count is not None and not re.fullmatch(r"\d+", request_count):
+        errors.append("TikHub 请求次数必须是非负整数")
 
     parsed: dict[str, Decimal] = {}
     for field in TIKHUB_AMOUNT_FIELDS:
@@ -157,6 +160,8 @@ def _validate_costs(content: str, errors: list[str]) -> None:
             errors.append(f"{field} 必须是非负有限数字")
         else:
             parsed[field] = amount
+    if request_count == "0" and any(amount > 0 for amount in parsed.values()):
+        errors.append("TikHub 请求次数为 0 时，采集费用必须为 0")
     breakdown = (
         "TikHub 预计费用 USD",
         "TikHub 免费额度适用成本 USD",
@@ -309,7 +314,7 @@ def _validate_deep(blocks: list[tuple[str, str]], errors: list[str], warnings: l
         source_urls = re.findall(r"^- 来源：(https?://\S+)$", block, re.MULTILINE)
         if not source_urls:
             errors.append(f"{opportunity_id} 缺少有效来源 URL")
-        elif len(set(source_urls)) < 2:
+        elif len(evidence_independent_sources([{"url": url} for url in source_urls])) < 2:
             errors.append(f"{opportunity_id} 是 A 级深度机会，必须至少提供两个独立来源")
         access_methods = re.findall(r"^- 访问方式：(.+)$", block, re.MULTILINE)
         if not access_methods:
@@ -317,13 +322,19 @@ def _validate_deep(blocks: list[tuple[str, str]], errors: list[str], warnings: l
         for method in access_methods:
             if method.strip() not in ALLOWED_ACCESS_METHODS:
                 errors.append(f"{opportunity_id} 使用了未知访问方式：{method.strip()}")
-        confidence_value = _field(block, "证据置信度")
-        try:
-            confidence = float(confidence_value) if confidence_value is not None else None
-        except ValueError:
-            confidence = None
-            errors.append(f"{opportunity_id} 的证据置信度必须是 0 到 10 的数字")
-        if len(set(source_urls)) == 1 and confidence is not None and confidence > 4:
+        values: dict[str, float] = {}
+        for field, maximum in (("综合分", 100), ("首笔收入潜力", 10), ("长期规模潜力", 10), ("个人影响力潜力", 10), ("证据置信度", 10)):
+            raw = _field(block, field)
+            try:
+                value = float(raw) if raw is not None else None
+            except ValueError:
+                value = None
+            if value is None or not math.isfinite(value) or not 0 <= value <= maximum:
+                errors.append(f"{opportunity_id} 的{field}必须是 0 到 {maximum} 的有限数字")
+            else:
+                values[field] = value
+        confidence = values.get("证据置信度")
+        if len(evidence_independent_sources([{"url": url} for url in source_urls])) == 1 and confidence is not None and confidence > 4:
             errors.append(f"{opportunity_id} 只有单来源证据，证据置信度不得高于 4")
         if _field(block, "平台型") == "是" and "#### 单边切入口" not in block:
             errors.append(f"{opportunity_id} 是平台型机会，必须填写单边切入口")
@@ -383,6 +394,8 @@ def validate_report(content: str) -> ValidationResult:
         try:
             expected_cost = Decimal(raw_cost) if raw_cost is not None else None
         except InvalidOperation:
+            expected_cost = None
+        if expected_cost is not None and (not expected_cost.is_finite() or expected_cost < 0):
             expected_cost = None
     _validate_yield(
         content,

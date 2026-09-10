@@ -12,6 +12,29 @@ from tests.helpers import opportunity_block, valid_report  # noqa: E402
 
 
 class ReportValidationTests(unittest.TestCase):
+    def test_rejects_nonfinite_or_out_of_range_scores(self) -> None:
+        for value in ("-1", "99", "NaN", "Infinity", "-Infinity"):
+            with self.subTest(value=value):
+                result = validate_report(valid_report().replace("证据置信度：7", f"证据置信度：{value}"))
+                self.assertFalse(result.valid)
+
+    def test_invalid_usd_is_reported_without_crashing(self) -> None:
+        for value in ("NaN", "Infinity", "-Infinity", "bad"):
+            with self.subTest(value=value):
+                result = validate_report(valid_report().replace("TikHub 预计费用 USD：0.053000", f"TikHub 预计费用 USD：{value}"))
+                self.assertFalse(result.valid)
+
+    def test_same_origin_urls_do_not_prove_independence(self) -> None:
+        result = validate_report(valid_report().replace("https://community.example.org/thread/", "https://example.com/thread/"))
+        self.assertFalse(result.valid)
+        self.assertTrue(any("独立来源" in error for error in result.errors))
+
+    def test_free_only_report_accepts_zero_paid_requests(self) -> None:
+        report = valid_report().replace("TikHub 请求次数：17", "TikHub 请求次数：0")
+        report = report.replace("0.053000", "0.000000").replace("0.3816", "0").replace("0.004000", "0.000000").replace("0.049000", "0.000000")
+        report = report.replace("单个合格结论估算成本 USD：0.010600", "单个合格结论估算成本 USD：0.000000")
+        self.assertTrue(validate_report(report).valid)
+
     def test_accepts_complete_report(self) -> None:
         result = validate_report(valid_report())
         self.assertTrue(result.valid, result.errors)

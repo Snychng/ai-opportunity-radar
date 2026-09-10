@@ -17,6 +17,8 @@ from typing import Any, Callable
 from urllib import error, parse, request
 
 from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, validate_run_as_of
+from tikhub_query import _SameOriginRedirectHandler
+from normalize_tikhub_results import _language
 
 
 HN_ENDPOINT = "https://hn.algolia.com/api/v1/search_by_date"
@@ -36,6 +38,13 @@ def _slug(value: str) -> str:
     return rendered[:50] or "query"
 
 
+
+def short_topic(value: str | None, limit: int = 60) -> str:
+    """提取字面主题，去掉检索操作符，并限制单条查询长度。"""
+    words = re.findall(r"[^\W_]+", str(value or ""), re.UNICODE)
+    return " ".join(dict.fromkeys(words[:8]))[:limit].strip()
+
+
 def build_community_plan(
     *,
     as_of: str,
@@ -52,8 +61,7 @@ def build_community_plan(
         validate_run_as_of(run_id, as_of)
     except ContractError as exc:
         raise CommunityPlanError(str(exc)) from exc
-    # HN 全文搜索会把长串词收窄到几乎无结果；定向范围由 TikHub 本地语言查询
-    # 与后续聚类共同约束，社区层保持两个可召回的短意图查询。
+    # 主题进入实际查询；只保留短词组，避免长串意图造成几乎无结果。
     regional = focus_name.strip()[:40]
     groups = [
         {
@@ -85,6 +93,14 @@ def build_community_plan(
             "weight": 0.8,
         },
     ]
+    topic = short_topic(custom_focus) if custom_focus else None
+    if topic:
+        intents = ("manual", "paid", "workflow", "localization")
+        for group, intent in zip(groups, intents, strict=True):
+            group["query"] = f"{topic} {intent}"
+            if group["source"] == "github":
+                group["query"] += f" is:issue created:{as_of_date - timedelta(days=29)}..{as_of_date}"
+            group["ranking_query"] = topic + "：" + group["ranking_query"]
     requests: list[dict[str, Any]] = []
     threshold = int(datetime.combine(as_of_date - timedelta(days=29), time.min, tzinfo=timezone.utc).timestamp())
     upper_threshold = int(datetime.combine(as_of_date + timedelta(days=1), time.min, tzinfo=timezone.utc).timestamp()) - 1
@@ -205,7 +221,7 @@ def _default_transport(
     target = f"{endpoint}?{parse.urlencode(params)}"
     req = request.Request(target, headers=headers, method="GET")
     try:
-        with request.urlopen(req, timeout=timeout) as response:
+        with request.build_opener(_SameOriginRedirectHandler()).open(req, timeout=timeout) as response:
             payload = response.read(MAX_RESPONSE_BYTES + 1)
     except error.HTTPError as exc:
         if exc.code in {401, 403}:
@@ -267,7 +283,7 @@ def _normalize_hn(payload: dict[str, Any], request_item: dict[str, Any], observe
             "title": title,
             "original_text": _clean(row.get("story_text"), 1500) or title,
             "zh_translation": None,
-            "language": "en",
+            "language": _language(title + " " + str(row.get("story_text") or row.get("body") or ""), row.get("language")),
             "published_at": _clean(row.get("created_at"), 100),
             "date_confidence": "high" if row.get("created_at") else "unknown",
             "observed_at": observed_at,
@@ -309,7 +325,7 @@ def _normalize_github(payload: dict[str, Any], request_item: dict[str, Any], obs
             "title": title,
             "original_text": _clean(row.get("body"), 1500) or title,
             "zh_translation": None,
-            "language": "en",
+            "language": _language(title + " " + str(row.get("story_text") or row.get("body") or ""), row.get("language")),
             "published_at": _clean(row.get("created_at"), 100),
             "date_confidence": "high" if row.get("created_at") else "unknown",
             "observed_at": observed_at,
@@ -401,6 +417,7 @@ def execute_plan(
         "schema_version": SCHEMA_VERSION,
         "provider": "community-public",
         "run_id": plan["run_id"],
+        "as_of": plan["as_of"],
         "stage": "community_normalized",
         "generated_at": observed_at,
         "plan_sha256": canonical_sha256(plan),

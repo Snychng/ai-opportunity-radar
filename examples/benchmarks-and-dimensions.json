@@ -16,27 +16,36 @@
       "mvp_scope": "导入 FAQ 并自动完成一次回复",
       "payment_signals": [
         {
-          "type": "subscription",
+          "type": "pricing",
           "region": "美国",
-          "url": "https://vendor.example/pricing"
+          "url": "https://vendor.example/pricing",
+          "fact": "演示：页面列出服务价格，无法证明有人实际付款",
+          "is_demo": true
         }
       ],
       "demand_signals": [
         {
           "type": "complaint",
-          "url": "https://community.example/customer-support-cost"
+          "url": "https://community.example/customer-support-cost",
+          "fact": "演示：模拟商家表达客服成本或外包需求，尚未核实真实用户",
+          "is_demo": true
         }
       ],
       "evidence": [
         {
           "source": "vendor-pricing",
-          "url": "https://vendor.example/pricing"
+          "url": "https://vendor.example/pricing",
+          "fact": "仅用于展示证据格式的虚构素材，不是市场验证结果",
+          "is_demo": true
         },
         {
           "source": "merchant-community",
-          "url": "https://community.example/customer-support-cost"
+          "url": "https://community.example/customer-support-cost",
+          "fact": "仅用于展示证据格式的虚构素材，不是市场验证结果",
+          "is_demo": true
         }
-      ]
+      ],
+      "is_demo": true
     },
     {
       "product": "示例：人工客服外包服务",
@@ -54,25 +63,34 @@
         {
           "type": "pricing",
           "region": "美国",
-          "url": "https://agency.example/pricing"
+          "url": "https://agency.example/pricing",
+          "fact": "演示：页面列出服务价格，无法证明有人实际付款",
+          "is_demo": true
         }
       ],
       "demand_signals": [
         {
           "type": "outsourcing",
-          "url": "https://jobs.example/customer-support-contract"
+          "url": "https://jobs.example/customer-support-contract",
+          "fact": "演示：模拟商家表达客服成本或外包需求，尚未核实真实用户",
+          "is_demo": true
         }
       ],
       "evidence": [
         {
           "source": "agency-pricing",
-          "url": "https://agency.example/pricing"
+          "url": "https://agency.example/pricing",
+          "fact": "仅用于展示证据格式的虚构素材，不是市场验证结果",
+          "is_demo": true
         },
         {
           "source": "job-board",
-          "url": "https://jobs.example/customer-support-contract"
+          "url": "https://jobs.example/customer-support-contract",
+          "fact": "仅用于展示证据格式的虚构素材，不是市场验证结果",
+          "is_demo": true
         }
-      ]
+      ],
+      "is_demo": true
     }
   ],
   "dimensions": {
@@ -95,7 +113,7 @@
         "region": "北美",
         "language": "英语",
         "localization_gap": "先验证更窄人群和更轻交付",
-        "transfer_reason": "来源市场已有直接付费"
+        "transfer_reason": "来源市场的收费页面仅展示价格，真实付款待验证"
       },
       {
         "country": "印度尼西亚",
@@ -114,5 +132,8 @@
       "按成功回复量计费",
       "工具加轻量人工审核"
     ]
-  }
+  },
+  "schema_version": "3.0",
+  "is_demo": true,
+  "description": "全部为离线格式演示和未经验证的产品假设；示例域名不代表真实来源，标价不代表实际付款。"
 }

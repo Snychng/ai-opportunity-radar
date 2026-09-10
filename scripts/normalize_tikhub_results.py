@@ -14,7 +14,8 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, validate_run_as_of, validate_run_id
+from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, validate_run_as_of, validate_run_id, validate_stage_envelope
+from tikhub_query import TIKHUB_RESULT_STAGES
 
 
 PHASE_ONE_SOURCES = (
@@ -166,10 +167,12 @@ def _language(text: str | None, explicit: Any = None) -> str:
     explicit_text = _clean_text(explicit, limit=20)
     if explicit_text:
         return explicit_text.lower().replace("_", "-")
+    if text and re.search(r"[\u3040-\u30ff]", text):
+        return "ja"
+    if text and re.search(r"[\uac00-\ud7af]", text):
+        return "ko"
     if text and CJK_RE.search(text):
         return "zh"
-    if text and len(re.findall(r"[A-Za-z]", text)) >= 5:
-        return "en"
     return "unknown"
 
 
@@ -340,7 +343,7 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
             "source_item_id": _first(bv_id, item.get("aid")), "title": item.get("title"),
             "text": _first(item.get("description"), item.get("desc")), "author": _first(item.get("author"), item.get("up_name")),
             "container": "Bilibili", "date": _first(item.get("pubdate"), item.get("created")),
-            "language": "zh", "url": _first(item.get("arcurl"), f"https://www.bilibili.com/video/{bv_id}" if bv_id else None),
+            "language": item.get("language"), "url": _first(item.get("arcurl"), f"https://www.bilibili.com/video/{bv_id}" if bv_id else None),
             "engagement": _engagement(views=_first(item.get("play"), item.get("view")), likes=item.get("like"),
                                       comments=_first(item.get("review"), item.get("comment")),
                                       shares=item.get("share"), saves=item.get("favorites")),
@@ -366,7 +369,7 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
             "text": _first(item.get("excerpt"), item.get("description"), item.get("content")),
             "author": _first(_path(item, "author", "name"), _path(item, "author", "headline")),
             "container": _path(item, "question", "title"), "date": _first(item.get("created_time"), item.get("updated_time")),
-            "language": "zh", "url": url,
+            "language": item.get("language"), "url": url,
             "engagement": _engagement(likes=item.get("voteup_count"), comments=item.get("comment_count"),
                                       saves=item.get("favorites_count"), views=item.get("visits_count")),
             "identifiers": identifiers,
@@ -377,7 +380,7 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "source_item_id": document_id, "title": item.get("title"), "text": item.get("desc"),
             "author": item.get("source"), "container": item.get("source"), "date": _first(item.get("timestamp"), item.get("date")),
-            "language": "zh", "url": article_url, "engagement": {},
+            "language": item.get("language"), "url": article_url, "engagement": {},
             "identifiers": {"url": article_url} if _url(article_url) else {},
         }
     return {}
@@ -393,11 +396,16 @@ def _normalize_item(
     observed_at: str | None,
     raw_file: str,
     raw_pointer: str,
+    is_detail: bool = False,
 ) -> dict[str, Any] | None:
     fields = _source_fields(source, item)
+    if is_detail:
+        fields["text"] = _first(*(item.get(key) for key in ("full_text", "content", "body", "description", "text", "desc")), fields.get("text"))
+        fields["date"] = _first(item.get("published_at"), fields.get("date"), item.get("created_at"))
+        fields["url"] = _first(fields.get("url"), item.get("url"), item.get("web_url"))
     source_item_id = _clean_text(fields.get("source_item_id"), limit=300)
     title = _clean_text(fields.get("title"), limit=500)
-    original_text = _join_text(title, fields.get("text"))
+    original_text = _join_text(title, fields.get("text"), limit=8 * 1024 * 1024 if is_detail else 4000)
     normalized_url = _url(fields.get("url"))
     if not any((source_item_id, original_text, normalized_url)):
         return None
@@ -424,7 +432,8 @@ def _normalize_item(
         "title": title,
         "original_text": original_text,
         "zh_translation": None,
-        "language": _language(original_text, fields.get("language")),
+        "language": _language(original_text, _first(item.get("language"), fields.get("language"))),
+        "source_region": _clean_text(_first(item.get("region"), item.get("country")), limit=100) or "unknown",
         "published_at": published_at,
         "published_at_raw": published_at_raw,
         "date_confidence": date_confidence,
@@ -476,6 +485,7 @@ def _comment_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
     candidate = {
         "source": source,
         "selected_item_id": item["id"],
+        "parent_url": item.get("url"),
         "identifiers": identifiers,
     }
     if content_type:
@@ -483,50 +493,70 @@ def _comment_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
     return candidate
 
 
-def _walk_dicts(value: Any, *, depth: int = 0) -> Iterable[dict[str, Any]]:
-    """有限深度遍历评论响应中的对象。"""
-    if depth > 7:
-        return
+def _comment_text(row: dict[str, Any]) -> str | None:
+    value = _first(*(row.get(key) for key in ("text", "content", "comment_text", "comment", "body", "message", "desc")))
     if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from _walk_dicts(child, depth=depth + 1)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_dicts(child, depth=depth + 1)
+        value = _first(value.get("text"), value.get("content"), value.get("message"))
+    return _clean_text(value, limit=8 * 1024 * 1024)
 
 
-def _extract_comment_items(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """从不同平台的一级评论响应中提取带正文的对象。"""
-    text_keys = ("text", "content", "comment_text", "comment", "body", "message", "desc")
+def _comment_id(row: dict[str, Any], parent: str | None = None, post: str | None = None) -> str:
+    return _clean_text(_first(*(row.get(key) for key in ("comment_id", "cid", "reply_id", "id", "pk"))), limit=300) or canonical_sha256({"post": post, "parent": parent, "text": _comment_text(row)})[:20]
+
+
+def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> list[dict[str, Any]]:
+    """保留嵌套回复的父评论和原始 JSON 定位，禁止把作者对象当评论。"""
     result: list[dict[str, Any]] = []
-    seen_objects: set[int] = set()
-    for row in _walk_dicts(data):
-        if id(row) in seen_objects:
-            continue
-        seen_objects.add(id(row))
-        text = _first(*(row.get(key) for key in text_keys))
-        if isinstance(text, dict):
-            text = _first(text.get("text"), text.get("content"), text.get("message"))
-        cleaned = _clean_text(text, limit=2000)
-        if not cleaned:
-            continue
-        has_comment_shape = any(
-            key in row
-            for key in (
-                "comment_id",
-                "cid",
-                "reply_id",
-                "like_count",
-                "digg_count",
-                "user",
-                "author",
-                "create_time",
-                "created_at",
-            )
-        )
-        if has_comment_shape:
-            result.append(row)
+
+    def visit(value: Any, parent: str | None, pointer: str, depth: int) -> None:
+        if depth > 12:
+            return
+        if isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, parent, f"{pointer}/{index}", depth + 1)
+        elif isinstance(value, dict):
+            is_comment = _comment_text(value) and any(key in value for key in ("comment_id", "cid", "reply_id", "id", "pk", "author", "user", "create_time", "created_at"))
+            next_parent = parent
+            if is_comment:
+                row = dict(value)
+                explicit_parent = _clean_text(_first(value.get("parent_comment_id"), value.get("reply_to_comment_id"), value.get("reply_to_id"), value.get("parentId")), limit=300)
+                if not explicit_parent and str(value.get("parent_id") or "").startswith("t1_"):
+                    explicit_parent = str(value["parent_id"])[3:]
+                row["_parent_comment_id"] = explicit_parent or parent
+                row["_raw_pointer"] = pointer
+                result.append(row)
+                next_parent = _comment_id(row, row["_parent_comment_id"], selected_item_id)
+            for key, child in value.items():
+                if key not in {"author", "user", "owner", "reactions", "statistics", "content", "comment"}:
+                    escaped_key = str(key).replace("~", "~0").replace("/", "~1")
+                    visit(child, next_parent, f"{pointer}/{escaped_key}", depth + 1)
+
+    visit(data, None, "", 0)
+    return result
+
+
+def _detail_items(source: str, data: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
+    """沿固定响应容器提取详情，不把任意嵌套字段混成帖子证据。"""
+    containers = ("data", "item", "items", "video", "video_info", "aweme_detail", "aweme_info", "itemInfo", "itemStruct", "post", "note", "note_card", "result", "article", "answer", "tweet", "legacy", "media")
+    result: list[tuple[dict[str, Any], str]] = []
+
+    def visit(value: Any, pointer: str, depth: int) -> None:
+        if depth > 8:
+            return
+        if isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{pointer}/{index}", depth + 1)
+        elif isinstance(value, dict):
+            fields = _source_fields(source, value)
+            text = _first(fields.get("text"), fields.get("title"), *(value.get(key) for key in ("full_text", "content", "body", "description", "text", "desc", "title")))
+            if _clean_text(text):
+                result.append((value, pointer))
+                return
+            for key in containers:
+                if key in value:
+                    visit(value[key], f"{pointer}/{key}", depth + 1)
+
+    visit(data, "", 0)
     return result
 
 
@@ -537,6 +567,9 @@ def _normalize_comment(
     selected_item_id: str,
     query_id: str,
     observed_at: str | None,
+    parent_url: str | None = None,
+    raw_file: str | None = None,
+    raw_pointer: str | None = None,
 ) -> dict[str, Any] | None:
     text_value = _first(
         row.get("text"),
@@ -549,7 +582,7 @@ def _normalize_comment(
     )
     if isinstance(text_value, dict):
         text_value = _first(text_value.get("text"), text_value.get("content"), text_value.get("message"))
-    text = _clean_text(text_value, limit=2000)
+    text = _clean_text(text_value, limit=8 * 1024 * 1024)
     if not text:
         return None
     comment_id = _clean_text(
@@ -557,7 +590,7 @@ def _normalize_comment(
         limit=300,
     )
     if not comment_id:
-        comment_id = canonical_sha256({"source": source, "parent": selected_item_id, "text": text})[:20]
+        comment_id = _comment_id(row, row.get("_parent_comment_id"), selected_item_id)
     author = _first(
         _path(row, "user", "username"),
         _path(row, "user", "nickname"),
@@ -574,8 +607,14 @@ def _normalize_comment(
         "source": source,
         "source_item_id": comment_id,
         "parent_item_id": selected_item_id,
+        "parent_comment_id": row.get("_parent_comment_id"),
+        "origin_id": selected_item_id,
         "query_id": query_id,
-        "url": None,
+        "url": _url(_first(row.get("url"), row.get("permalink"))) or parent_url,
+        "url_kind": "comment" if _url(_first(row.get("url"), row.get("permalink"))) else ("parent_post" if parent_url else "unavailable"),
+        "parent_url": parent_url,
+        "raw_file": raw_file,
+        "raw_json_pointer": raw_pointer,
         "author": _clean_text(author, limit=300),
         "container": selected_item_id,
         "title": None,
@@ -619,6 +658,10 @@ def normalize_documents(
     if len(files) != len(documents_list):
         raise ValueError("source_files 数量必须与 documents 一致")
 
+    for document in documents_list:
+        validate_stage_envelope(document)
+        if document.get("provider") != "tikhub":
+            raise ValueError("规范化输入 provider 必须为 tikhub")
     run_ids = {str(document.get("run_id") or "") for document in documents_list}
     if len(run_ids) != 1:
         raise ValueError("合并的 TikHub 文档必须使用同一个 run_id")
@@ -634,8 +677,8 @@ def normalize_documents(
     except ContractError as exc:
         raise ValueError(str(exc)) from exc
     stages = {str(document.get("stage") or "") for document in documents_list}
-    if len(stages) != 1 or not stages <= {"search_discovery", "comment_deep_dive"}:
-        raise ValueError("只能合并同一阶段的 TikHub 搜索或评论结果")
+    if len(stages) != 1 or not stages <= TIKHUB_RESULT_STAGES:
+        raise ValueError("只能合并同一阶段的 TikHub 搜索、补证或评论结果")
     source_stage = stages.pop()
 
     statuses: dict[str, str] = {}
@@ -672,23 +715,41 @@ def normalize_documents(
             data = _dict(_path(result, "response", "data"))
             if source_stage == "comment_deep_dive":
                 kind = str(result.get("kind") or "")
-                selected_item_id = _clean_text(result.get("selected_item_id"), limit=300) or "unknown-parent"
+                selected_item_id = _clean_text(result.get("selected_item_id"), limit=300)
+                if not selected_item_id:
+                    raise ValueError("评论和详情结果必须保留 selected_item_id")
                 query_id = _clean_text(result.get("id"), limit=300) or f"request-{document_index}-{result_index}"
+                parent_url = _url(result.get("parent_url"))
                 if kind == "detail":
-                    detail_results.append(
-                        {
-                            "source": source,
-                            "selected_item_id": selected_item_id,
-                            "query_id": query_id,
-                            "status": "ok" if data else "no-results",
-                        }
-                    )
-                    _status_update(statuses, source, "ok" if data else "no-results")
-                    request_statuses.append(
-                        {"id": query_id, "source": source, "status": "ok" if data else "no-results", "error_code": None}
-                    )
+                    detail_evidence_ids: list[str] = []
+                    for row, pointer in _detail_items(source, data):
+                        detail = _normalize_item(source, row, query_id=query_id, query_group=None, query=None,
+                                                 observed_at=observed_at, raw_file=raw_file,
+                                                 raw_pointer=f"/results/{result_index}/response/data{pointer}", is_detail=True)
+                        if detail is None:
+                            continue
+                        detail["id"] = selected_item_id
+                        detail["origin_id"] = selected_item_id
+                        detail["parent_item_id"] = selected_item_id
+                        detail["evidence_kind"] = "post_detail"
+                        detail["url"] = detail.get("url") or parent_url
+                        detail["comment_candidate"] = None
+                        key = (source, selected_item_id)
+                        if key in seen:
+                            duplicate_count += 1
+                            continue
+                        seen.add(key)
+                        evidence.append(detail)
+                        detail_evidence_ids.append(detail["id"])
+                    detail_status = "ok" if detail_evidence_ids else "no-results"
+                    detail_results.append({"source": source, "selected_item_id": selected_item_id,
+                                           "query_id": query_id, "status": detail_status, "evidence_ids": detail_evidence_ids})
+                    _status_update(statuses, source, detail_status)
+                    request_statuses.append({"id": query_id, "source": source, "status": detail_status, "error_code": None})
                     continue
-                raw_comments = _extract_comment_items(data)
+                if kind != "top_level_comments":
+                    raise ValueError(f"不支持的评论深挖 kind：{kind}")
+                raw_comments = _extract_comment_items(data, selected_item_id)
                 normalized_count = 0
                 for raw_comment in raw_comments:
                     normalized_comment = _normalize_comment(
@@ -697,6 +758,9 @@ def normalize_documents(
                         selected_item_id=selected_item_id,
                         query_id=query_id,
                         observed_at=observed_at,
+                        parent_url=parent_url,
+                        raw_file=raw_file,
+                        raw_pointer=f"/results/{result_index}/response/data{raw_comment.get('_raw_pointer', '')}",
                     )
                     if normalized_comment is None:
                         continue
@@ -751,6 +815,12 @@ def normalize_documents(
                     continue
                 seen.add(key)
                 normalized["id"] = f"{source}:{key[1].split(':', 1)[1]}"
+                normalized["origin_id"] = normalized["id"]
+                normalized["evidence_kind"] = "post"
+                normalized["query_language"] = _dict(result.get("query_scope")).get("language", "unknown")
+                normalized["query_region"] = _dict(result.get("query_scope")).get("country", "unknown")
+                if isinstance(result.get("evidence_gap"), dict):
+                    normalized["evidence_gap"] = dict(result["evidence_gap"])
                 normalized["comment_candidate"] = _comment_candidate(normalized)
                 evidence.append(normalized)
                 normalized_for_result += 1
@@ -764,6 +834,14 @@ def normalize_documents(
                 }
             )
 
+    parent_urls = {item["id"]: item["url"] for item in evidence if item.get("url")}
+    for comment in comments:
+        parent_url = comment.get("parent_url") or parent_urls.get(comment["parent_item_id"])
+        if parent_url:
+            comment["parent_url"] = parent_url
+            if not comment.get("url"):
+                comment["url"] = parent_url
+                comment["url_kind"] = "parent_post"
     by_source = Counter(item["source"] for item in [*evidence, *comments])
     comment_candidates = [item["comment_candidate"] for item in evidence if item.get("comment_candidate")]
     return {
@@ -772,7 +850,8 @@ def normalize_documents(
         "provider": "tikhub",
         "run_id": run_id,
         "as_of": as_of,
-        "stage": "tikhub_normalized_search" if source_stage == "search_discovery" else "tikhub_normalized_comments",
+        "stage": {"search_discovery": "tikhub_normalized_search", "comment_deep_dive": "tikhub_normalized_comments", "evidence_gap_verification": "tikhub_normalized_gaps"}[source_stage],
+        "source_stage": source_stage,
         "source_files": files,
         "stats": {
             "requests_seen": request_count,

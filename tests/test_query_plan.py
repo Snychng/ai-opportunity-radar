@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import json
 import tempfile
+import subprocess
 import unittest
 from datetime import date
 from pathlib import Path
@@ -122,6 +123,43 @@ class QueryPlanTests(unittest.TestCase):
         self.assertTrue(localized["query"])
         self.assertEqual(plan["retrieval_plans"]["tikhub"]["run_id"], plan["run_id"])
         self.assertEqual(plan["retrieval_plans"]["community"]["run_id"], plan["run_id"])
+
+    def test_long_focus_produces_bounded_queries_and_unknown_geography(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = build_plan(date(2026, 9, 10), Path(tmp), focus="AI customer service for small online merchants " * 8)
+        self.assertEqual(plan["focus_region"]["id"], "unknown")
+        self.assertEqual(plan["languages"], ["unknown"])
+        for item in plan["retrieval_plans"]["tikhub"]["requests"]:
+            query = next(v for k, v in item["params"].items() if k in {"keyword", "query", "searchTerms", "search_query"})
+            self.assertLessEqual(len(query), 100)
+            self.assertIn("customer", query)
+
+    def test_structured_scope_overrides_rotation_and_controls_existing_parameters(self) -> None:
+        scope = {"countries": ["JP"], "languages": ["ja"], "industry": "電商", "payer": "店主", "task": "注文対応", "queries": [{"language": "ja", "query": "注文対応 高い 手作業"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = build_plan(date(2026, 9, 10), Path(tmp), scope=scope)
+        self.assertEqual(plan["focus_region"]["markets"], ["JP"])
+        self.assertEqual(plan["languages"], ["ja"])
+        self.assertEqual(plan["core_regions"], ["JP"])
+        for item in plan["retrieval_plans"]["tikhub"]["requests"]:
+            if item["source"] == "youtube":
+                self.assertEqual(item["params"]["country_code"], "jp")
+                self.assertEqual(item["params"]["language_code"], "ja")
+        self.assertIn("注文対応", json.dumps(plan["retrieval_plans"]["community"], ensure_ascii=False))
+        with self.assertRaises(ValueError):
+            build_plan(date(2026, 9, 10), Path(tmp), scope={"countries": ["not-a-country"], "languages": ["ja"]})
+
+    def test_scope_file_cli_and_run_identity_are_deterministic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = {"countries": ["JP"], "languages": ["ja"], "task": "注文対応"}
+            scope_path = Path(tmp) / "scope.json"
+            scope_path.write_text(json.dumps(scope))
+            result = subprocess.run([sys.executable, str(SCRIPTS / "build_query_plan.py"), "--date", "2026-09-10", "--home", tmp, "--scope-file", str(scope_path)], text=True, capture_output=True, check=True)
+            generated = json.loads(result.stdout)
+            direct = build_plan(date(2026, 9, 10), Path(tmp), scope=scope)
+            changed = build_plan(date(2026, 9, 10), Path(tmp), scope=dict(scope, countries=["ZA"]))
+        self.assertEqual(generated["run_id"], direct["run_id"])
+        self.assertNotEqual(direct["run_id"], changed["run_id"])
 
     def test_parse_date_rejects_invalid_value(self) -> None:
         with self.assertRaises(ValueError):

@@ -9,7 +9,7 @@ import re
 import unicodedata
 from datetime import date, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
 
@@ -145,22 +145,62 @@ def validate_run_as_of(run_id: Any, as_of: Any) -> tuple[str, str]:
     return validated_run_id, value
 
 
+def validate_stage_envelope(payload: Any) -> dict[str, str]:
+    """校验阶段版本和成对的运行元数据；无元数据的低层输入仍可使用。"""
+    if not isinstance(payload, dict):
+        raise ContractError("阶段输入必须是对象")
+    if "schema_version" in payload and payload["schema_version"] != SCHEMA_VERSION:
+        raise ContractError(f"不支持 schema_version：{payload['schema_version']}；需要 {SCHEMA_VERSION}")
+    envelope = {"schema_version": SCHEMA_VERSION}
+    if "run_id" in payload or "as_of" in payload:
+        run_id, as_of = validate_run_as_of(payload.get("run_id"), payload.get("as_of"))
+        envelope.update(run_id=run_id, as_of=as_of)
+    return envelope
+
+
+def canonical_evidence_url(value: Any) -> str:
+    """规范可追溯网页地址，移除片段和常见追踪参数而保留内容参数。"""
+    if not isinstance(value, str):
+        return ""
+    try:
+        parsed = urlparse(value.strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            return ""
+        hostname = parsed.hostname.lower().removeprefix("www.")
+        port = parsed.port
+        netloc = hostname if port in (None, 80, 443) else f"{hostname}:{port}"
+        query = urlencode(sorted((key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True)
+                                 if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}))
+        return urlunparse(("https", netloc, parsed.path.rstrip("/"), "", query, ""))
+    except ValueError:
+        return ""
+
+
 def evidence_independent_sources(evidence: Any) -> set[str]:
-    """优先按来源与容器计算独立证据源，避免同站多链接虚增。"""
-    result: set[str] = set()
+    """按原始内容和发布主体合并来源；采集标签不代表独立证据。"""
     if not isinstance(evidence, list):
-        return result
+        return set()
+    parents: dict[str, str] = {}
+
+    def root(value: str) -> str:
+        parents.setdefault(value, value)
+        while parents[value] != value:
+            parents[value] = parents[parents[value]]
+            value = parents[value]
+        return value
+
     for item in evidence:
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or item.get("retracted") is True or item.get("status") == "retracted":
             continue
-        source = normalize_identity(item.get("source"))
-        container = normalize_identity(item.get("container"))
-        url = str(item.get("url") or "").strip()
-        hostname = normalize_identity(urlparse(url).hostname) if url else ""
-        if source:
-            identity = "|".join(part for part in (source, container) if part)
-        else:
-            identity = "|".join(part for part in (hostname, container) if part) or url
-        if identity:
-            result.add(identity)
-    return result
+        url = canonical_evidence_url(item.get("url"))
+        if not url:
+            continue
+        original_url = canonical_evidence_url(item.get("original_url")) or url
+        publisher = normalize_identity(item.get("original_publisher") or item.get("original_author")
+                                       or item.get("publisher_id"))
+        identity = f"publisher:{publisher}" if publisher else f"host:{urlparse(original_url).hostname}"
+        keys = [f"url:{url}", f"url:{original_url}", identity]
+        anchor = min(root(key) for key in keys)
+        for key in keys:
+            parents[root(key)] = anchor
+    return {root(key) for key in parents}

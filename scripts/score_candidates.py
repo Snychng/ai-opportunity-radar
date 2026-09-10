@@ -9,7 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
-from contracts import SCORING_VERSION, ContractError, evidence_independent_sources, validate_record_id
+from contracts import SCORING_VERSION, ContractError, evidence_independent_sources, validate_record_id, validate_stage_envelope
+from filter_ideas import classify_candidate, qualifying_evidence
 
 WEIGHTS_BY_TRACK: dict[str, dict[str, float]] = {
     "needle": {
@@ -48,6 +49,7 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(candidate, dict):
         raise ScoreValidationError("候选必须是 JSON 对象")
     try:
+        validate_stage_envelope(candidate)
         validate_record_id(candidate.get("id"), kind="opportunity")
     except ContractError as exc:
         raise ScoreValidationError(f"候选必须先通过 manage_state.py prepare 分配 ID：{exc}") from exc
@@ -60,6 +62,9 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     evidence = candidate.get("evidence")
     if not isinstance(evidence, list) or not evidence:
         raise ScoreValidationError("候选必须包含非空 evidence 数组")
+    tier, reasons, gates = classify_candidate(candidate)
+    if tier != "A" or candidate.get("evidence_tier", "A") != "A":
+        raise ScoreValidationError(f"只有重新核验为 A 级的候选可以评分：{', '.join(reasons) or tier or '证据不足'}")
     weights = WEIGHTS_BY_TRACK[track]
     scores = candidate.get("scores")
     if not isinstance(scores, dict):
@@ -79,11 +84,7 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     if missing_aux:
         raise ScoreValidationError(f"缺少辅助评分字段：{', '.join(missing_aux)}")
     normalized_aux = {field: _validate_number(auxiliary[field], field) for field in AUXILIARY_FIELDS}
-    independent_source_count = len(evidence_independent_sources(evidence))
-    confidence_capped = False
-    if independent_source_count <= 1 and normalized_aux["confidence"] > 4:
-        normalized_aux["confidence"] = 4.0
-        confidence_capped = True
+    independent_source_count = len(evidence_independent_sources(qualifying_evidence(candidate)))
 
     total = round(sum(normalized_scores[field] * weights[field] for field in SCORE_FIELDS), 1)
     if total >= 75:
@@ -94,6 +95,8 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         recommendation = "早期信号"
 
     result = deepcopy(candidate)
+    result["evidence_tier"] = "A"
+    result["hard_gates"] = gates
     result["scores"] = normalized_scores
     result["auxiliary_scores"] = normalized_aux
     result["total_score"] = total
@@ -102,7 +105,7 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     result["scoring_track"] = track
     result["scoring_weights"] = deepcopy(weights)
     result["independent_source_count"] = independent_source_count
-    result["confidence_capped"] = confidence_capped
+    result["confidence_capped"] = False  # 保留输出兼容字段；单来源已在 A 级资格校验中拒绝。
     return result
 
 
@@ -136,7 +139,23 @@ def _read_candidates(path: Path) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return data
     if isinstance(data, dict) and isinstance(data.get("candidates"), list):
-        return data["candidates"]
+        try:
+            envelope = validate_stage_envelope(data)
+        except ContractError as exc:
+            raise ScoreValidationError(str(exc)) from exc
+        candidates = []
+        for candidate in data["candidates"]:
+            if not isinstance(candidate, dict):
+                raise ScoreValidationError("candidates 中每项必须是对象")
+            try:
+                item_envelope = validate_stage_envelope(candidate)
+            except ContractError as exc:
+                raise ScoreValidationError(str(exc)) from exc
+            for field in ("run_id", "as_of"):
+                if field in envelope and field in item_envelope and envelope[field] != item_envelope[field]:
+                    raise ScoreValidationError(f"候选 {field} 与包装运行不一致")
+            candidates.append({**envelope, **candidate})
+        return candidates
     if isinstance(data, dict):
         return [data]
     raise ScoreValidationError("输入必须是候选对象、对象数组或 JSONL")
