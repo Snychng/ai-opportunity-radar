@@ -221,6 +221,35 @@ def _evidence_payloads(manifest: dict) -> list[dict]:
     return [_load_artifact(manifest, name) for name in manifest["evidence_artifacts"]]
 
 
+def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]:
+    """原始材料入可重建索引，再将历史相关证据交给宿主。"""
+    from aor.evidence.claims import build_evidence_packet
+    from aor.storage.evidence_library import EvidenceLibrary
+
+    library = EvidenceLibrary(Path(manifest["home"]) / "evidence-library")
+    for name in manifest["evidence_artifacts"]:
+        payload = _load_artifact(manifest, name)
+        rows = [*payload.get("evidence", []), *payload.get("comments", [])]
+        library.ingest(rows, as_of=manifest["as_of"], run_id=payload.get("run_id") or manifest["run_id"],
+                       raw_ref=manifest["artifacts"][name]["path"])
+    if "benchmarks" in manifest["artifacts"]:
+        benchmarks = _load_artifact(manifest, "benchmarks")
+        rows = [item for benchmark in benchmarks.get("benchmarks", []) for item in benchmark.get("evidence", [])]
+        library.ingest(rows, as_of=manifest["as_of"], run_id=manifest["run_id"],
+                       raw_ref=manifest["artifacts"]["benchmarks"]["path"])
+    plan = _load_artifact(manifest, "plan")
+    scope = plan.get("research_scope") or {}
+    query = manifest.get("focus") or scope.get("task") or ""
+    context = library.search(query, as_of=manifest["as_of"], run_id=manifest["run_id"], limit=100)
+    experiment_path = Path(manifest["home"]) / "state/experiment-events.jsonl"
+    experiments = [json.loads(line) for line in experiment_path.read_text().splitlines() if line.strip()] if experiment_path.exists() else []
+    packet = build_evidence_packet(context, as_of=manifest["as_of"], run_id=manifest["run_id"],
+                                   experiments=experiments, max_items=30, max_chars=18000)
+    _artifact(directory, manifest, "evidence-context", {**_metadata(manifest), "evidence": context})
+    _artifact(directory, manifest, "evidence-packet", packet)
+    return context, packet
+
+
 def _prepare_tiered(directory: Path, manifest: dict) -> dict:
     benchmarks = _load_artifact(manifest, "benchmarks")
     if not benchmarks.get("benchmarks"):
@@ -279,11 +308,7 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                        assessment_file=assessment_file, profile_file=profile_file)
         _collect(directory, manifest, collect=collect)
         evidence = _evidence_payloads(manifest)
-        # evidence-packet 固定落盘，供宿主逐条引用；后续知识库适配在此统一接入。
-        packet = {**_metadata(manifest), "evidence": [row for payload in evidence
-                  for row in [*payload.get("evidence", []), *payload.get("comments", [])]],
-                  "instruction": "核验原文后建立 BENCH 和主张，定价、愿付费和真实付款分别记录。"}
-        _artifact(directory, manifest, "evidence-packet", packet)
+        context, packet = _refresh_library(directory, manifest)
         if "benchmarks" not in manifest["artifacts"]:
             return _handoff(directory, manifest, "awaiting_benchmarks",
                             "阅读 evidence-packet.json，补充官网定价、付款和反证；用 resume --benchmarks FILE 提交。",
@@ -298,7 +323,10 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                                       "claims": [], "decision": {"summary": None, "primary_id": None,
                                       "largest_unknown": None, "next_action": None, "stop_condition": None}})
         if "report" not in manifest["artifacts"]:
+            from aor.evidence.claims import validate_claims
+
             assessment = _load_artifact(manifest, "assessment")
+            claims = validate_claims(assessment.get("claims") or [], context, as_of=manifest["as_of"])
             tiered = _apply_assessment(tiered, assessment)
             _artifact(directory, manifest, "tiered", tiered)
             profile_assessment = None
@@ -312,7 +340,7 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
             report = build_report(tiered, decision=assessment.get("decision") or {}, evidence=evidence,
                                   executions=[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]],
                                   profile_assessment=profile_assessment, source_coverage=coverage,
-                                  claims=assessment.get("claims") or [])
+                                  claims=claims, claim_evidence=context)
             _artifact(directory, manifest, "report", report)
             (directory / "report.md").write_text(render_report(report), encoding="utf-8")
             (directory / "summary.md").write_text(render_summary(report, full_path=str(directory / "report.md")), encoding="utf-8")

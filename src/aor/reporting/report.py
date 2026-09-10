@@ -23,7 +23,8 @@ def report_records(tiered: dict) -> list[dict]:
 
 def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None = None,
                  evidence: list[dict] | None = None, profile_assessment: dict | None = None,
-                 source_coverage: dict | None = None, claims: list[dict] | None = None) -> dict:
+                 source_coverage: dict | None = None, claims: list[dict] | None = None,
+                 claim_evidence: list[dict] | None = None) -> dict:
     """只组织已研究的数据，不代填市场事实或评分。"""
     digest = build_result_digest(tiered, executions=executions or [], evidence_payloads=evidence or [])
     report = {
@@ -31,7 +32,7 @@ def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None 
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tiered": deepcopy(tiered), "decision": deepcopy(decision),
         "metrics": digest["metrics"], "source_yield": digest["source_yield"],
-        "source_coverage": source_coverage or {}, "claims": claims or [],
+        "source_coverage": source_coverage or {}, "claims": claims or [], "claim_evidence": claim_evidence or [],
         "profile_assessment": profile_assessment, "market_validated": False,
         "execution_results": executions or [], "digest_markdown": digest["markdown"],
     }
@@ -88,6 +89,12 @@ def validate_structured_report(report: Any) -> dict:
             warnings.append("包含演示数据，不构成真实市场结论")
         if report.get("profile_assessment") is None:
             warnings.append("尚未结合个人约束评估可执行性")
+        if report.get("claims"):
+            from aor.evidence.claims import validate_claims
+
+            validate_claims(report["claims"], report.get("claim_evidence") or [], as_of=report["as_of"])
+        elif seen:
+            warnings.append("尚未提供独立商业主张清单，现有证据资格不代表原文语义已经自动核验")
     except (ValueError, TypeError, KeyError) as exc:
         errors.append(str(exc))
     return {"valid": not errors, "errors": errors, "warnings": warnings}
