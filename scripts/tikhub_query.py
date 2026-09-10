@@ -15,10 +15,15 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib import error, parse, request
 
+import aor_bootstrap  # noqa: F401
+from aor.paid_execution import execute_requests, select_attempts
+from aor.request_identity import deduplicate_requests, request_fingerprint
+from aor.storage.request_journal import JournalError, RequestJournal
 from contracts import SCHEMA_VERSION, ContractError, validate_run_as_of
 
 
@@ -300,6 +305,9 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
         keyword = str(group.get("keyword", "")).strip()
         if not 1 <= len(keyword) <= 100:
             raise PlanError(f"关键词组 {group_id} 必须包含 1 到 100 个字符")
+        intent_refs = group.get("intent_refs", [])
+        if not isinstance(intent_refs, list) or any(not isinstance(ref, str) or not ref for ref in intent_refs):
+            raise PlanError(f"关键词组 {group_id} 的 intent_refs 必须是非空字符串数组")
         locale = validate_query_locale(group.get("country"), group.get("language"))
         sources = group.get("sources")
         if not isinstance(sources, list) or not sources:
@@ -315,6 +323,7 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
                     "id": f"{group_id}-{source}-{source_index}",
                     "query_group": group_id,
                     "query_scope": dict(locale),
+                    "intent_refs": list(intent_refs),
                     "source": source,
                     "endpoint": profile["endpoint"],
                     "method": profile["method"],
@@ -388,10 +397,10 @@ def build_evidence_gap_plan(
         }
 
     plan = build_search_plan(as_of=as_of, run_id=run_id, query_groups=groups)
-    per_source: dict[str, int] = defaultdict(int)
+    per_source: dict[str, set[str]] = defaultdict(set)
     for item in plan["requests"]:
-        per_source[item["source"]] += 1
-    over_limit = sorted(source for source, count in per_source.items() if count > 3)
+        per_source[item["source"]].add(request_fingerprint(item))
+    over_limit = sorted(source for source, fingerprints in per_source.items() if len(fingerprints) > 3)
     if over_limit:
         raise PlanError(f"单次补证计划每个来源最多 3 个请求；请先执行并评估产出：{', '.join(over_limit)}")
     plan["stage"] = "evidence_gap_verification"
@@ -640,7 +649,7 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
 
     catalog = normalize_pricing_rows(pricing_rows)
     seen_ids: set[str] = set()
-    source_request_counts: dict[str, int] = defaultdict(int)
+    source_request_fingerprints: dict[str, set[str]] = defaultdict(set)
     for index, item in enumerate(requests, start=1):
         if not isinstance(item, dict):
             raise PlanError(f"第 {index} 个请求必须是 JSON 对象")
@@ -650,10 +659,12 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
         if request_id in seen_ids:
             raise PlanError(f"请求 id 重复：{request_id}")
         seen_ids.add(request_id)
+        intent_refs = item.get("intent_refs", [])
+        if not isinstance(intent_refs, list) or any(not isinstance(ref, str) or not ref for ref in intent_refs):
+            raise PlanError(f"请求 {request_id} 的 intent_refs 必须是非空字符串数组")
 
         endpoint = str(item.get("endpoint", "")).strip()
         source = str(item.get("source", "")).lower()
-        source_request_counts[source] += 1
         if stage in {"search_discovery", "evidence_gap_verification"}:
             profile = RADAR_ENDPOINTS.get(source)
             if profile is None:
@@ -716,8 +727,9 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
                     for key in group
                 ):
                     raise PlanError(f"请求 {request_id} 至少需要参数：{' 或 '.join(group)}")
+        source_request_fingerprints[source].add(request_fingerprint(item))
     if stage == "evidence_gap_verification":
-        over_limit = sorted(source for source, count in source_request_counts.items() if count > 3)
+        over_limit = sorted(source for source, fingerprints in source_request_fingerprints.items() if len(fingerprints) > 3)
         if over_limit:
             raise PlanError(f"定向补证计划每个来源最多 3 个请求：{', '.join(over_limit)}")
     return catalog
@@ -768,7 +780,7 @@ def estimate_plan(
         raise PlanError("usd_to_cny 必须大于 0")
     if not discount.is_finite() or not Decimal("0") < discount <= Decimal("1"):
         raise PlanError("discount_rate 必须在 0 到 1 之间")
-    if max_attempts not in {1, 2, 3}:
+    if type(max_attempts) is not int or max_attempts not in {1, 2, 3}:
         raise PlanError("max_attempts 只允许 1、2 或 3")
 
     list_total = Decimal("0")
@@ -787,7 +799,8 @@ def estimate_plan(
     )
     per_request: list[dict[str, Any]] = []
 
-    for item in plan["requests"]:
+    unique_requests = deduplicate_requests(plan["requests"])
+    for item in unique_requests:
         price = catalog[item["endpoint"]]
         list_cost = price["endpoint_cost"]
         effective_cost = list_cost * discount if price["allow_discount"] else list_cost
@@ -810,6 +823,12 @@ def estimate_plan(
                 "id": item["id"],
                 "source": source,
                 "endpoint": item["endpoint"],
+                "request_fingerprint": item["request_fingerprint"],
+                "request_ids": item["request_ids"],
+                "intent_refs": item["intent_refs"],
+                "query_metadata": item["query_metadata"],
+                "unit_list_price_usd_exact": str(list_cost),
+                "unit_estimated_price_usd_exact": str(effective_cost),
                 "unit_list_price_usd": _money(list_cost),
                 "unit_estimated_price_usd": _money(effective_cost),
                 "allow_free_credit": price["allow_free_credit"],
@@ -839,7 +858,9 @@ def estimate_plan(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "plan_sha256": _canonical_sha256(plan),
         "catalog_sha256": _catalog_sha256(catalog),
-        "request_count": len(plan["requests"]),
+        "request_count": len(unique_requests),
+        "logical_request_count": len(plan["requests"]),
+        "deduplicated_request_count": len(plan["requests"]) - len(unique_requests),
         "usd_to_cny": float(fx),
         "discount_rate": float(discount),
         "max_attempts": max_attempts,
@@ -966,7 +987,7 @@ def _default_transport(
 
 
 def _classify_error(exc: Exception) -> str:
-    message = str(exc).lower()
+    message = (f"HTTP {exc.code}" if isinstance(exc, error.HTTPError) else str(exc)).lower()
     if "http 401" in message or "http 403" in message:
         return "auth_error"
     if "http 429" in message:
@@ -976,6 +997,10 @@ def _classify_error(exc: Exception) -> str:
     status_match = re.search(r"http\s+(\d{3})", message)
     if status_match and 500 <= int(status_match.group(1)) <= 599:
         return "server_error"
+    if isinstance(exc, error.HTTPError):
+        return "request_error"
+    if isinstance(exc, (ConnectionError, HTTPException, error.URLError)):
+        return "network_error"
     if "超过 8 mib" in message or "response_too_large" in message:
         return "response_too_large"
     if "无法解析" in message or "响应必须是 json" in message:
@@ -1079,6 +1104,11 @@ def _execute_plan_with_pricing(
     price_observed_at: str | None = None,
     pricing_url: str | None = None,
     sleep_func: Callable[[float], None] = time.sleep,
+    journal_path: str | Path | None = None,
+    resume: bool = False,
+    batch_id: str = "default",
+    resolve_unknown: Iterable[str] = (),
+    retry_failed: Iterable[str] = (),
 ) -> dict[str, Any]:
     """使用已验证价格执行计划；仅供生产入口和测试调用。"""
     secret = token.strip()
@@ -1104,195 +1134,88 @@ def _execute_plan_with_pricing(
         price_observed_at=price_observed_at,
         pricing_url=pricing_url,
     )
-    enforce_budget(estimate, max_cost_usd)
-    account_snapshot = fetch_account_snapshot(
-        token=secret,
-        api_base=base,
-        timeout=timeout,
-        transport=account_transport,
-    )
-    eligible_cost = Decimal(estimate["budget_guard_free_credit_eligible_usd"])
-    ineligible_cost = Decimal(estimate["budget_guard_free_credit_ineligible_usd"])
-    paid_balance = Decimal(account_snapshot["balance_usd_exact"])
-    free_credit_balance = Decimal(account_snapshot["free_credit_usd_exact"])
-    required_paid_balance = ineligible_cost + max(Decimal("0"), eligible_cost - free_credit_balance)
-    account_snapshot.update(
-        {
-            "eligible_cost_worst_case_usd": _money(eligible_cost),
-            "ineligible_cost_worst_case_usd": _money(ineligible_cost),
-            "required_paid_balance_usd": _money(required_paid_balance),
-            "sufficient_for_worst_case": paid_balance >= required_paid_balance,
-        }
-    )
-    if paid_balance < required_paid_balance:
-        raise PlanError(
-            "TikHub 付费余额不足："
-            f"最坏情况至少需要 ${format(required_paid_balance, 'f')}，"
-            f"当前付费余额 ${format(paid_balance, 'f')}"
-        )
-    request_prices = {item["id"]: Decimal(str(item["unit_estimated_price_usd"])) for item in estimate["requests"]}
-    headers = {"Accept": "application/json", "Authorization": f"Bearer {secret}", "User-Agent": "AI-Opportunity-Radar/3.0"}
-    results: list[dict[str, Any]] = []
-    attempted_cost = Decimal("0")
-    ok_count = 0
-    error_count = 0
-    skipped_count = 0
-    stored_result_bytes = 0
-    stop_reason: str | None = None
-    by_source: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {
-            "requests": 0,
-            "ok": 0,
-            "error": 0,
-            "skipped": 0,
-            "attempts": 0,
-            "estimated_attempted_cost_usd": Decimal("0"),
-        }
-    )
-
-    for item in plan["requests"]:
-        if stop_reason:
-            status = "skipped"
-            attempts = 0
-            result_item = {
-                "id": item["id"],
-                "query_group": item.get("query_group"),
-                "source": item["source"],
-                "endpoint": item["endpoint"],
-                "method": item["method"],
-                "params": _sanitize(item["params"], secret),
-                "status": status,
-                "attempts": attempts,
-                "estimated_attempted_cost_usd": 0.0,
-                "error": "批次结果已达到安全上限，未发起请求",
-                "error_code": "skipped_batch_limit",
-            }
-            for field in ("selected_item_id", "parent_url", "kind", "content_type", "selection_reason", "evidence_gap", "query_scope"):
-                if field in item:
-                    result_item[field] = _sanitize(item[field], secret)
-            results.append(result_item)
-            skipped_count += 1
-            source_summary = by_source[item["source"]]
-            source_summary["requests"] += 1
-            source_summary["skipped"] += 1
-            continue
-
-        status = "error"
-        response_data: Any = None
-        sanitized_response: Any = None
-        error_message: str | None = None
-        error_code: str | None = None
-        attempts = 0
-        for _ in range(max_attempts):
-            attempts += 1
-            attempted_cost += request_prices[item["id"]]
-            try:
-                response_data = transport(
-                    method=item["method"],
-                    url=f"{base}{item['endpoint']}",
-                    params=dict(item["params"]),
-                    headers=headers,
-                    timeout=timeout,
-                )
-                _assert_application_success(response_data)
-                status = "ok"
-                error_message = None
-                break
-            except Exception as exc:  # 外部来源失败必须转成单来源状态
-                error_message = str(_sanitize(str(exc), secret))[:500]
-                error_code = _classify_error(exc)
-                if attempts >= max_attempts or not _is_retryable_error(exc):
-                    break
-                sleep_func(min(2 ** (attempts - 1), 5))
-        if status == "ok":
-            try:
-                sanitized_response = _sanitize(response_data, secret)
-                response_bytes = len(
-                    json.dumps(sanitized_response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                )
-            except Exception:
-                status = "error"
-                error_code = "response_sanitization_error"
-                error_message = "TikHub 响应清洗失败"
-            else:
-                if stored_result_bytes + response_bytes > MAX_BATCH_RESULT_BYTES:
-                    status = "error"
-                    error_code = "batch_result_limit"
-                    error_message = "TikHub 批次结果超过 32 MiB 安全上限"
-                    stop_reason = "batch_result_limit"
-                else:
-                    stored_result_bytes += response_bytes
-                    ok_count += 1
-        result_item = {
-            "id": item["id"],
-            "query_group": item.get("query_group"),
-            "source": item["source"],
-            "endpoint": item["endpoint"],
-            "method": item["method"],
-            "params": _sanitize(item["params"], secret),
-            "status": status,
-            "attempts": attempts,
-            "estimated_attempted_cost_usd": _money(request_prices[item["id"]] * attempts),
-        }
-        for field in ("selected_item_id", "parent_url", "kind", "content_type", "selection_reason", "evidence_gap", "query_scope"):
-            if field in item:
-                result_item[field] = _sanitize(item[field], secret)
-        if status == "ok":
-            result_item["response"] = sanitized_response
-        else:
-            error_count += 1
-            result_item["error"] = error_message or "TikHub 请求失败"
-            result_item["error_code"] = error_code or "request_error"
-        results.append(result_item)
-        source_summary = by_source[item["source"]]
-        source_summary["requests"] += 1
-        source_summary[status] += 1
-        source_summary["attempts"] += attempts
-        source_summary["estimated_attempted_cost_usd"] += request_prices[item["id"]] * attempts
-
-    source_rows = [
-        {
-            "source": source,
-            "requests": row["requests"],
-            "ok": row["ok"],
-            "error": row["error"],
-            "skipped": row["skipped"],
-            "attempts": row["attempts"],
-            "estimated_attempted_cost_usd": _money(row["estimated_attempted_cost_usd"]),
-        }
-        for source, row in sorted(by_source.items())
-    ]
-
+    if journal_path is None and (resume or resolve_unknown or retry_failed):
+        raise PlanError("恢复或请求级重试必须指定 journal_path")
+    items = deduplicate_requests(plan["requests"])
     pricing_snapshot = {
         key: estimate[key]
         for key in ("price_source", "price_observed_at", "pricing_url", "plan_sha256", "catalog_sha256")
     }
+    prices = {
+        item["request_fingerprint"]: (
+            Decimal(item["unit_list_price_usd_exact"]), Decimal(item["unit_estimated_price_usd_exact"]),
+        ) for item in estimate["requests"]
+    }
+    try:
+        with RequestJournal(journal_path, run_id=plan["run_id"], as_of=plan["as_of"]) as journal:
+            journal.register_batch(batch_id, estimate["plan_sha256"], _sanitize(items, secret), resume=resume)
+            allowances = select_attempts(
+                items, journal, max_attempts=max_attempts, resolve_unknown=resolve_unknown, retry_failed=retry_failed,
+            )
+            eligible_cost = Decimal(0)
+            ineligible_cost = Decimal(0)
+            for item in items:
+                fingerprint = item["request_fingerprint"]
+                cost = prices[fingerprint][0] * allowances[fingerprint]
+                if pricing_catalog[item["endpoint"]]["allow_free_credit"]:
+                    eligible_cost += cost
+                else:
+                    ineligible_cost += cost
+            prior_cost = Decimal(journal.snapshot()["list_attempted_cost_usd_exact"])
+            required_cost = eligible_cost + ineligible_cost
+            budget_guard = prior_cost + required_cost
+            enforce_budget({"budget_guard_cost_usd": str(budget_guard), "worst_case_cost_usd": str(budget_guard)}, max_cost_usd)
+            account_snapshot = fetch_account_snapshot(
+                token=secret, api_base=base, timeout=timeout, transport=account_transport,
+            )
+            paid_balance = Decimal(account_snapshot["balance_usd_exact"])
+            free_credit_balance = Decimal(account_snapshot["free_credit_usd_exact"])
+            required_paid_balance = ineligible_cost + max(Decimal("0"), eligible_cost - free_credit_balance)
+            account_snapshot.update({
+                "eligible_cost_worst_case_usd": _money(eligible_cost),
+                "ineligible_cost_worst_case_usd": _money(ineligible_cost),
+                "required_paid_balance_usd": _money(required_paid_balance),
+                "sufficient_for_worst_case": paid_balance >= required_paid_balance,
+            })
+            if paid_balance < required_paid_balance:
+                raise PlanError(
+                    "TikHub 付费余额不足："
+                    f"最坏情况至少需要 ${format(required_paid_balance, 'f')}，"
+                    f"当前付费余额 ${format(paid_balance, 'f')}"
+                )
+            headers = {"Accept": "application/json", "Authorization": f"Bearer {secret}", "User-Agent": "AI-Opportunity-Radar/3.0"}
 
+            def send(item: dict[str, Any]) -> Any:
+                response = transport(
+                    method=item["method"], url=f"{base}{item['endpoint']}", params=dict(item["params"]),
+                    headers=headers, timeout=timeout,
+                )
+                _assert_application_success(response)
+                return response
+
+            execution = execute_requests(
+                items, journal=journal, batch_id=batch_id, allowances=allowances, prices=prices,
+                max_attempts=max_attempts, max_cost_usd=Decimal(str(max_cost_usd)), usd_to_cny=Decimal(str(usd_to_cny)),
+                pricing_snapshot=pricing_snapshot, send=send, sanitize=lambda value: _sanitize(value, secret),
+                classify_error=_classify_error, is_retryable=_is_retryable_error, sleep_func=sleep_func,
+                max_result_bytes=MAX_BATCH_RESULT_BYTES,
+            )
+    except JournalError as exc:
+        raise PlanError(str(exc)) from exc
+
+    execution["run_ledger"]["max_cost_usd_exact"] = str(Decimal(str(max_cost_usd)))
     return {
-        "schema_version": SCHEMA_VERSION,
-        "provider": "tikhub",
-        "run_id": plan["run_id"],
-        "as_of": plan["as_of"],
-        "stage": plan.get("stage", "search_discovery"),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "api_base": base,
-        "estimate": estimate,
-        "pricing_snapshot": pricing_snapshot,
-        "account_snapshot": account_snapshot,
-        "summary": {
-            "requests": len(results),
-            "ok": ok_count,
-            "error": error_count,
-            "skipped": skipped_count,
-            "stopped_early": stop_reason is not None,
-            "stop_reason": stop_reason,
-            "stored_result_bytes": stored_result_bytes,
-            "estimated_attempted_cost_usd": _money(attempted_cost),
-            "estimated_attempted_cost_cny": _money(attempted_cost * Decimal(str(usd_to_cny))),
-            "by_source": source_rows,
-            "billing_note": "实际扣费以 TikHub 使用日志与账单为准",
+        "schema_version": SCHEMA_VERSION, "provider": "tikhub", "run_id": plan["run_id"], "as_of": plan["as_of"],
+        "stage": plan.get("stage", "search_discovery"), "generated_at": datetime.now(timezone.utc).isoformat(),
+        "api_base": base, "estimate": _sanitize(estimate, secret), "pricing_snapshot": pricing_snapshot,
+        "account_snapshot": account_snapshot, "batch_id": batch_id,
+        "execution_budget": {
+            "scope": "run" if journal_path is not None else "batch",
+            "prior_list_attempted_cost_usd_exact": str(prior_cost),
+            "new_worst_case_cost_usd_exact": str(required_cost),
+            "budget_guard_cost_usd": str(budget_guard),
         },
-        "results": results,
+        **execution,
     }
 
 
@@ -1340,6 +1263,11 @@ def execute_plan(
     transport: Callable[..., dict[str, Any]] = _default_transport,
     account_transport: Callable[..., dict[str, Any]] = _default_transport,
     sleep_func: Callable[[float], None] = time.sleep,
+    journal_path: str | Path | None = None,
+    resume: bool = False,
+    batch_id: str = "default",
+    resolve_unknown: Iterable[str] = (),
+    retry_failed: Iterable[str] = (),
 ) -> dict[str, Any]:
     """生产执行入口：内部强制刷新实时价格后再做预算、余额和数据请求。"""
     secret = token.strip()
@@ -1363,6 +1291,8 @@ def execute_plan(
         price_observed_at=observed_at,
         pricing_url=PRICING_URL,
         sleep_func=sleep_func,
+        journal_path=journal_path, resume=resume, batch_id=batch_id,
+        resolve_unknown=resolve_unknown, retry_failed=retry_failed,
     )
 
 
@@ -1420,7 +1350,12 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
     estimate_parser.add_argument("--pricing-file", type=Path, help="仅供离线估价/测试；省略时读取控制台实时价格")
     run_parser = subparsers.add_parser("run", help="预算检查通过后执行 TikHub 查询")
     _add_common_arguments(run_parser)
-    run_parser.add_argument("--max-cost-usd", type=float, required=True, help="显式费用上限；按最坏情况校验")
+    run_parser.add_argument("--max-cost-usd", type=float, required=True, help="显式最坏费用上限；指定 journal 时约束同 run 跨批累计费用")
+    run_parser.add_argument("--journal", type=Path, help="同 run 共用的 SQLite 请求日志与累计预算账本")
+    run_parser.add_argument("--resume", action="store_true", help="恢复已登记的同一批次与计划")
+    run_parser.add_argument("--batch-id", default="default", help="新补证批必须指定新 ID；默认 default")
+    run_parser.add_argument("--resolve-unknown", action="append", default=[], metavar="REQUEST_ID", help="显式授权该未知请求重试；可重复；仍受累计次数和预算约束")
+    run_parser.add_argument("--retry-failed", action="append", default=[], metavar="REQUEST_ID", help="显式授权该已失败请求重试；可重复")
     run_parser.add_argument("--api-base", choices=sorted(ALLOWED_API_BASES), default=DEFAULT_API_BASE)
     args = parser.parse_args()
 
@@ -1450,6 +1385,10 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
         plan = _load_plan(args.plan)
         token = ""
         if args.command == "run":
+            if args.journal and args.output:
+                journal_path = args.journal.expanduser().resolve()
+                if args.output.expanduser().resolve() in {journal_path, Path(str(journal_path) + ".lock")}:
+                    raise PlanError("output 不能覆盖请求 journal 或其会话锁")
             token = os.environ.get("TIKHUB_API_KEY") or os.environ.get("TIKHUB_API_TOKEN") or ""
             if not token.strip():
                 raise PlanError("缺少 TIKHUB_API_KEY；密钥只能通过环境变量提供")
@@ -1485,6 +1424,8 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
                 discount_rate=args.discount_rate,
                 max_attempts=args.max_attempts,
                 api_base=args.api_base,
+                journal_path=args.journal, resume=args.resume, batch_id=args.batch_id,
+                resolve_unknown=args.resolve_unknown, retry_failed=args.retry_failed,
             )
             _print_estimate(payload["estimate"])
         if args.output:
