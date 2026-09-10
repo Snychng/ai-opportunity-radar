@@ -420,14 +420,33 @@ def validate_report(content: str) -> ValidationResult:
 
 
 def main() -> int:  # pragma: no cover
-    parser = argparse.ArgumentParser(description="校验 AI 创业机会雷达 V3 Markdown 日报")
+    parser = argparse.ArgumentParser(description="校验 AOR 结构化报告或兼容 Markdown 日报")
     parser.add_argument("report", type=Path)
     parser.add_argument("--json", action="store_true", help="输出 JSON 结果")
+    parser.add_argument("--commit", action="store_true", help="校验结构化报告后提交本地研究状态")
+    parser.add_argument("--home", type=Path, help="研究状态数据目录")
     args = parser.parse_args()
     try:
         content = args.report.read_text(encoding="utf-8")
     except OSError as exc:
         parser.error(str(exc))
+    if args.report.suffix.lower() == ".json":
+        import aor_bootstrap  # noqa: F401
+        from aor.reporting.report import commit_report, validate_structured_report
+        from manage_state import DEFAULT_HOME
+
+        try:
+            report = json.loads(content)
+            result_data = validate_structured_report(report)
+            if args.commit and result_data["valid"]:
+                result_data["commit"] = commit_report(args.home or DEFAULT_HOME, report)
+            print(json.dumps(result_data, ensure_ascii=False, indent=2))
+            return 0 if result_data["valid"] else 1
+        except (ValueError, OSError) as exc:
+            print(json.dumps({"valid": False, "errors": [str(exc)]}, ensure_ascii=False))
+            return 1
+    if args.commit:
+        parser.error("正式提交使用结构化 report.json；Markdown 仅校验兼容格式")
     result = validate_report(content)
     if args.json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))

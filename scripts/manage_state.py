@@ -39,7 +39,8 @@ OBSERVATION_FILES = {
     "opportunity": "opportunity-observations.jsonl",
     "signal": "signal-observations.jsonl",
 }
-SOURCE_STATUSES = {"ok", "no-results", "auth-required", "rate-limited", "blocked", "skipped-policy", "error"}
+SOURCE_STATUSES = {"ok", "no-results", "auth-required", "rate-limited", "blocked", "skipped-policy", "error",
+                   "partial", "needs_host_queries", "skipped-unconfigured", "timeout", "schema-drift"}
 JOURNAL_FILENAME = "pending-transaction.json"
 STATE_FILES = {*KINDS.values(), *OBSERVATION_FILES.values(), "source-health.json", "source-health-events.jsonl"}
 
