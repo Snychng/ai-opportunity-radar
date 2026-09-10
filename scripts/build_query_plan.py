@@ -10,6 +10,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import aor_bootstrap  # noqa: F401
+from aor.sources.importing import read_json_file
+from aor.sources.planning import compile_intents, finalize_plan, route_community_focus, validate_intent_plan
 from community_query import build_community_plan, short_topic
 from contracts import QUERY_PLAN_VERSION, SCHEMA_VERSION, beijing_today, make_run_id
 from tikhub_query import build_search_plan, validate_query_locale
@@ -273,14 +276,18 @@ def _tikhub_plan(
             # 先给目标主题分配长度，再附加单个行为意图。
             intent = ("paid", "manual workflow", "付费 手工", "local payment")[index]
             group["keyword"] = (f"{topic} {intent}")[:100]
-        if scope and scope["queries"]:
-            for group in groups:
-                group["keyword"] = localized["query"]
+    if scope and scope["queries"]:
+        # 每条宿主本地查询是一个独立意图，不再冒充四个不同的默认意图。
+        groups = [
+            {"id": f"scope-query-{index}", "keyword": item["query"],
+             "sources": list(planned_sources), "language": item["language"]}
+            for index, item in enumerate(scope["queries"], start=1)
+        ]
     country = scope["countries"][day_index % len(scope["countries"])] if scope else "unknown"
     language = localized["language"] if scope and scope["queries"] else (scope["languages"][0] if scope else "unknown")
     for group in groups:
         group["country"] = country
-        group["language"] = language
+        group.setdefault("language", language)
     groups = [group for group in groups if group["sources"]]
     plan = build_search_plan(as_of=as_of.isoformat(), run_id=run_id, query_groups=groups)
     plan["scope"] = {
@@ -291,27 +298,30 @@ def _tikhub_plan(
     }
     plan["localized_query"] = localized
     plan["coverage_note"] = "检索参数仅表示查询意图；未支持地域筛选的平台及默认参数不证明目标市场覆盖。"
-    return plan
+    return finalize_plan(plan)
 
 
-def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None, *, scope: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None, *, scope: dict[str, Any] | None = None, intent_plan: dict[str, Any] | None = None) -> dict[str, Any]:
     """构建独立、可审计且跨阶段共享 run_id 的 V3 计划。"""
     focus = resolve_focus(focus, None)
     scope = resolve_scope(scope)
+    intent_plan = validate_intent_plan(intent_plan) if intent_plan is not None else None
     home = home.expanduser().resolve()
     preferences = _load_preferences(home)
     platform_phase = preferences.get("platform_phase", PHASE_ONE_ID)
     expansion_enabled = preferences.get("platform_expansion_enabled", False)
     if platform_phase != PHASE_ONE_ID or expansion_enabled is not False:
         raise ValueError("一期只允许 phase_1_existing_platforms，且 platform_expansion_enabled 必须为 false")
-    mode = "targeted_scan" if focus or scope else "daily_radar"
+    mode = "targeted_scan" if focus or scope or intent_plan else "daily_radar"
     run_focus = json.dumps({"focus": focus, "scope": scope}, sort_keys=True, ensure_ascii=False) if scope else focus
+    if intent_plan is not None:
+        run_focus = json.dumps({"focus": focus, "scope": scope, "intent_plan": intent_plan}, sort_keys=True, ensure_ascii=False)
     run_id = make_run_id(as_of=as_of, mode=mode, focus=run_focus)
     query_focus = focus or (" ".join(scope[key] for key in ("task", "industry", "payer") if scope[key]) if scope else None)
     if scope and not query_focus:
         query_focus = " ".join(scope["countries"] + scope["languages"])
     focus_region = FOCUS_REGIONS[as_of.toordinal() % len(FOCUS_REGIONS)]
-    if focus or scope:
+    if focus or scope or intent_plan:
         focus_region = {
             "id": "explicit_scope" if scope else "unknown",
             "name": ", ".join(scope["countries"]) if scope else "unknown",
@@ -320,13 +330,22 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
             "localized_queries": (scope["queries"] if scope else []) or [{"language": "unknown", "query": short_topic(query_focus)}],
         }
     planned_sources, coverage_schedule = _daily_sources(as_of)
-    community = build_community_plan(
-        as_of=as_of.isoformat(),
-        run_id=run_id,
-        focus_name=focus_region["name"],
-        custom_focus=query_focus,
-    )
-    tikhub = _tikhub_plan(as_of, run_id, focus_region, query_focus, planned_sources, scope)
+    if intent_plan is not None:
+        retrieval_plans = compile_intents(intent_plan, as_of=as_of.isoformat(), run_id=run_id)
+        coverage_schedule = {
+            "strategy": "host_structured_intents",
+            "planned_sources": list(dict.fromkeys(item["source"] for item in intent_plan["intents"])),
+            "all_phase_one_sources": list(PHASE_ONE_TIKHUB_SOURCES),
+        }
+    else:
+        community = build_community_plan(
+            as_of=as_of.isoformat(), run_id=run_id,
+            focus_name=focus_region["name"], custom_focus=query_focus,
+        )
+        retrieval_plans = {
+            "community": route_community_focus(community, query_focus, scope),
+            "tikhub": _tikhub_plan(as_of, run_id, focus_region, query_focus, planned_sources, scope),
+        }
     return {
         "schema_version": SCHEMA_VERSION,
         "query_plan_version": QUERY_PLAN_VERSION,
@@ -337,6 +356,7 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
         "mode": mode,
         "custom_focus": focus,
         "research_scope": scope,
+        "intent_plan": intent_plan,
         "phase_scope": {
             "id": PHASE_ONE_ID,
             "platform_expansion_enabled": False,
@@ -362,7 +382,7 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
         "idea_expansion_axes": ["细分人群", "购买触发", "AI 新形态", "地区与语言", "渠道嵌入", "价格与交付"],
         "allowed_sensitive_domains": ["恋爱约会与情感陪伴", "成人内容", "游戏虚拟角色与社交娱乐"],
         "forbidden_sensitive_domains": ["医疗诊断治疗", "金融投资建议", "法律意见", "儿童敏感产品"],
-        "retrieval_plans": {"community": community, "tikhub": tikhub},
+        "retrieval_plans": retrieval_plans,
         "output_contract": {
             "raw_candidates": preferences.get("raw_candidates_per_day", [100, 200]),
             "validated_quick_ideas": preferences.get("validated_quick_ideas_per_day", [20, 40]),
@@ -425,13 +445,14 @@ def main() -> int:
     focus_group.add_argument("--focus", help="仅用于可信固定值；用户输入优先使用 --focus-file")
     focus_group.add_argument("--focus-file", type=Path, help="从 UTF-8 文件安全读取定向扫描主题")
     parser.add_argument("--scope-file", type=Path, help="包含国家、语言、人群、任务及本地查询的结构化 JSON 范围")
+    parser.add_argument("--intent-plan-file", type=Path, help="宿主提供的问题、商业证据类型、独立搜索与排序查询、来源、locale 及候选缺口")
     parser.add_argument("--output", type=Path, help="可选总计划输出文件；默认打印到标准输出")
     parser.add_argument("--export-community-plan", type=Path, help="导出本 Skill 自带的 HN/GitHub 查询计划")
     parser.add_argument("--export-tikhub-plan", type=Path, help="导出可独立估价和执行的 TikHub 查询计划")
     args = parser.parse_args()
     try:
-        plan = build_plan(parse_date(args.date), args.home, resolve_focus(args.focus, args.focus_file), scope=read_scope(args.scope_file))
-    except ValueError as exc:
+        plan = build_plan(parse_date(args.date), args.home, resolve_focus(args.focus, args.focus_file), scope=read_scope(args.scope_file), intent_plan=read_json_file(args.intent_plan_file, 64000) if args.intent_plan_file else None)
+    except (ValueError, OSError) as exc:
         parser.error(str(exc))
     if args.export_community_plan:
         _write_json(args.export_community_plan, plan["retrieval_plans"]["community"])
