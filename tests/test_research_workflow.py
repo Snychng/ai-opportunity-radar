@@ -65,7 +65,8 @@ class ResearchWorkflowTests(unittest.TestCase):
         with patch("aor.workflow.research.commit_report", side_effect=interrupted):
             with self.assertRaises(OSError):
                 resume_research(self.home, run["run_id"])
-        finished = resume_research(self.home, run["run_id"])
+        with patch("aor.workflow.research._refresh_library", side_effect=AssertionError("提交重放不能刷新证据")):
+            finished = resume_research(self.home, run["run_id"])
         self.assertEqual(finished["status"], "completed")
         records = [json.loads(line) for line in (self.home / "state/opportunities.jsonl").read_text().splitlines()]
         self.assertEqual(len(records), 1)
@@ -178,6 +179,12 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(report["claims"][0]["evidence_refs"][0]["field"], "original_text")
         self.assertEqual(report["metrics"]["deep_candidate_count"], 1)
         self.assertIn("尚未证明本产品购买意愿", Path(finished["report_path"]).read_text())
+        # 同页演示原文的标记不能在对标摘要省略字段时丢失并升级为 A。
+        write(material, {"evidence": [{**source, "is_demo": True}]})
+        revised = start_research(self.home, as_of=date(2026, 9, 10), offline=True, evidence_files=[material])
+        revised = resume_research(self.home, revised["run_id"], benchmarks_file=bench)
+        tiered = json.loads(Path(revised["artifacts"]["tiered"]["path"]).read_text())
+        self.assertEqual(tiered["deep_candidates"], [])
 
 
 if __name__ == "__main__":

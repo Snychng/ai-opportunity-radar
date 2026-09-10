@@ -145,7 +145,7 @@ def _accept_inputs(directory: Path, manifest: dict, *, evidence_files: list[Path
         if name not in manifest["evidence_artifacts"]:
             _artifact(directory, manifest, name, payload)
             manifest["evidence_artifacts"].append(name)
-            for downstream in ("report", "receipt"):
+            for downstream in ("expanded", "tiered", "report", "receipt"):
                 manifest["artifacts"].pop(downstream, None)
     for name, path in (("benchmarks", benchmarks_file), ("assessment", assessment_file), ("profile", profile_file)):
         if path is not None:
@@ -194,7 +194,7 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         _artifact(directory, manifest, evidence_name, normalized)
         manifest["evidence_artifacts"].append(evidence_name)
         manifest.setdefault("normalized_executions", []).append(invocation)
-        for name in ("report", "receipt"):
+        for name in ("expanded", "tiered", "report", "receipt"):
             manifest["artifacts"].pop(name, None)
         return _handoff(directory, manifest, "awaiting_benchmarks",
                         "本批补证已保存，请根据新增事实修订对标与主张，再用 resume --benchmarks FILE 提交。")
@@ -215,6 +215,8 @@ def _normalize_pending(directory: Path, manifest: dict) -> None:
         if evidence_name not in manifest["evidence_artifacts"]:
             manifest["evidence_artifacts"].append(evidence_name)
         manifest.setdefault("normalized_executions", []).append(name)
+        for downstream in ("expanded", "tiered", "report", "receipt"):
+            manifest["artifacts"].pop(downstream, None)
         _save(directory, manifest)
 
 
@@ -233,6 +235,18 @@ def _coverage(manifest: dict, evidence: list[dict]) -> dict:
 def _render_deliverables(directory: Path, report: dict) -> None:
     (directory / "report.md").write_text(render_report(report), encoding="utf-8")
     (directory / "summary.md").write_text(render_summary(report, full_path=str(directory / "report.md")), encoding="utf-8")
+
+
+def _finish_report(directory: Path, manifest: dict) -> dict:
+    """提交重放只读取已经固定的报告，不再刷新证据或触发采集。"""
+    report = _load_artifact(manifest, "report")
+    _render_deliverables(directory, report)
+    manifest["status"] = "committing"
+    _save(directory, manifest)
+    receipt = commit_report(Path(manifest["home"]), report)
+    _artifact(directory, manifest, "receipt", receipt)
+    manifest["stages"]["commit"] = {"finished_at": _now(), "report_sha256": receipt["report_sha256"]}
+    return _handoff(directory, manifest, "completed", "阅读 summary.md 和完整报告；下一步开展验证实验或创建补证运行。")
 
 
 def _collect(directory: Path, manifest: dict, *, collect: bool) -> None:
@@ -324,7 +338,8 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
             stored = by_url.get(canonical_evidence_url(item.get("url")))
             if stored:
                 # 商业事实和分层输入保留；引用使用证据库实际原文及版本。
-                for key in ("evidence_id", "revision_id", "original_text", "comments", "observed_at", "recorded_on", "aliases"):
+                for key in ("evidence_id", "revision_id", "original_text", "text", "comments", "observed_at", "recorded_on", "aliases",
+                            "original_url", "original_publisher", "original_author", "publisher_id", "is_demo", "retracted", "status"):
                     if key in stored:
                         item[key] = deepcopy(stored[key])
     if not benchmarks.get("benchmarks"):
@@ -380,6 +395,8 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                 raise ValueError("已提交研究保持不可变；使用 research --parent-run-id 创建补证运行")
             _render_deliverables(directory, _load_artifact(manifest, "report"))
             return inspect_run(home, run_id)
+        if manifest["status"] == "committing":
+            return _finish_report(directory, manifest)
         if intent_plan is not None:
             previous = _load_artifact(manifest, "plan")
             if "community" in manifest["stages"] and _load_artifact(manifest, "community-plan")["requests"]:
@@ -439,14 +456,7 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                                   profile_assessment=profile_assessment, source_coverage=_coverage(manifest, evidence),
                                   claims=claims, claim_evidence=context, run_ledger=_paid_ledger(directory))
             _artifact(directory, manifest, "report", report)
-        report = _load_artifact(manifest, "report")
-        _render_deliverables(directory, report)
-        manifest["status"] = "committing"
-        _save(directory, manifest)
-        receipt = commit_report(Path(manifest["home"]), report)
-        _artifact(directory, manifest, "receipt", receipt)
-        manifest["stages"]["commit"] = {"finished_at": _now(), "report_sha256": receipt["report_sha256"]}
-        return _handoff(directory, manifest, "completed", "阅读 summary.md 和完整报告；下一步开展验证实验或创建补证运行。")
+        return _finish_report(directory, manifest)
 
 
 def inspect_run(home: Path, run_id: str) -> dict:
