@@ -1,6 +1,6 @@
 # 安装与更新
 
-AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `3.2.2`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
+AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `4.0.0`，数据协议保持 `3.0`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
 
 ## 安装稳定版本
 
@@ -75,6 +75,12 @@ python3 scripts/radar.py install \
 
 版本号一致不证明代码与发行标签具有相同 Git 提交。诊断另列本地 `commit`、`origin_verified` 和 `worktree_clean`，供核对来源与修改状态；不要把版本比较当作代码完整性证明。
 
+## 严格离线研究
+
+离线会话设置 `AOR_OFFLINE=1`，再调用 `aor research --offline` 或 `aor resume RUN_ID --offline`。`--offline` 控制研究采集并跳过本次更新预检；环境变量让不带该参数的后续本地命令也只读取本地更新信息。`--no-collect` 只处理已有研究资料；`AOR_NO_UPDATE_CHECK=1` 只跳过更新预检，都不能代替完整离线约束。
+
+`sources catalog/diagnose/import`、`library` 和 `eval` 的领域脚本不联网；使用 `aor` 统一入口仍建议设置 AOR_OFFLINE。付费估价/执行和安装升级是显式网络能力，不要在离线示例中调用。
+
 ## 调用技能时检查更新
 
 Agent 开始使用技能时，按 `SKILL.md` 先运行 `doctor --quiet`。已是最新、当前版本领先或更新状态未知时，不输出例行版本提示，Agent 也不向用户复述“已是最新”“检查通过”等状态。有新版本时，提示真实版本号和更新命令；假设查到的新版本为 `3.2.3`，示例提示为“AOR 发现新版本 v3.2.3，可运行 `aor update` 更新。”同一次研究任务中，相同新版本只由 Agent 转述一次。
@@ -114,16 +120,16 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 
 ## 目录与环境变量
 
-下面以 `3.2.2` 展示目录结构，实际版本和提交前缀以安装结果为准：
+下面以 `4.0.0` 展示目录结构，实际版本和提交前缀以安装结果为准：
 
 ```text
 ~/.local/bin/aor
 ~/.local/share/aor/
 ├── install.json
 ├── update.lock
-├── current -> versions/v3.2.2-<提交前缀>/
+├── current -> versions/v4.0.0-<提交前缀>/
 └── versions/
-    └── v3.2.2-<提交前缀>/
+    └── v4.0.0-<提交前缀>/
         ├── SKILL.md
         ├── agent-manifest.json
         ├── bin/aor
@@ -137,12 +143,12 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 | `AI_OPPORTUNITY_RADAR_HOME` | 研究数据目录，默认 `~/Documents/AI-Opportunity-Radar`；独立于代码版本 |
 | `AOR_INSTALL_HOME` | 安装命令未指定 `--home` 时的默认受管目录；已生成启动器使用登记的固定位置 |
 | `AOR_CACHE_HOME` | 更新检查缓存目录，默认 `~/.cache/aor` |
-| `AOR_OFFLINE=1` | 让诊断与业务预检只使用本地更新信息 |
+| `AOR_OFFLINE=1` | 让诊断与预检只用本地更新信息，禁止 research/resume 编排的社区采集和付费补证 |
 | `AOR_NO_UPDATE_CHECK=1` | 跳过业务入口更新预检，适合可复现的测试运行；不关闭显式 doctor |
 | `NO_COLOR` | 非空时禁用文本输出的颜色；普通 TTY 仍保留分组布局 |
 | `TERM=dumb` | 使用紧凑文本，不输出 ANSI 转义序列或字标 |
 
-`AOR_OFFLINE` 只约束更新检查，不会阻止 `community`、`paid` 等业务命令访问网络，也不会把显式 `install` 或 `update` 变成离线安装命令。本地安装应使用 `install --source`。研究数据的 `schema_version` 仍为 `3.0`，与产品版本 `3.2.2` 不同；本轮更新不迁移已有研究数据。
+`AOR_OFFLINE` 同时约束更新预检与 research/resume 编排，但不是所有独立脚本的全局网络沙箱；离线会话不要直接调用 `community run`、付费实时估价/执行或 `install/update`。本地安装使用 `install --source`。研究数据 `schema_version=3.0` 与产品发行版本独立维护。
 
 ## 常见情况
 

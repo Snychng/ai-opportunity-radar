@@ -140,10 +140,9 @@ class AorCliTests(unittest.TestCase):
     def test_json_doctor_and_research_work_without_display_module(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            (base / "scripts").mkdir()
+            shutil.copytree(ROOT / "scripts", base / "scripts", ignore=shutil.ignore_patterns("aor_display.py", "__pycache__"))
+            shutil.copytree(ROOT / "src", base / "src", ignore=shutil.ignore_patterns("__pycache__"))
             (base / "bin").mkdir()
-            for name in ("radar.py", "aor_runtime.py", "aor_status.py", "expand_ideas.py", "contracts.py"):
-                shutil.copyfile(ROOT / "scripts" / name, base / "scripts" / name)
             for relative in ("agent-manifest.json", "SKILL.md", "bin/aor"):
                 shutil.copyfile(ROOT / relative, base / relative)
             commands = (("--json",), ("skills", "--json"), ("doctor", "--offline", "--json"),

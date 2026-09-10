@@ -1,5 +1,7 @@
 # 个人适配与验证
 
+最后更新：2026-09-10。
+
 ## 个人约束
 
 复制 examples/founder-profile.json 到个人数据目录填写，不将私有能力、渠道和预算提交到仓库。null 表示未知。
@@ -38,7 +40,7 @@ CANDIDATES 支持对象、数组、candidates 包装或三层过滤结果（含 
 
 examples/experiment.json 是 planned 示例，实际使用自己的稳定记录 ID：
 
-评估与快速摘要可使用 CAND。记录实验前，从分层结果选择候选：A/B 用 `state prepare --kind opportunity`，R 用 `--kind signal`，将返回的 `id` 填入实验 `record_id`。`prepare` 不提交研究观察，计划实验无需先生成日报或运行真实采集。可直接执行的提取、准备、保存和读回示例见 [README](../README.md#为自己选择值得验证的项目)。
+评估与快速摘要可使用 CAND。记录实验前，从分层结果选择候选：A/B 用 `state prepare --kind opportunity`，R 用 `--kind signal`，将返回的 `id` 填入实验 `record_id`。`prepare` 不提交研究观察，计划实验无需先生成日报或运行真实采集。新编排已在 awaiting_assessment 前准备稳定 ID，直接引用 tiered 中的 id 即可；空结果离线编排示例见 [README](../README.md#可运行离线示例)。
 
 - experiment_id：EXP- 开头，后接字母、数字或连字符。
 - record_id：OPP/SIG；run_id、as_of：本次观察运行与日期。

@@ -114,3 +114,9 @@
 合规、平台政策、数据获取、内容审核、巨头复制和一人运营压力作为独立风险标签，不偷偷混入总分。
 
 市场分数不合并个人技能、时间或预算适配分；个人行动建议通过 [个人适配与验证](personal-validation.md) 单独给出。
+
+## 6. 评分依据与编排交接
+
+独立评分入口可携带 `score_basis`，按评分维度保存 rationale 和 evidence_refs。引用必须定位到当前证据原文修订；缺失依据会保留 missing_dimensions/warnings，`semantic_validation=not_performed`、`affects_score=false`，不由程序替宿主补分或验证商业含义。
+
+`research` 在 awaiting_assessment 返回当前 A 级稳定 ID 模板；按模板填写 track、scores、auxiliary_scores 与 `score_basis`（按维度写 rationale、evidence_refs）。编排透传的字段为 track、scores、auxiliary_scores、score_basis、validation_plan；没有 A 时 scores 为空。报告展示各维度依据与缺失项。B 为收费对标支持的候选，R 为区域迁移假设，都不进入 A 级评分。

@@ -23,6 +23,12 @@ COMMANDS = {
     "digest": "build_result_digest.py",
     "report": "validate_report.py",
     "validation": "manage_validation.py",
+    "research": "research.py",
+    "resume": "research.py",
+    "inspect": "research.py",
+    "sources": "source_query.py",
+    "library": "evidence_library.py",
+    "eval": "evaluate_research.py",
 }
 
 
@@ -39,6 +45,8 @@ def _management(command: str, arguments: list[str], context: dict) -> int:
         options = parser.add_mutually_exclusive_group()
         options.add_argument("--refresh", action="store_true", help="跳过缓存并检查稳定 Release")
         options.add_argument("--offline", action="store_true", help="仅检查本地与已有缓存")
+        parser.add_argument("--postmortem", metavar="RUN_ID", help="读取一次研究的阶段与来源结果")
+        parser.add_argument("--home", type=Path, help="研究数据目录")
     if command == "install":
         parser.add_argument("--source", type=Path, help="显式从干净 Git 源码离线安装，保留来源信息")
         parser.add_argument("--home", type=Path, help="受管安装目录，独立于研究数据")
@@ -59,6 +67,12 @@ def _management(command: str, arguments: list[str], context: dict) -> int:
         from aor_status import doctor
 
         result = doctor(context, refresh=args.refresh, offline=args.offline or enabled("AOR_OFFLINE"))
+        if args.postmortem:
+            import aor_bootstrap  # noqa: F401
+            from aor.workflow.research import postmortem
+            from manage_state import DEFAULT_HOME
+
+            result["research"] = postmortem(args.home or DEFAULT_HOME, args.postmortem)
         if args.quiet:
             notice = update_notice(result.get("updates", {}))
             if notice:
@@ -81,6 +95,8 @@ def _management(command: str, arguments: list[str], context: dict) -> int:
             notice = update_notice(updates)
             if notice:
                 print(notice)
+            if result.get("research"):
+                _json(result["research"])
         return 1 if result["health"] == "error" else 0
     from aor_install import install, install_local, update
 
@@ -146,10 +162,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _research(args: argparse.Namespace, context: dict) -> int:
-    preflight(context)
+    if "--offline" not in args.arguments:
+        preflight(context)
     script = Path(__file__).resolve().parent / COMMANDS[args.command]
     environment = process_environment(PYTHONDONTWRITEBYTECODE="1", AOR_NO_UPDATE_CHECK="1")
-    return subprocess.run([sys.executable, str(script), *args.arguments], env=environment, check=False).returncode
+    arguments = [args.command, *args.arguments] if args.command in {"research", "resume", "inspect"} else args.arguments
+    return subprocess.run([sys.executable, str(script), *arguments], env=environment, check=False).returncode
 
 
 if __name__ == "__main__":

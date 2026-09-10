@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import html
 import json
@@ -16,6 +17,9 @@ from typing import Any, Iterable
 
 from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, validate_run_as_of, validate_run_id, validate_stage_envelope
 from tikhub_query import TIKHUB_RESULT_STAGES
+import aor_bootstrap  # noqa: F401
+from aor.text import language as _language
+from aor.evidence.quality import assess_quality, aggregate_status, mark_reposts, research_window
 
 
 PHASE_ONE_SOURCES = (
@@ -161,19 +165,6 @@ def _normalize_date(value: Any) -> tuple[str | None, str, Any]:
         except (TypeError, ValueError, OverflowError):
             return text, "low", value
     return _clean_text(value), "low", value
-
-
-def _language(text: str | None, explicit: Any = None) -> str:
-    explicit_text = _clean_text(explicit, limit=20)
-    if explicit_text:
-        return explicit_text.lower().replace("_", "-")
-    if text and re.search(r"[\u3040-\u30ff]", text):
-        return "ja"
-    if text and re.search(r"[\uac00-\ud7af]", text):
-        return "ko"
-    if text and CJK_RE.search(text):
-        return "zh"
-    return "unknown"
 
 
 def _status_update(statuses: dict[str, str], source: str, new_status: str) -> None:
@@ -645,10 +636,29 @@ def _failure_status(result: dict[str, Any]) -> str:
     return "error"
 
 
+def _request_links(result: dict[str, Any]) -> dict[str, Any]:
+    """同一个 HTTP 响应可服务多个意图，保留执行器已归并的关联。"""
+    return {key: deepcopy(result[key]) for key in ('request_ids', 'intent_refs', 'query_metadata') if key in result}
+
+
+def _merge_request_links(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
+    """证据归并时合并请求关联，原文与作者仍属于首次保留的条目。"""
+    for key in ('request_ids', 'intent_refs', 'query_metadata'):
+        value = incoming.get(key)
+        if key not in existing and value is not None:
+            existing[key] = deepcopy(value)
+        elif isinstance(value, list) and isinstance(existing.get(key), list):
+            existing[key].extend(deepcopy(entry) for entry in value if entry not in existing[key])
+    query_ids = existing.setdefault('query_ids', [existing['query_id']])
+    if incoming['query_id'] not in query_ids:
+        query_ids.append(incoming['query_id'])
+
+
 def normalize_documents(
     documents: Iterable[dict[str, Any]],
     *,
     source_files: Iterable[str] | None = None,
+    window: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """合并 TikHub 搜索或评论结果，并输出白名单证据字段。"""
     documents_list = list(documents)
@@ -687,8 +697,8 @@ def normalize_documents(
     detail_results: list[dict[str, Any]] = []
     request_statuses: list[dict[str, Any]] = []
     duplicate_count = 0
-    seen: set[tuple[str, str]] = set()
-    seen_comments: set[tuple[str, str, str]] = set()
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
+    seen_comments: dict[tuple[str, str, str], dict[str, Any]] = {}
     request_count = 0
 
     for document_index, (document, raw_file) in enumerate(zip(documents_list, files, strict=True)):
@@ -728,6 +738,7 @@ def normalize_documents(
                                                  raw_pointer=f"/results/{result_index}/response/data{pointer}", is_detail=True)
                         if detail is None:
                             continue
+                        detail.update(_request_links(result))
                         detail["id"] = selected_item_id
                         detail["origin_id"] = selected_item_id
                         detail["parent_item_id"] = selected_item_id
@@ -736,9 +747,10 @@ def normalize_documents(
                         detail["comment_candidate"] = None
                         key = (source, selected_item_id)
                         if key in seen:
+                            _merge_request_links(seen[key], detail)
                             duplicate_count += 1
                             continue
-                        seen.add(key)
+                        seen[key] = detail
                         evidence.append(detail)
                         detail_evidence_ids.append(detail["id"])
                     detail_status = "ok" if detail_evidence_ids else "no-results"
@@ -764,11 +776,13 @@ def normalize_documents(
                     )
                     if normalized_comment is None:
                         continue
+                    normalized_comment.update(_request_links(result))
                     marker = (source, selected_item_id, normalized_comment["source_item_id"])
                     if marker in seen_comments:
+                        _merge_request_links(seen_comments[marker], normalized_comment)
                         duplicate_count += 1
                         continue
-                    seen_comments.add(marker)
+                    seen_comments[marker] = normalized_comment
                     comments.append(normalized_comment)
                     normalized_count += 1
                 _status_update(statuses, source, "ok" if normalized_count else "no-results")
@@ -809,11 +823,13 @@ def normalize_documents(
                 )
                 if normalized is None:
                     continue
+                normalized.update(_request_links(result))
                 key = _dedupe_key(normalized)
                 if key in seen:
+                    _merge_request_links(seen[key], normalized)
                     duplicate_count += 1
                     continue
-                seen.add(key)
+                seen[key] = normalized
                 normalized["id"] = f"{source}:{key[1].split(':', 1)[1]}"
                 normalized["origin_id"] = normalized["id"]
                 normalized["evidence_kind"] = "post"
@@ -834,6 +850,11 @@ def normalize_documents(
                 }
             )
 
+    window = window or research_window(as_of)
+    for item in [*evidence, *comments]:
+        item.update(assess_quality(item, query=item.get('query') or '', as_of=as_of, window=window))
+    mark_reposts(evidence)
+    statuses = aggregate_status(request_statuses)
     parent_urls = {item["id"]: item["url"] for item in evidence if item.get("url")}
     for comment in comments:
         parent_url = comment.get("parent_url") or parent_urls.get(comment["parent_item_id"])
@@ -852,11 +873,16 @@ def normalize_documents(
         "as_of": as_of,
         "stage": {"search_discovery": "tikhub_normalized_search", "comment_deep_dive": "tikhub_normalized_comments", "evidence_gap_verification": "tikhub_normalized_gaps"}[source_stage],
         "source_stage": source_stage,
+        "window": window,
         "source_files": files,
         "stats": {
             "requests_seen": request_count,
             "valid_items": len(evidence),
             "valid_comments": len(comments),
+            "recent_valid_items": sum(item['recent_evidence_eligible'] for item in evidence),
+            "recent_valid_comments": sum(item['recent_evidence_eligible'] for item in comments),
+            "window_status": dict(Counter(item['window_status'] for item in [*evidence, *comments])),
+            "relevance_status": dict(Counter(item['relevance_status'] for item in [*evidence, *comments])),
             "comment_candidates": len(comment_candidates),
             "duplicates_removed": duplicate_count,
             "by_source": dict(sorted(by_source.items())),

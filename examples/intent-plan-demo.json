@@ -1,0 +1,20 @@
+{
+  "is_demo": true,
+  "intent_plan": {
+    "intents": [
+      {
+        "id": "support-price",
+        "question": "演示：客服产品如何收费？",
+        "evidence_type": "official_pricing",
+        "search_query": "customer support pricing",
+        "ranking_query": "优先保留可定位的价格原文，不推断已付款",
+        "source": "web",
+        "locale": {
+          "country": "US",
+          "language": "en"
+        },
+        "candidate_gaps": []
+      }
+    ]
+  }
+}

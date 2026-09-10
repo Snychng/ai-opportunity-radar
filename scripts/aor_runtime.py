@@ -184,7 +184,7 @@ def preflight(context: dict[str, Any] | None = None) -> None:
     if _preflight_done or enabled("AOR_NO_UPDATE_CHECK"):
         return
     _preflight_done = True
-    if any(arg in {"--help", "-h", "--version"} for arg in sys.argv[1:]):
+    if any(arg in {"--help", "-h", "--version", "--offline"} for arg in sys.argv[1:]):
         return
     try:
         from aor_status import check_update

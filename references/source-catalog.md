@@ -2,6 +2,25 @@
 
 最后更新：2026-09-10。平台列表表示实现边界，不是实时可用性声明。
 
+## aor sources 与人工 web 导入
+
+```bash
+AOR_OFFLINE=1 aor sources catalog --output /tmp/aor-sources.json
+AOR_OFFLINE=1 aor sources diagnose --json
+AOR_OFFLINE=1 aor sources import --input examples/web-import-demo.json \
+  --run-id RUN-20260910-0123456789 --as-of 2026-09-10 --output /tmp/aor-web-demo.json
+```
+
+以上在仓库根运行；源码入口为 `python3 scripts/radar.py sources ...`，独立入口 `python3 scripts/source_query.py ...` 不进行更新预检。示例 ID 仅用于独立导入演示；接入真实研究时使用 research 返回的运行 ID。
+
+`catalog` 返回 source/platform、provider、capabilities、cost、preferred_languages、regions、region_filter、default_enabled、manual_import_only。`diagnose` 只消费凭证存在性的布尔标记，返回 `configuration_status`、`network_checked=false`、`live_health=not_checked`，不是在线健康检查。
+
+人工导入输入为 `{items: [...]}`，每批 1–100 条。必填 `source/url/title/original_text/supporting_quote/evidence_role/observed_at/verification`；可选 `published_at/language/country/original_url/original_publisher/intent_refs/candidate_gaps/is_demo`。verification 含 `verified_by/verified_at/method`，method 仅允许 `opened_page` 或 `authorized_browser`。quote 必须是 original_text 的原文子串；搜索摘要不能冒充打开过的正文。
+
+导入器只检查宿主的核验声明，输出 `provider=host-verified-web`、`stage=web_evidence_import`、`input_sha256` 和 `evidence[]`，核验状态为 `host_attested`；它不会独立打开网页。定价只产生 pricing 信号，`payment_status=not_established`；即使 evidence_role 为 payment，也不能跳过后续付款主张核验。同批重复内容会拒绝并要求合并 intent_refs。
+
+新证据可以 `resume RUN_ID --evidence FILE` 交给编排；输出不是 BENCH，也不能直接充当已验证候选。详细可核验契约见 [来源模块 README](../src/aor/sources/README.md)。
+
 ## 目录
 
 1. 覆盖原则
@@ -26,7 +45,7 @@
 
 ### 一期生效范围
 
-一期采用 `existing_adapters_only`：TikHub 的 12 个已实现平台作为主采集层，Hacker News 与 GitHub 作为已有辅助层。其余来源保留在本目录中作为后续路线图，不进入一期自动查询计划。只有用户明确启动后续阶段、完成端点与合规验证并补齐测试后，才能扩大平台集合。
+一期采用 `existing_adapters_only`：TikHub 的 12 个已实现平台作为主采集层，Hacker News 与 GitHub 作为已有辅助层。其余来源不进入默认自动采集，但可在能力目录的人工导入边界内由宿主核验网页后导入。新增自动适配器仍须完成端点、参数、费用和授权边界验证，不能用人工导入冒充自动平台覆盖。
 
 ## 2. 来源分组
 
@@ -119,15 +138,18 @@ TikHub 价格目录还包含 Telegram、微博、快手、Lemon8、微信视频�
 
 | 状态 | 含义 |
 |---|---|
-| `ok` | 本次获得非空且相关的证据 |
-| `no-results` | 请求成功，但没有足够相关结果 |
+| `ok` | 请求取得有效条目；仍需结合相关性与原文核验，不能直接写“已覆盖” |
+| `no-results` | 请求成功但没有有效条目；是否相关另看质量字段 |
+| `partial` | 同一来源存在部分失败或不完整结果，不能聚合成全成功 |
 | `auth-required` | 缺少登录或凭证 |
 | `rate-limited` | 遇到限流 |
 | `blocked` | 被平台或网络阻断 |
 | `skipped-policy` | 因安全、隐私或平台政策主动跳过 |
 | `error` | 其他明确错误 |
 
-使用 `manage_state.py source-health` 写入状态。只保存简短错误摘要；脚本会遮盖常见凭证形态，但仍不要主动把凭证传入 `--detail`。
+社区结果还保留逐请求状态及 `relevance_status/window_status/recent_evidence_eligible`。缺宿主英语查询的空计划为 `needs_host_queries`，未请求的来源子计划为 `not_requested`；都不是成功采集。旧帖最近活动使用独立 `updated_at/activity_window_status`，不改写 published_at。
+
+新编排记录来源状态；兼容手动链路可使用 `manage_state.py source-health` 写入状态。只保存简短错误摘要；脚本会遮盖常见凭证形态，但仍不要主动把凭证传入 `--detail`。
 
 ## 4. 访问方式
 

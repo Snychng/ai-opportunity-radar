@@ -1,0 +1,12 @@
+{
+  "is_demo": true,
+  "scores": [],
+  "claims": [],
+  "decision": {
+    "summary": "本轮是离线格式演示，没有真实市场结论。",
+    "primary_id": null,
+    "largest_unknown": "没有真实付款者、需求行为和个人渠道证据。",
+    "next_action": "仅检查交接、报告和回执；真实研究需另开运行核验原文。",
+    "stop_condition": "不能获得真实来源与任务证据时停止推进，不购买演示数据。"
+  }
+}

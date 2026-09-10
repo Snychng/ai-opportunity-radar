@@ -39,7 +39,8 @@ OBSERVATION_FILES = {
     "opportunity": "opportunity-observations.jsonl",
     "signal": "signal-observations.jsonl",
 }
-SOURCE_STATUSES = {"ok", "no-results", "auth-required", "rate-limited", "blocked", "skipped-policy", "error"}
+SOURCE_STATUSES = {"ok", "no-results", "auth-required", "rate-limited", "blocked", "skipped-policy", "error",
+                   "partial", "needs_host_queries", "skipped-unconfigured", "timeout", "schema-drift"}
 JOURNAL_FILENAME = "pending-transaction.json"
 STATE_FILES = {*KINDS.values(), *OBSERVATION_FILES.values(), "source-health.json", "source-health-events.jsonl"}
 
@@ -274,7 +275,7 @@ def _repair_legacy_views(home: Path) -> None:
         _commit_state(home, repairs)
 
 
-EVIDENCE_METADATA = {"evidence_id", "version", "revision_id", "supersedes", "recorded_on"}
+EVIDENCE_METADATA = {"evidence_id", "version", "revision_id", "state_revision_id", "supersedes", "recorded_on"}
 
 
 def _evidence_content(item: Any) -> Any:
@@ -357,14 +358,18 @@ def _apply_evidence(merged: dict[str, Any], base: dict[str, Any], incoming: dict
             if known_keys:
                 key = next(iter(known_keys))
         previous = latest.get(key)
-        if previous is not None and _evidence_content(previous) == _evidence_content(value):
+        source_revision = value.get("revision_id") if isinstance(value, dict) and value.get("library_evidence_id") else None
+        if (previous is not None and _evidence_content(previous) == _evidence_content(value)
+                and (not source_revision or previous.get("revision_id") == source_revision)):
             continue
         if isinstance(value, dict):
             evidence_id = previous.get("evidence_id") if isinstance(previous, dict) else value.get("evidence_id")
             evidence_id = evidence_id or "EVID-" + canonical_sha256(raw_key)[:16].upper()
             version = previous.get("version", 1) + 1 if isinstance(previous, dict) else 1
+            state_revision = f"{evidence_id}:v{version}"
             value.update({"evidence_id": evidence_id, "version": version,
-                          "revision_id": f"{evidence_id}:v{version}", "recorded_on": observed_on.isoformat()})
+                          "revision_id": source_revision or state_revision,
+                          "state_revision_id": state_revision, "recorded_on": observed_on.isoformat()})
             if isinstance(previous, dict):
                 value["supersedes"] = previous["revision_id"]
             key = evidence_id
