@@ -1,0 +1,34 @@
+{
+  "fixture_version": "1.0",
+  "as_of": "2026-07-14",
+  "quality_cases": [
+    {"id":"zh-substring", "query":"发票对账", "item":{"original_text":"商家发票对账需要逐行核对", "published_at":"2026-07-13"}, "expected":{"relevance_status":"relevant","window_status":"in_window","recent_evidence_eligible":true}},
+    {"id":"ja-substring", "query":"注文対応", "item":{"original_text":"注文対応を自動化する仕組み", "published_at":"2026-06-15"}, "expected":{"relevance_status":"relevant","window_status":"in_window"}},
+    {"id":"arabic", "query":"الفواتير", "item":{"original_text":"معالجة الفواتير يوميا", "published_at":"2026-07-14"}, "expected":{"relevance_status":"relevant","recent_evidence_eligible":true}},
+    {"id":"hindi", "query":"चालान", "item":{"original_text":"चालान प्रबंधन कठिन है", "published_at":"2026-07-14"}, "expected":{"relevance_status":"relevant"}},
+    {"id":"cross-script-review", "query":"invoice reconciliation", "item":{"original_text":"每天手工核对商家发票", "published_at":"2026-07-14"}, "expected":{"relevance_status":"unknown","recent_evidence_eligible":false}},
+    {"id":"irrelevant-popular", "query":"invoice reconciliation", "item":{"original_text":"Volcano photography contest", "published_at":"2026-07-14", "engagement":{"points":999999}}, "expected":{"relevance_status":"unrelated","recent_evidence_eligible":false}},
+    {"id":"old-background", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2020-01-01"}, "expected":{"relevance_status":"relevant","window_status":"out_of_window","recent_evidence_eligible":false}},
+    {"id":"future", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2026-07-15"}, "expected":{"window_status":"out_of_window","recent_evidence_eligible":false}},
+    {"id":"unknown-date", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"yesterday"}, "expected":{"window_status":"unknown","recent_evidence_eligible":false}},
+    {"id":"utc-boundary", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2026-06-15T01:00:00+08:00"}, "expected":{"window_status":"out_of_window","recent_evidence_eligible":false}}
+  ],
+  "community": {
+    "hn_hits": [
+      {"objectID":"101", "title":"Invoice reconciliation costs hours", "created_at":"2026-07-13", "author":"synthetic-owner", "url":"https://example.org/invoice?utm_source=hn", "points":1},
+      {"objectID":"102", "title":"Volcano photography contest", "created_at":"2026-07-13", "points":999999},
+      {"objectID":"103", "title":"Invoice reconciliation in legacy systems", "created_at":"2020-01-01", "points":20},
+      {"objectID":"104", "title":"每天手工核对商家发票", "created_at":"2026-07-14", "points":30},
+      {"objectID":"105", "title":"Invoice reconciliation repost", "created_at":"2026-07-13", "url":"https://example.org/invoice?utm_source=copy", "points":0},
+      {"objectID":"106"}
+    ],
+    "expected":{"stats.fetched":6,"stats.parsed":5,"stats.relevant":3,"stats.retained":3,"stats.valid_items":1,"stats.duplicates_removed":1,"stats.source_status.hackernews":"partial","stats.source_status.github":"no-results"}
+  },
+  "comment_dive": {
+    "hn_hits":[{"objectID":"201","title":"Invoice workflow pain","created_at":"2026-07-13","author":"synthetic-founder"}],
+    "hn_thread":{"id":201,"children":[{"id":211,"type":"comment","text":"Invoice reconciliation takes hours","created_at":"2026-07-14","author":"synthetic-buyer-a","children":[{"id":212,"type":"comment","text":"I pay for help","created_at":"2026-07-14","author":"synthetic-buyer-b","children":[]}]}]},
+    "github_items":[{"id":301,"html_url":"https://github.com/synthetic/fixture/issues/1","title":"Invoice workflow missing","body":"Invoice workaround","created_at":"2020-01-01","updated_at":"2026-07-13","user":{"login":"synthetic-maintainer"}}],
+    "github_comments":[{"id":311,"html_url":"https://github.com/synthetic/fixture/issues/1#issuecomment-311","body":"Invoice workaround still costs hours","created_at":"2026-07-14","user":{"login":"synthetic-buyer-c"}}],
+    "expected":{"stats.requests":8,"stats.valid_items":1,"stats.valid_comments":2,"stats.duplicates_removed":2}
+  }
+}

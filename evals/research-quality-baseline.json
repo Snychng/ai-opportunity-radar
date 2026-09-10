@@ -1,0 +1,234 @@
+{
+  "cases": [
+    {
+      "actual": {
+        "recent_evidence_eligible": true,
+        "relevance_status": "relevant",
+        "window_status": "in_window"
+      },
+      "expected": {
+        "recent_evidence_eligible": true,
+        "relevance_status": "relevant",
+        "window_status": "in_window"
+      },
+      "id": "zh-substring",
+      "passed": true
+    },
+    {
+      "actual": {
+        "relevance_status": "relevant",
+        "window_status": "in_window"
+      },
+      "expected": {
+        "relevance_status": "relevant",
+        "window_status": "in_window"
+      },
+      "id": "ja-substring",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": true,
+        "relevance_status": "relevant"
+      },
+      "expected": {
+        "recent_evidence_eligible": true,
+        "relevance_status": "relevant"
+      },
+      "id": "arabic",
+      "passed": true
+    },
+    {
+      "actual": {
+        "relevance_status": "relevant"
+      },
+      "expected": {
+        "relevance_status": "relevant"
+      },
+      "id": "hindi",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "unknown"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "unknown"
+      },
+      "id": "cross-script-review",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "unrelated"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "unrelated"
+      },
+      "id": "irrelevant-popular",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "relevant",
+        "window_status": "out_of_window"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "relevant",
+        "window_status": "out_of_window"
+      },
+      "id": "old-background",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "window_status": "out_of_window"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "window_status": "out_of_window"
+      },
+      "id": "future",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "window_status": "unknown"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "window_status": "unknown"
+      },
+      "id": "unknown-date",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "window_status": "out_of_window"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "window_status": "out_of_window"
+      },
+      "id": "utc-boundary",
+      "passed": true
+    },
+    {
+      "actual": {
+        "stats.duplicates_removed": 1,
+        "stats.fetched": 6,
+        "stats.parsed": 5,
+        "stats.relevant": 3,
+        "stats.retained": 3,
+        "stats.source_status.github": "no-results",
+        "stats.source_status.hackernews": "partial",
+        "stats.valid_items": 1
+      },
+      "expected": {
+        "stats.duplicates_removed": 1,
+        "stats.fetched": 6,
+        "stats.parsed": 5,
+        "stats.relevant": 3,
+        "stats.retained": 3,
+        "stats.source_status.github": "no-results",
+        "stats.source_status.hackernews": "partial",
+        "stats.valid_items": 1
+      },
+      "id": "community-partial-reposts-ranking",
+      "passed": true
+    },
+    {
+      "actual": {
+        "id": "hackernews:101"
+      },
+      "expected": {
+        "id": "hackernews:101"
+      },
+      "id": "relevant-first",
+      "passed": true
+    },
+    {
+      "actual": {
+        "stats.duplicates_removed": 2,
+        "stats.requests": 8,
+        "stats.valid_comments": 2,
+        "stats.valid_items": 1
+      },
+      "expected": {
+        "stats.duplicates_removed": 2,
+        "stats.requests": 8,
+        "stats.valid_comments": 2,
+        "stats.valid_items": 1
+      },
+      "id": "dedupe-before-comments-and-old-activity",
+      "passed": true
+    },
+    {
+      "actual": {
+        "authors": [
+          "synthetic-buyer-a",
+          "synthetic-buyer-b",
+          "synthetic-buyer-c"
+        ],
+        "calls": 4,
+        "comments": 3
+      },
+      "expected": {
+        "authors": [
+          "synthetic-buyer-a",
+          "synthetic-buyer-b",
+          "synthetic-buyer-c"
+        ],
+        "calls": 4,
+        "comments": 3
+      },
+      "id": "one-comment-request-per-thread",
+      "passed": true
+    },
+    {
+      "actual": {
+        "activity_window_status": "in_window",
+        "recent_evidence_eligible": false,
+        "window_status": "out_of_window"
+      },
+      "expected": {
+        "activity_window_status": "in_window",
+        "recent_evidence_eligible": false,
+        "window_status": "out_of_window"
+      },
+      "id": "activity-does-not-rewrite-published-date",
+      "passed": true
+    },
+    {
+      "actual": {
+        "parent_comment_id": "211",
+        "parent_item_id": "hackernews:201",
+        "relevance_status": "unknown"
+      },
+      "expected": {
+        "parent_comment_id": "211",
+        "parent_item_id": "hackernews:201",
+        "relevance_status": "unknown"
+      },
+      "id": "comment-parent-chain",
+      "passed": true
+    }
+  ],
+  "cases_passed": 16,
+  "cases_total": 16,
+  "eval_version": "1.0",
+  "fixture_sha256": "6bcfa53d4337e81f5d7d83ffb0bf0fb6b9de75eae75e333554e4f08d8d119348",
+  "fixture_version": "1.0",
+  "network_called": false,
+  "passed": true,
+  "quality_version": "1.0"
+}

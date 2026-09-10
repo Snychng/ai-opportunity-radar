@@ -5,32 +5,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import sys
 import tempfile
-from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib import error, parse, request
+from urllib import request  # noqa: F401 旧调用者使用脚本级 request
 
 from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, validate_run_as_of
-from tikhub_query import _SameOriginRedirectHandler
-from normalize_tikhub_results import _language
+import aor_bootstrap  # noqa: F401
+from aor.net import SameOriginRedirectHandler as _SameOriginRedirectHandler  # noqa: F401
+from aor.net import json_get
+from aor.text import language as _language, tokens as _tokens, clean_text
+from aor.community import ALLOWED_SOURCES, MAX_ITEMS_PER_REQUEST, CommunityPlanError, collect_community
 
 
 HN_ENDPOINT = "https://hn.algolia.com/api/v1/search_by_date"
 GITHUB_ENDPOINT = "https://api.github.com/search/issues"
-ALLOWED_SOURCES = {"hackernews", "github"}
 MAX_REQUESTS = 12
-MAX_ITEMS_PER_REQUEST = 30
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-
-
-class CommunityPlanError(ValueError):
-    """社区查询计划或响应不符合约束。"""
 
 
 def _slug(value: str) -> str:
@@ -51,6 +46,7 @@ def build_community_plan(
     run_id: str,
     focus_name: str,
     custom_focus: str | None = None,
+    include_recent_activity: bool = False,
 ) -> dict[str, Any]:
     """生成只包含 HN 与 GitHub 的社区查询计划。"""
     try:
@@ -101,6 +97,11 @@ def build_community_plan(
             if group["source"] == "github":
                 group["query"] += f" is:issue created:{as_of_date - timedelta(days=29)}..{as_of_date}"
             group["ranking_query"] = topic + "：" + group["ranking_query"]
+    if include_recent_activity:
+        for group in list(groups):
+            if group['source'] == 'github':
+                groups.append({**group, 'id': group['id'] + '-recent-activity',
+                               'query': group['query'].replace('created:', 'updated:')})
     requests: list[dict[str, Any]] = []
     threshold = int(datetime.combine(as_of_date - timedelta(days=29), time.min, tzinfo=timezone.utc).timestamp())
     upper_threshold = int(datetime.combine(as_of_date + timedelta(days=1), time.min, tzinfo=timezone.utc).timestamp()) - 1
@@ -126,6 +127,7 @@ def build_community_plan(
                 "method": "GET",
                 "params": params,
                 "ranking_query": group["ranking_query"],
+                "relevance_query": topic or re.sub(r"\b(?:is|created|updated):\S+", " ", group["query"]),
                 "weight": group["weight"],
             }
         )
@@ -135,6 +137,7 @@ def build_community_plan(
         "run_id": run_id,
         "as_of": as_of,
         "stage": "community_discovery",
+        "include_recent_activity": include_recent_activity,
         "window": {
             "lookback_days": 30,
             "range_from": (as_of_date - timedelta(days=29)).isoformat(),
@@ -172,6 +175,8 @@ def validate_plan(plan: dict[str, Any]) -> None:
     if not isinstance(scope, dict) or set(scope.get("sources") or []) != ALLOWED_SOURCES:
         raise CommunityPlanError("社区计划来源必须严格为 Hacker News 与 GitHub")
     requests = plan.get("requests")
+    if requests == [] and plan.get('plan_status') in {'needs_host_queries', 'not_requested'}:
+        return
     if not isinstance(requests, list) or not 1 <= len(requests) <= MAX_REQUESTS:
         raise CommunityPlanError(f"社区计划请求数必须为 1 到 {MAX_REQUESTS}")
     seen: set[str] = set()
@@ -209,48 +214,21 @@ def validate_plan(plan: dict[str, Any]) -> None:
             raise CommunityPlanError(f"社区请求 {request_id} 的 Hacker News 日期窗口无效")
         if source == "github" and (params.get("sort") != "comments" or params.get("order") != "desc"):
             raise CommunityPlanError(f"社区请求 {request_id} 必须固定按评论数降序")
-        if source == "github" and f"created:{range_from}..{as_of_date}" not in str(params.get("q")):
-            raise CommunityPlanError(f"社区请求 {request_id} 的 GitHub 日期窗口无效")
+        if source == 'github':
+            qualifiers = re.findall(r'\b(created|updated):([^\s]+)', query)
+            allowed = {'created', 'updated'} if plan.get('include_recent_activity') is True else {'created'}
+            if len(qualifiers) != 1 or qualifiers[0][0] not in allowed or qualifiers[0][1] != f'{range_from}..{as_of_date}':
+                raise CommunityPlanError(f'社区请求 {request_id} 的 GitHub 日期窗口无效')
         if not str(item.get("ranking_query") or "").strip():
             raise CommunityPlanError(f"社区请求 {request_id} 缺少 ranking_query")
 
 
-def _default_transport(
-    *, endpoint: str, params: dict[str, Any], headers: dict[str, str], timeout: int
-) -> dict[str, Any]:
-    target = f"{endpoint}?{parse.urlencode(params)}"
-    req = request.Request(target, headers=headers, method="GET")
-    try:
-        with request.build_opener(_SameOriginRedirectHandler()).open(req, timeout=timeout) as response:
-            payload = response.read(MAX_RESPONSE_BYTES + 1)
-    except error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            raise RuntimeError(f"auth-required:{exc.code}") from exc
-        if exc.code == 429:
-            raise RuntimeError("rate-limited:429") from exc
-        raise RuntimeError(f"http-error:{exc.code}") from exc
-    except error.URLError as exc:
-        raise RuntimeError("network-error") from exc
-    if len(payload) > MAX_RESPONSE_BYTES:
-        raise RuntimeError("response-too-large")
-    try:
-        decoded = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("invalid-json") from exc
-    if not isinstance(decoded, dict):
-        raise RuntimeError("invalid-response-shape")
-    return decoded
+# 旧测试及调用者仍可使用这些脚本级名称。
+_default_transport = json_get
 
 
 def _clean(value: Any, limit: int = 1000) -> str | None:
-    if not isinstance(value, (str, int, float)):
-        return None
-    text = re.sub(r"\s+", " ", str(value)).strip()
-    return text[:limit] if text else None
-
-
-def _tokens(value: str) -> set[str]:
-    return {token for token in re.findall(r"[a-z0-9\u3400-\u9fff]{2,}", value.lower())}
+    return clean_text(value, limit) or None
 
 
 def _local_relevance(item: dict[str, Any], ranking_query: str) -> float:
@@ -278,8 +256,10 @@ def _normalize_hn(payload: dict[str, Any], request_item: dict[str, Any], observe
             "query_id": request_item["id"],
             "query_group": request_item["query_group"],
             "url": url,
+            "evidence_kind": "post",
             "author": _clean(row.get("author"), 200),
             "container": "Hacker News",
+            "thread_url": f"https://news.ycombinator.com/item?id={object_id}",
             "title": title,
             "original_text": _clean(row.get("story_text"), 1500) or title,
             "zh_translation": None,
@@ -320,8 +300,11 @@ def _normalize_github(payload: dict[str, Any], request_item: dict[str, Any], obs
             "query_id": request_item["id"],
             "query_group": request_item["query_group"],
             "url": url,
+            "evidence_kind": "post",
             "author": _clean((row.get("user") or {}).get("login") if isinstance(row.get("user"), dict) else None, 200),
             "container": container,
+            "thread_url": url,
+            "updated_at": _clean(row.get("updated_at"), 100),
             "title": title,
             "original_text": _clean(row.get("body"), 1500) or title,
             "zh_translation": None,
@@ -337,100 +320,26 @@ def _normalize_github(payload: dict[str, Any], request_item: dict[str, Any], obs
             "access_method": "native-platform",
             "signal_types": [],
         }
-        search_query = re.sub(r"\b(?:is|created|sort|order):\S+", " ", str(request_item["params"]["q"]))
+        search_query = re.sub(r"\b(?:is|created|updated|sort|order):\S+", " ", str(request_item["params"]["q"]))
         evidence["local_relevance"] = _local_relevance(evidence, search_query)
         result.append(evidence)
     return result
 
 
-def _classify_error(exc: Exception) -> str:
-    message = str(exc)
-    if message.startswith("auth-required"):
-        return "auth-required"
-    if message.startswith("rate-limited"):
-        return "rate-limited"
-    if message.startswith(("network-error", "http-error", "invalid-", "response-too-large")):
-        return "error"
-    return "error"
-
-
 def execute_plan(
-    plan: dict[str, Any],
-    *,
-    github_token: str = "",
-    timeout: int = 20,
-    max_items_per_request: int = 20,
-    transport: Callable[..., dict[str, Any]] = _default_transport,
+    plan: dict[str, Any], *, github_token: str = '', timeout: int = 20,
+    max_items_per_request: int = 20, transport: Callable[..., Any] = _default_transport,
+    include_comments: bool = False, max_comment_threads: int = 4, max_comments_per_thread: int = 10,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
-    """执行公开社区计划并直接输出最小化证据，不保存完整响应。"""
+    """兼容入口：验证旧计划，使用统一采集引擎执行。"""
     validate_plan(plan)
-    if not 1 <= max_items_per_request <= MAX_ITEMS_PER_REQUEST:
-        raise CommunityPlanError(f"max_items_per_request 必须为 1 到 {MAX_ITEMS_PER_REQUEST}")
-    observed_at = datetime.now(tz=timezone.utc).isoformat()
-    evidence: list[dict[str, Any]] = []
-    statuses: dict[str, str] = {}
-    request_results: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for item in plan["requests"]:
-        source = item["source"]
-        headers = {"Accept": "application/json", "User-Agent": "AI-Opportunity-Radar/3.0"}
-        if source == "github" and github_token.strip():
-            headers["Authorization"] = f"Bearer {github_token.strip()}"
-            headers["X-GitHub-Api-Version"] = "2022-11-28"
-        try:
-            payload = transport(
-                endpoint=item["endpoint"],
-                params=dict(item["params"]),
-                headers=headers,
-                timeout=timeout,
-            )
-            normalized = (
-                _normalize_hn(payload, item, observed_at)
-                if source == "hackernews"
-                else _normalize_github(payload, item, observed_at)
-            )
-            normalized = sorted(
-                normalized,
-                key=lambda row: (
-                    row.get("local_relevance", 0),
-                    math.log1p(sum(value for value in row.get("engagement", {}).values() if isinstance(value, (int, float)))),
-                ),
-                reverse=True,
-            )[:max_items_per_request]
-            added = 0
-            for row in normalized:
-                marker = (source, str(row.get("url") or row.get("source_item_id")))
-                if marker in seen:
-                    continue
-                seen.add(marker)
-                evidence.append(row)
-                added += 1
-            status = "ok" if added else "no-results"
-            statuses[source] = "ok" if status == "ok" or statuses.get(source) == "ok" else "no-results"
-            request_results.append({"id": item["id"], "source": source, "status": status, "items": added})
-        except Exception as exc:
-            status = _classify_error(exc)
-            statuses.setdefault(source, status)
-            request_results.append({"id": item["id"], "source": source, "status": status, "items": 0})
-    by_source = Counter(row["source"] for row in evidence)
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "provider": "community-public",
-        "run_id": plan["run_id"],
-        "as_of": plan["as_of"],
-        "stage": "community_normalized",
-        "generated_at": observed_at,
-        "plan_sha256": canonical_sha256(plan),
-        "window": plan["window"],
-        "stats": {
-            "requests": len(plan["requests"]),
-            "valid_items": len(evidence),
-            "by_source": dict(sorted(by_source.items())),
-            "source_status": statuses,
-        },
-        "requests": request_results,
-        "evidence": evidence,
-    }
+    return collect_community(
+        plan, normalize_hn=_normalize_hn, normalize_github=_normalize_github, plan_sha256=canonical_sha256(plan),
+        github_token=github_token, timeout=timeout, max_items_per_request=max_items_per_request, transport=transport,
+        include_comments=include_comments, max_comment_threads=max_comment_threads,
+        max_comments_per_thread=max_comments_per_thread, concurrency=concurrency,
+    )
 
 
 def _read_plan(path: Path) -> dict[str, Any]:
@@ -464,6 +373,11 @@ def main() -> int:
     run_parser.add_argument("--plan", type=Path, required=True)
     run_parser.add_argument("--output", type=Path, required=True)
     run_parser.add_argument("--max-items-per-request", type=int, default=20)
+    run_parser.add_argument('--include-comments', action='store_true', help='归并搜索后补充公开评论')
+    run_parser.add_argument('--max-comment-threads', type=int, default=4)
+    run_parser.add_argument('--max-comments-per-thread', type=int, default=10)
+    run_parser.add_argument('--timeout', type=int, default=20)
+    run_parser.add_argument('--concurrency', type=int, default=1)
     args = parser.parse_args()
     try:
         if args.command == "doctor":
@@ -480,6 +394,8 @@ def main() -> int:
             _read_plan(args.plan),
             github_token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "",
             max_items_per_request=args.max_items_per_request,
+            include_comments=args.include_comments, max_comment_threads=args.max_comment_threads,
+            max_comments_per_thread=args.max_comments_per_thread, timeout=args.timeout, concurrency=args.concurrency,
         )
         _write_json(args.output, result)
         print(json.dumps(result["stats"], ensure_ascii=False))
