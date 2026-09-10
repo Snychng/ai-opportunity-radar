@@ -1498,4 +1498,6 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from aor_runtime import run_legacy
+
+    raise SystemExit(run_legacy(main, __file__))

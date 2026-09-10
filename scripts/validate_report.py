@@ -441,4 +441,6 @@ def main() -> int:  # pragma: no cover
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    from aor_runtime import run_legacy
+
+    raise SystemExit(run_legacy(main, __file__))
