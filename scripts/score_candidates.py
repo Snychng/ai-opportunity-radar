@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
+import aor_bootstrap  # noqa: F401
+from aor.opportunity.basis import validate_score_basis
 from contracts import SCORING_VERSION, ContractError, evidence_independent_sources, validate_record_id, validate_stage_envelope
 from filter_ideas import classify_candidate, qualifying_evidence
 
@@ -106,6 +108,13 @@ def score_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     result["scoring_weights"] = deepcopy(weights)
     result["independent_source_count"] = independent_source_count
     result["confidence_capped"] = False  # 保留输出兼容字段；单来源已在 A 级资格校验中拒绝。
+    try:
+        basis = validate_score_basis(candidate.get("score_basis"), evidence, SCORE_FIELDS + AUXILIARY_FIELDS,
+                                     as_of=candidate.get("as_of"))
+    except ValueError as exc:
+        raise ScoreValidationError(str(exc)) from exc
+    result["score_basis"] = basis.pop("dimensions")
+    result["scoring_basis_summary"] = basis
     return result
 
 

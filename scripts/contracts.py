@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
-import unicodedata
 from datetime import date, datetime
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+
+import aor_bootstrap  # noqa: F401
+from aor.evidence.identity import canonical_evidence_url, canonical_sha256, normalize_identity
 
 
 SCHEMA_VERSION = "3.0"
@@ -31,19 +32,6 @@ def beijing_today() -> date:
     return datetime.now(tz=BEIJING_TZ).date()
 
 
-def canonical_sha256(value: Any) -> str:
-    """对 JSON 兼容对象生成稳定摘要。"""
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def normalize_identity(value: Any) -> str:
-    """规范化用于机会身份判断的文本。"""
-    text = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
-    text = re.sub(r"[^\w\u3400-\u9fff]+", " ", text, flags=re.UNICODE)
-    return " ".join(text.split())
-
-
 def fingerprint_record(record: dict[str, Any]) -> str:
     """用业务身份生成稳定指纹，并在存在时区分国家和主渠道。"""
     fields = ("target_user", "context", "problem_or_desire", "wedge")
@@ -62,16 +50,17 @@ def fingerprint_record(record: dict[str, Any]) -> str:
 
 
 def make_benchmark_id(benchmark: dict[str, Any]) -> str:
-    """根据付费产品、来源市场、付款者与价格生成稳定 BENCH ID。"""
+    """保留显式 BENCH ID，否则按产品、市场和付款者生成身份；价格属于观察。"""
     if not isinstance(benchmark, dict):
         raise ContractError("付费对标必须是对象")
+    if benchmark.get("id"):
+        return validate_benchmark_id(benchmark["id"])
     identity = {
         "product": normalize_identity(benchmark.get("product") or benchmark.get("title")),
         "source_market": normalize_identity(benchmark.get("source_market")),
         "payer": normalize_identity(benchmark.get("payer")),
-        "price": normalize_identity(benchmark.get("price") or benchmark.get("current_spend")),
     }
-    missing = [field for field, value in identity.items() if field != "price" and not value]
+    missing = [field for field, value in identity.items() if not value]
     if missing:
         raise ContractError(f"生成 BENCH ID 缺少字段：{', '.join(missing)}")
     return f"BENCH-{canonical_sha256(identity)[:8].upper()}"
@@ -112,14 +101,21 @@ def validate_record_id(record_id: Any, *, kind: str | None = None) -> str:
     return value
 
 
-def make_run_id(*, as_of: date, mode: str, focus: str | None, version: str = QUERY_PLAN_VERSION) -> str:
-    """生成可重跑、可审计的确定性运行 ID。"""
+def make_run_id(*, as_of: date, mode: str, focus: str | None, version: str = QUERY_PLAN_VERSION,
+                nonce: str | None = None, parent_run_id: str | None = None) -> str:
+    """生成确定性运行 ID；新研究可传非空 nonce，恢复时复用相同参数或原 ID。"""
     payload = {
         "as_of": as_of.isoformat(),
         "mode": normalize_identity(mode),
         "focus": normalize_identity(focus),
         "version": version,
     }
+    if nonce is not None:
+        if not isinstance(nonce, str) or not nonce.strip():
+            raise ContractError("nonce 必须是非空字符串")
+        payload["nonce"] = nonce
+    if parent_run_id is not None:
+        payload["parent_run_id"] = validate_run_id(parent_run_id)
     digest = canonical_sha256(payload)[:10].upper()
     return f"RUN-{as_of:%Y%m%d}-{digest}"
 
@@ -156,24 +152,6 @@ def validate_stage_envelope(payload: Any) -> dict[str, str]:
         run_id, as_of = validate_run_as_of(payload.get("run_id"), payload.get("as_of"))
         envelope.update(run_id=run_id, as_of=as_of)
     return envelope
-
-
-def canonical_evidence_url(value: Any) -> str:
-    """规范可追溯网页地址，移除片段和常见追踪参数而保留内容参数。"""
-    if not isinstance(value, str):
-        return ""
-    try:
-        parsed = urlparse(value.strip())
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            return ""
-        hostname = parsed.hostname.lower().removeprefix("www.")
-        port = parsed.port
-        netloc = hostname if port in (None, 80, 443) else f"{hostname}:{port}"
-        query = urlencode(sorted((key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True)
-                                 if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}))
-        return urlunparse(("https", netloc, parsed.path.rstrip("/"), "", query, ""))
-    except ValueError:
-        return ""
 
 
 def evidence_independent_sources(evidence: Any) -> set[str]:

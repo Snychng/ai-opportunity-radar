@@ -10,6 +10,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
+import aor_bootstrap  # noqa: F401
+from aor.opportunity.selection import select_candidates
 from contracts import (ContractError, SCHEMA_VERSION, canonical_sha256, make_benchmark_id,
                        normalize_identity, validate_benchmark_id, validate_stage_envelope)
 
@@ -201,7 +203,7 @@ def expand_ideas(payload: dict[str, Any], *, limit: int = DEFAULT_LIMIT) -> dict
         active = next_active
     # 达到输出上限时保守标注截断；自然耗尽的输入不会被误报。
     truncated = bool(active)
-    return {
+    result = {
         **envelope, "benchmarks": benchmarks,
         "summary": {
             "benchmark_count": len(benchmarks), "candidate_count": len(candidates), "limit": limit,
@@ -213,6 +215,20 @@ def expand_ideas(payload: dict[str, Any], *, limit: int = DEFAULT_LIMIT) -> dict
         },
         "candidates": candidates,
     }
+    if any(field in payload for field in ("selection_strategy", "axis_priorities", "experiment_results")):
+        evidence = payload.get("evidence", [])
+        if not isinstance(evidence, list):
+            raise ExpansionError("evidence 必须是数组")
+        try:
+            result["selection"] = select_candidates(
+                candidates, strategy=payload.get("selection_strategy"),
+                axis_priorities=payload.get("axis_priorities"),
+                evidence=evidence + [row for item in benchmarks for row in (item.get("evidence") or [])],
+                experiment_results=payload.get("experiment_results"), as_of=envelope.get("as_of"),
+            )
+        except ValueError as exc:
+            raise ExpansionError(str(exc)) from exc
+    return result
 
 
 def main() -> int:

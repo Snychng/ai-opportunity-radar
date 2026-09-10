@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -9,6 +10,42 @@ import contracts
 
 
 class ContractRegressionTests(unittest.TestCase):
+    def test_benchmark_identity_survives_price_changes(self):
+        benchmark = {"product": "Example Pro", "source_market": "美国", "payer": "独立开发者", "price": "$10/月"}
+        identifier = contracts.make_benchmark_id(benchmark)
+        for observation in ({"price": "$20/月"}, {"price": None, "current_spend": "$100/月"}, {"price": None}):
+            with self.subTest(observation=observation):
+                self.assertEqual(contracts.make_benchmark_id({**benchmark, **observation}), identifier)
+        for identity in ({"product": "Other Pro"}, {"source_market": "日本"}, {"payer": "大型企业"}):
+            with self.subTest(identity=identity):
+                self.assertNotEqual(contracts.make_benchmark_id({**benchmark, **identity}), identifier)
+
+    def test_explicit_benchmark_id_is_preserved_and_invalid_id_rejected(self):
+        self.assertEqual(contracts.make_benchmark_id({"id": "BENCH-A1B2C3D4"}), "BENCH-A1B2C3D4")
+        with self.assertRaises(contracts.ContractError):
+            contracts.make_benchmark_id({"id": "BENCH-invalid"})
+
+    def test_run_id_preserves_legacy_value_and_supports_reproducible_child_runs(self):
+        arguments = {"as_of": date(2026, 9, 10), "mode": "daily", "focus": "AI 工作流"}
+        original = contracts.make_run_id(**arguments)
+        self.assertEqual(original, "RUN-20260910-166D847620")
+        self.assertEqual(contracts.make_run_id(**arguments, nonce=None, parent_run_id=None), original)
+        child = contracts.make_run_id(**arguments, nonce="research-2", parent_run_id=original)
+        self.assertNotEqual(child, original)
+        self.assertEqual(child, contracts.make_run_id(**arguments, nonce="research-2", parent_run_id=original))
+        self.assertNotEqual(child, contracts.make_run_id(**arguments, nonce="research-3", parent_run_id=original))
+        self.assertNotEqual(child, contracts.make_run_id(**arguments, nonce="research-2"))
+        self.assertEqual(contracts.validate_run_as_of(child, "2026-09-10"), (child, "2026-09-10"))
+
+    def test_run_id_rejects_invalid_nonce_and_parent(self):
+        arguments = {"as_of": date(2026, 9, 10), "mode": "daily", "focus": None}
+        for nonce in ("", "  ", 2, True, [], {}):
+            with self.subTest(nonce=nonce), self.assertRaises(contracts.ContractError):
+                contracts.make_run_id(**arguments, nonce=nonce)
+        for parent in ("", "not-a-run", "RUN-20260910-abcde12345"):
+            with self.subTest(parent=parent), self.assertRaises(contracts.ContractError):
+                contracts.make_run_id(**arguments, parent_run_id=parent)
+
     def test_stage_envelope_allows_legacy_absence_and_valid_pair(self):
         self.assertEqual(contracts.validate_stage_envelope({}), {"schema_version": "3.0"})
         valid = {"schema_version": "3.0", "run_id": "RUN-20260910-ABCDEF1234", "as_of": "2026-09-10"}
