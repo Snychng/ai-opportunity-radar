@@ -1,6 +1,6 @@
 {
   "name": "ai-opportunity-radar",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "instructions": "SKILL.md",
   "entrypoint": [
     "python3",
