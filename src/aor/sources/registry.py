@@ -33,7 +33,7 @@ def source_catalog() -> list[dict[str, Any]]:
             "source": platform,
             "platform": platform,
             "provider": "host-verified-web" if manual else ("community-public" if community else "tikhub"),
-            "capabilities": ["import"] if manual else (["search"] if community else ["search", "detail", "top_level_comments"]),
+            "capabilities": ["import"] if manual else ["search", "detail", "top_level_comments"],
             "cost": "no_network_import" if manual else ("free_public_api" if community else "paid_live_quote_required"),
             "preferred_languages": ["en"] if community else (["zh"] if platform in CHINESE_SOURCES else ["multilingual"]),
             "regions": ["global"],
@@ -46,6 +46,13 @@ def source_catalog() -> list[dict[str, Any]]:
             "live_health": "not_checked",
         })
     return rows
+
+
+def default_sources_for_language(sources: list[str], language: str) -> list[str]:
+    """默认定向路由按查询语言筛选；显式宿主意图不使用此过滤器。"""
+    preferences = {row["source"]: row["preferred_languages"] for row in source_catalog()}
+    return [source for source in sources
+            if "multilingual" in preferences[source] or language.split("-")[0] in preferences[source]]
 
 
 def diagnose_sources(configured: Mapping[str, bool] | None = None) -> dict[str, Any]:

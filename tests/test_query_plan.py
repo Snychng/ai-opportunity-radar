@@ -180,6 +180,30 @@ class QueryPlanTests(unittest.TestCase):
         self.assertEqual(community["requests"], [])
         self.assertEqual(community["plan_status"], "needs_host_queries")
 
+    def test_japanese_merchant_scan_routes_chinese_platforms_only_when_requested(self) -> None:
+        from aor.sources.registry import CHINESE_SOURCES
+
+        scope = {"countries": ["JP"], "languages": ["ja"], "task": "注文対応",
+                 "queries": [{"language": "ja", "query": "注文対応 高い 手作業"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            local = build_plan(date(2026, 9, 10), Path(tmp), scope=scope)
+            bilingual = build_plan(date(2026, 9, 10), Path(tmp), scope={**scope, "languages": ["ja", "zh-CN"],
+                                   "queries": [*scope["queries"], {"language": "zh-CN", "query": "日本商家 客服 人工成本"}]})
+            explicit = build_plan(date(2026, 9, 10), Path(tmp), intent_plan={"intents": [{
+                "id": "japan-review", "question": "日本商家有哪些订单处理困难？", "evidence_type": "workflow_pain",
+                "search_query": "注文対応 高い 手作業", "ranking_query": "真实人工成本", "source": "xiaohongshu",
+                "locale": {"country": "JP", "language": "ja"}, "candidate_gaps": [],
+            }]})
+        local_requests = local["retrieval_plans"]["tikhub"]["requests"]
+        self.assertTrue(local_requests)
+        self.assertFalse(CHINESE_SOURCES & {row["source"] for row in local_requests})
+        self.assertFalse(CHINESE_SOURCES & set(local["coverage_schedule"]["planned_sources"]))
+        self.assertEqual(local["retrieval_plans"]["community"]["plan_status"], "needs_host_queries")
+        chinese_requests = [row for row in bilingual["retrieval_plans"]["tikhub"]["requests"] if row["source"] in CHINESE_SOURCES]
+        self.assertTrue(chinese_requests)
+        self.assertTrue(all(row["query_scope"]["language"] == "zh-CN" for row in chinese_requests))
+        self.assertEqual(explicit["retrieval_plans"]["tikhub"]["requests"][0]["source"], "xiaohongshu")
+
     def test_host_intents_preserve_questions_and_merge_only_actual_requests(self) -> None:
         from community_query import validate_plan
         from aor.sources.planning import deduplicate_requests

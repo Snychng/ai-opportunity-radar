@@ -13,6 +13,7 @@ from typing import Any
 import aor_bootstrap  # noqa: F401
 from aor.sources.importing import read_json_file
 from aor.sources.planning import compile_intents, finalize_plan, route_community_focus, validate_intent_plan
+from aor.sources.registry import default_sources_for_language
 from community_query import build_community_plan, short_topic
 from contracts import QUERY_PLAN_VERSION, SCHEMA_VERSION, beijing_today, make_run_id
 from tikhub_query import build_search_plan, validate_query_locale
@@ -288,13 +289,17 @@ def _tikhub_plan(
     for group in groups:
         group["country"] = country
         group.setdefault("language", language)
+        if custom_focus or scope:
+            group["sources"] = default_sources_for_language(group["sources"], group["language"])
     groups = [group for group in groups if group["sources"]]
+    actual_sources = [source for source in planned_sources if any(source in group["sources"] for group in groups)]
     plan = build_search_plan(as_of=as_of.isoformat(), run_id=run_id, query_groups=groups)
     plan["scope"] = {
         "id": PHASE_ONE_ID,
         "platform_expansion_enabled": False,
         "available_sources": list(PHASE_ONE_TIKHUB_SOURCES),
-        "planned_sources": planned_sources,
+        "planned_sources": actual_sources,
+        "excluded_sources": [source for source in planned_sources if source not in actual_sources],
     }
     plan["localized_query"] = localized
     plan["coverage_note"] = "检索参数仅表示查询意图；未支持地域筛选的平台及默认参数不证明目标市场覆盖。"
@@ -346,6 +351,9 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
             "community": route_community_focus(community, query_focus, scope),
             "tikhub": _tikhub_plan(as_of, run_id, focus_region, query_focus, planned_sources, scope),
         }
+        if focus or scope:
+            coverage_schedule["planned_sources"] = retrieval_plans["tikhub"]["scope"]["planned_sources"]
+            coverage_schedule["excluded_sources"] = retrieval_plans["tikhub"]["scope"]["excluded_sources"]
     return {
         "schema_version": SCHEMA_VERSION,
         "query_plan_version": QUERY_PLAN_VERSION,
