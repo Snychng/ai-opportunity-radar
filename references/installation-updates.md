@@ -1,6 +1,6 @@
 # 安装与更新
 
-AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `3.2.2`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
+AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `4.0.0`，数据协议保持 `3.0`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
 
 ## 安装稳定版本
 
@@ -120,16 +120,16 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 
 ## 目录与环境变量
 
-下面以 `3.2.2` 展示目录结构，实际版本和提交前缀以安装结果为准：
+下面以 `4.0.0` 展示目录结构，实际版本和提交前缀以安装结果为准：
 
 ```text
 ~/.local/bin/aor
 ~/.local/share/aor/
 ├── install.json
 ├── update.lock
-├── current -> versions/v3.2.2-<提交前缀>/
+├── current -> versions/v4.0.0-<提交前缀>/
 └── versions/
-    └── v3.2.2-<提交前缀>/
+    └── v4.0.0-<提交前缀>/
         ├── SKILL.md
         ├── agent-manifest.json
         ├── bin/aor
