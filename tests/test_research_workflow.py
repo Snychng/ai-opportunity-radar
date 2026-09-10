@@ -179,12 +179,34 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(report["claims"][0]["evidence_refs"][0]["field"], "original_text")
         self.assertEqual(report["metrics"]["deep_candidate_count"], 1)
         self.assertIn("尚未证明本产品购买意愿", Path(finished["report_path"]).read_text())
+        from score_candidates import score_candidate
+
+        stored = json.loads((self.home / "state/opportunities.jsonl").read_text().splitlines()[0])
+        receipt = next(item for item in stored["evidence"] if item["url"] == source["url"])
+        self.assertEqual(receipt["revision_id"], original["revision_id"])
+        self.assertEqual(score_candidate(stored)["total_score"], report["tiered"]["deep_candidates"][0]["total_score"])
         # 同页演示原文的标记不能在对标摘要省略字段时丢失并升级为 A。
         write(material, {"evidence": [{**source, "is_demo": True}]})
         revised = start_research(self.home, as_of=date(2026, 9, 10), offline=True, evidence_files=[material])
         revised = resume_research(self.home, revised["run_id"], benchmarks_file=bench)
         tiered = json.loads(Path(revised["artifacts"]["tiered"]["path"]).read_text())
         self.assertEqual(tiered["deep_candidates"], [])
+
+    def test_retracted_support_is_not_restored_by_benchmark_summary(self):
+        source = {"id": "paid-original", "url": "https://vendor.example/receipt", "source": "vendor",
+                  "original_text": "合成测试：商家已支付49美元购买客服服务", "observed_at": "2026-09-09"}
+        material = write(self.home / "original.json", {"evidence": [source]})
+        bench = write(self.home / "benchmark.json", {"benchmarks": [benchmark()]})
+        run = start_research(self.home, as_of=date(2026, 9, 10), offline=True, evidence_files=[material], benchmarks_file=bench)
+        tiered = json.loads(Path(run["artifacts"]["tiered"]["path"]).read_text())
+        self.assertEqual(len(tiered["deep_candidates"]), 1)
+        correction = write(self.home / "retraction.json", {"evidence": [{**source, "retracted": True, "observed_at": "2026-09-10"}]})
+        run = resume_research(self.home, run["run_id"], evidence_files=[correction])
+        tiered = json.loads(Path(run["artifacts"]["tiered"]["path"]).read_text())
+        self.assertEqual(tiered["deep_candidates"], [])
+        finished = resume_research(self.home, run["run_id"], assessment_file=self.assessment(run))
+        report = json.loads(Path(finished["artifacts"]["report"]["path"]).read_text())
+        self.assertEqual(report["metrics"]["deep_candidate_count"], 0)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@
 
 ## 证据库接口
 
+程序内 `search(..., include_retracted=True)` 可读取已撤回的最新修订，默认检索仍排除撤回记录。研究分层使用该完整状态，避免旧对标摘要重新恢复撤回证据的效力。正式状态保留带 `library_evidence_id` 的源库 `revision_id`，另用 `state_revision_id` 和 `version` 记录本地状态版本，评分引用不随落库改写。
+
 `library` 的全局参数 `--root`（必填）和 `--output` 必须放在子命令前。示例承接 [README](../README.md#可运行离线示例) 的临时目录、运行 ID 与网页导入结果：
 
 ```bash

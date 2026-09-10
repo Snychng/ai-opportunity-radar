@@ -14,7 +14,7 @@ _STATUSES = {"supports", "partial", "conflicts", "unverified"}
 _DATES = ("published_at", "observed_at", "first_observed_at", "last_observed_at", "date", "recorded_on", "as_of")
 _EXPERIMENT_DATES = (*_DATES, "recorded_at", "performed_at", "completed_at")
 _COLLECTION_FIELDS = {
-    "id", "evidence_id", "revision_id", "version", "supersedes", "source", "source_labels",
+    "id", "evidence_id", "revision_id", "version", "state_revision_id", "supersedes", "source", "source_labels",
     "run_id", "run_ids", "as_of", "observed_at", "first_observed_at", "last_observed_at",
     "recorded_on", "reused_for_run_id", "raw_file", "raw_ref", "raw_refs", "raw_json_pointer",
     "query", "query_id", "query_group", "engagement", "access_method", "extraction_warnings",

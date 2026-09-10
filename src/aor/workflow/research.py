@@ -292,7 +292,8 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
     if "benchmarks" in manifest["artifacts"]:
         benchmarks = _load_artifact(manifest, "benchmarks")
         rows = [item for benchmark in benchmarks.get("benchmarks", []) for item in benchmark.get("evidence", [])]
-        known_urls = {canonical_evidence_url(item.get("url")) for item in library.search("", as_of=manifest["as_of"], limit=None)}
+        known_urls = {canonical_evidence_url(item.get("url")) for item in
+                      library.search("", as_of=manifest["as_of"], limit=None, include_retracted=True)}
         # 对标中的事实摘要是研究判断，不能覆盖已导入的同页原文修订。
         additions = [item for item in rows if not canonical_evidence_url(item.get("url"))
                      or canonical_evidence_url(item.get("url")) not in known_urls]
@@ -329,19 +330,30 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
 
 def _prepare_tiered(directory: Path, manifest: dict) -> dict:
     from aor.evidence.identity import canonical_evidence_url
+    from aor.storage.evidence_library import EvidenceLibrary
 
     benchmarks = _load_artifact(manifest, "benchmarks")
-    context = _load_artifact(manifest, "evidence-context")["evidence"]
+    context = EvidenceLibrary(Path(manifest["home"]) / "evidence-library").search(
+        "", as_of=manifest["as_of"], limit=None, include_retracted=True)
     by_url = {canonical_evidence_url(item.get("url")): item for item in context if item.get("url")}
     for benchmark in benchmarks.get("benchmarks", []):
         for item in benchmark.get("evidence", []):
             stored = by_url.get(canonical_evidence_url(item.get("url")))
             if stored:
                 # 商业事实和分层输入保留；引用使用证据库实际原文及版本。
-                for key in ("evidence_id", "revision_id", "original_text", "text", "comments", "observed_at", "recorded_on", "aliases",
+                for key in ("evidence_id", "library_evidence_id", "revision_id", "original_text", "text", "comments", "observed_at", "recorded_on", "aliases",
                             "original_url", "original_publisher", "original_author", "publisher_id", "is_demo", "retracted", "status"):
                     if key in stored:
                         item[key] = deepcopy(stored[key])
+        supports = {canonical_evidence_url(item.get("url")): item for item in benchmark.get("evidence", [])}
+        for field in ("payment_signals", "demand_signals"):
+            for signal in benchmark.get(field, []):
+                source = supports.get(canonical_evidence_url(signal.get("url"))) or {}
+                if source.get("revision_id"):
+                    signal["evidence_revision_id"] = source["revision_id"]
+                for key in ("retracted", "status", "is_demo"):
+                    if key in source:
+                        signal[key] = source[key]
     if not benchmarks.get("benchmarks"):
         if not str(benchmarks.get("empty_reason") or "").strip():
             raise ValueError("没有合格对标时请填写 empty_reason；无需编造候选")

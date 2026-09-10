@@ -22,7 +22,7 @@ from aor.evidence.retrieval import reciprocal_rank_fusion
 
 TZ = ZoneInfo("Asia/Shanghai")
 COLLECTION_FIELDS = {
-    "id", "evidence_id", "revision_id", "version", "supersedes", "source", "source_labels", "run_id", "run_ids",
+    "id", "evidence_id", "revision_id", "version", "state_revision_id", "supersedes", "source", "source_labels", "run_id", "run_ids",
     "as_of", "observed_at", "first_observed_at", "last_observed_at", "recorded_on", "reused_for_run_id",
     "raw_file", "raw_ref", "raw_refs", "raw_json_pointer", "query", "query_id", "query_group", "engagement",
     "access_method", "extraction_warnings", "retrieval", "aliases", "same_source_refs", "independent_source_key",
@@ -326,7 +326,7 @@ class EvidenceLibrary:
         return records
 
     def search(self, query: str | Iterable[str], *, as_of: str | date, limit: int | None = 20,
-               run_id: str | None = None) -> list[dict[str, Any]]:
+               run_id: str | None = None, include_retracted: bool = False) -> list[dict[str, Any]]:
         """检索截止日前的当前修订；多个 query 用 RRF，中文子串补足 FTS 分词边界。"""
         day = _date_text(as_of)
         _run_id(run_id, day)
@@ -334,7 +334,7 @@ class EvidenceLibrary:
         if not queries or any(not isinstance(item, str) for item in queries):
             raise EvidenceLibraryError("query 必须为字符串或非空字符串数组")
         with self._connection() as connection:
-            snapshot = self._snapshot(connection, day, run_id)
+            snapshot = self._snapshot(connection, day, run_id, include_retracted=include_retracted)
             records = {(item["evidence_id"], item["revision_id"]): item for item in snapshot}
             use_fts = connection.execute("SELECT value FROM meta WHERE key='fts'").fetchone()[0] == "1"
             streams = []
