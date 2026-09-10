@@ -79,7 +79,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
-      - run: ruff check scripts tests
+      - run: ruff check scripts src tests
       - name: 构建并校验归档
         run: |
           python scripts/build_release.py --ref "$RELEASE_COMMIT" --output-dir "$RUNNER_TEMP/aor-dist"
