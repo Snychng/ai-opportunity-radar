@@ -22,33 +22,67 @@ env:
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: 核验稳定标签格式
+        run: |
+          python3 -c 'import os,re,sys; sys.exit(0 if re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", os.environ["RELEASE_TAG"]) else "稳定标签格式错误")'
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 固定发行提交并核验项目版本
+        id: source
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+
+          tag = os.environ["RELEASE_TAG"]
+          subprocess.run(["git", "fetch", "--no-tags", "origin", f"refs/tags/{tag}"], check=True)
+          commit = subprocess.check_output(["git", "rev-parse", "--verify", "FETCH_HEAD^{commit}"], text=True).strip()
+          if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is None:
+              raise SystemExit("标签未解析为精确提交")
+          subprocess.run(["git", "merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"], check=True)
+          manifest = json.loads(subprocess.check_output(["git", "show", f"{commit}:agent-manifest.json"], text=True))
+          if not isinstance(manifest, dict) or manifest.get("name") != "ai-opportunity-radar" or manifest.get("version") != tag[1:]:
+              raise SystemExit("发行标签与项目清单不一致")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"commit={commit}\n")
+          PY
+
   verify:
+    needs: resolve
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.10", "3.12"]
     env:
       AOR_OFFLINE: "1"
+      RELEASE_COMMIT: ${{ needs.resolve.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - name: 核验标签与主分支
-        run: |
-          python -c 'import os,re; assert re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", os.environ["RELEASE_TAG"]), "稳定标签格式错误"'
-          git merge-base --is-ancestor HEAD origin/main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse --verify --end-of-options "$RELEASE_TAG^{commit}")"
+      - name: 核验检出提交
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
       - run: ruff check scripts tests
       - name: 构建并校验归档
         run: |
-          python scripts/build_release.py --ref "$RELEASE_TAG" --output-dir "$RUNNER_TEMP/aor-dist"
+          python scripts/build_release.py --ref "$RELEASE_COMMIT" --output-dir "$RUNNER_TEMP/aor-dist"
           cd "$RUNNER_TEMP/aor-dist"
           shasum -a 256 -c SHA256SUMS
           mkdir "$RUNNER_TEMP/aor-package"
@@ -56,20 +90,27 @@ jobs:
           python "$RUNNER_TEMP/aor-package/ai-opportunity-radar/scripts/radar.py" doctor --offline --json
 
   publish:
-    needs: verify
+    needs: [resolve, verify]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_COMMIT: ${{ needs.resolve.outputs.commit }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: python scripts/build_release.py --ref "$RELEASE_TAG" --output-dir "$RUNNER_TEMP/aor-dist"
+      - name: 构建前确认标签仍指向已验证提交
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse --verify 'FETCH_HEAD^{commit}')" = "$RELEASE_COMMIT"
+      - run: python scripts/build_release.py --ref "$RELEASE_COMMIT" --output-dir "$RUNNER_TEMP/aor-dist"
       - name: 上传全部资产后公开稳定版本
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,4 +118,6 @@ jobs:
         run: |
           # 已存在的 Release 会拒绝重复创建，重跑前需核对已有发布及资产。
           gh release create "$RELEASE_TAG" "$RUNNER_TEMP/aor-dist/"* --draft --verify-tag --title "AOR $RELEASE_TAG" --notes-file CHANGELOG.md
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse --verify 'FETCH_HEAD^{commit}')" = "$RELEASE_COMMIT"
           gh release edit "$RELEASE_TAG" --draft=false

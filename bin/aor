@@ -6,10 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+environment["PYTHONDONTWRITEBYTECODE"] = "1"
 root = Path(__file__).resolve().parents[1]
 try:
     raise SystemExit(subprocess.run([sys.executable, str(root / "scripts" / "radar.py"), *sys.argv[1:]],
-                                   check=False).returncode)
+                                   env=environment, check=False).returncode)
 except KeyboardInterrupt:
     raise SystemExit(130)

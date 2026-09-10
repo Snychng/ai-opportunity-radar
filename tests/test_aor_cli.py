@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,21 @@ class AorCliTests(unittest.TestCase):
             result = self.invoke("--json", "doctor", "--offline", cwd=Path(tmp))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("health", json.loads(result.stdout))
+
+    def test_doctor_reports_broken_skill_link_as_json_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "scripts").mkdir()
+            for name in ("radar.py", "aor_runtime.py", "aor_status.py"):
+                shutil.copyfile(ROOT / "scripts" / name, base / "scripts" / name)
+            manifest = json.loads((ROOT / "agent-manifest.json").read_text())
+            manifest["skills"][0]["path"] = "loop"
+            (base / "agent-manifest.json").write_text(json.dumps(manifest))
+            (base / "loop").symlink_to("loop")
+            result = self.invoke("doctor", "--offline", "--json", cwd=base, entry=str(base / "scripts" / "radar.py"))
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["health"], "error")
+            self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

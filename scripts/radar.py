@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-from aor_runtime import AorError, enabled, installation_context, lock, preflight
+from aor_runtime import AorError, enabled, installation_context, lock, preflight, process_environment
 
 COMMANDS = {
     "plan": "build_query_plan.py",
@@ -133,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
 def _research(args: argparse.Namespace, context: dict) -> int:
     preflight(context)
     script = Path(__file__).resolve().parent / COMMANDS[args.command]
-    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "AOR_NO_UPDATE_CHECK": "1"}
+    environment = process_environment(PYTHONDONTWRITEBYTECODE="1", AOR_NO_UPDATE_CHECK="1")
     return subprocess.run([sys.executable, str(script), *args.arguments], env=environment, check=False).returncode
 
 

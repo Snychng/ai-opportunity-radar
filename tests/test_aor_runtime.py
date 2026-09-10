@@ -64,6 +64,17 @@ class AorRuntimeTests(unittest.TestCase):
             with self.assertRaises(AorError):
                 read_manifest(root)
 
+    def test_looping_skill_path_is_a_structured_manifest_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "loop").symlink_to("loop")
+            atomic_json(root / "agent-manifest.json", {"name": "ai-opportunity-radar", "version": "3.2.0",
+                        "skills": [{"name": "ai-opportunity-radar", "path": "loop"}]})
+            context = installation_context(root)
+            self.assertIsNotNone(context["manifest_error"])
+            from aor_status import doctor
+            self.assertEqual(doctor(context, offline=True)["health"], "error")
+
     def test_managed_context_requires_registration_not_directory_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

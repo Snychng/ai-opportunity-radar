@@ -31,6 +31,11 @@ def enabled(name: str) -> bool:
     return os.environ.get(name, "").lower() in {"1", "true", "yes"}
 
 
+def process_environment(**overrides: str) -> dict[str, str]:
+    """清除调用方的 Git 仓库定位和配置覆盖，保留代理及研究设置。"""
+    return {**{key: value for key, value in os.environ.items() if not key.startswith("GIT_")}, **overrides}
+
+
 def read_manifest(root: Path) -> dict[str, Any]:
     root = Path(root).resolve()
     try:
@@ -54,7 +59,10 @@ def read_manifest(root: Path) -> dict[str, Any]:
         relative = skill.get("path")
         if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
             raise AorError("技能路径必须是安装目录内的相对路径")
-        target = (root / relative).resolve()
+        try:
+            target = (root / relative).resolve()
+        except (OSError, RuntimeError) as error:
+            raise AorError("技能路径无法解析，可能包含损坏的符号链接") from error
         if not target.is_relative_to(root):
             raise AorError("技能路径越出安装目录")
     return {**payload, "skills": skills}
@@ -64,7 +72,7 @@ def _git(root: Path, *arguments: str) -> str | None:
     try:
         result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
                                  "-C", str(root), *arguments], capture_output=True, text=True,
-                                env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"},
+                                env=process_environment(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0"),
                                 timeout=2, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None

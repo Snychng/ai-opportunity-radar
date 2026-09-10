@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aor_runtime import MANAGED_HOME, OFFICIAL_REPOSITORY, PROJECT_ROOT, atomic_json, lock, read_manifest
+from aor_runtime import MANAGED_HOME, OFFICIAL_REPOSITORY, PROJECT_ROOT, atomic_json, lock, process_environment, read_manifest
 from aor_status import check_update
 
 VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
@@ -38,7 +38,7 @@ def _identity(root: Path) -> dict:
 
 
 def _git(root: Path, *arguments: str, timeout: int = 120) -> str:
-    environment = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
+    environment = process_environment(GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
     try:
         result = subprocess.run(
             ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *arguments],
@@ -123,7 +123,7 @@ def _validate_candidate(root: Path, expected_version: str) -> str:
         if not instructions.is_file() or instructions.is_symlink():
             raise ValueError("候选版本缺少已登记技能的 SKILL.md。")
     _assert_source(root)
-    environment = dict(os.environ, AOR_OFFLINE="1", AOR_NO_UPDATE_CHECK="1", PYTHONDONTWRITEBYTECODE="1")
+    environment = process_environment(AOR_OFFLINE="1", AOR_NO_UPDATE_CHECK="1", PYTHONDONTWRITEBYTECODE="1")
     try:
         result = subprocess.run(
             [sys.executable, str(root / "scripts" / "radar.py"), "--help"],
@@ -167,7 +167,14 @@ def _paths(source: Path, home: Path | None, bin_dir: Path | None) -> tuple[Path,
     executable_dir = Path(bin_dir or Path.home() / ".local" / "bin").expanduser().resolve()
     if source == install_home or source in install_home.parents or source == executable_dir or source in executable_dir.parents:
         raise ValueError("受管安装和命令目录必须位于源码目录之外。")
-    return install_home, executable_dir / "aor"
+    for name in ("current", "versions", "install.json", "update.lock"):
+        reserved = (install_home / name).resolve()
+        if executable_dir.is_relative_to(reserved):
+            raise ValueError("命令目录不能位于受管版本或保留路径内。")
+    bin_path = executable_dir / "aor"
+    if install_home.is_relative_to(bin_path):
+        raise ValueError("命令路径与受管安装目录冲突。")
+    return install_home, bin_path
 
 
 def _launcher_text(home: Path) -> str:
@@ -183,7 +190,8 @@ from pathlib import Path
 
 INSTALL_HOME = {str(home)!r}
 home = Path(INSTALL_HOME)
-environment = dict(os.environ, AOR_INSTALL_HOME=INSTALL_HOME, PYTHONDONTWRITEBYTECODE="1")
+environment = {{key: value for key, value in os.environ.items() if not key.startswith("GIT_")}}
+environment.update(AOR_INSTALL_HOME=INSTALL_HOME, PYTHONDONTWRITEBYTECODE="1")
 arguments = [argument for argument in sys.argv[1:] if argument != "--json"]
 exclusive_command = bool(arguments) and arguments[0] in {{"update", "install"}}
 try:
@@ -203,7 +211,7 @@ try:
         raise SystemExit(code)
 except KeyboardInterrupt:
     raise SystemExit(130)
-except (OSError, ValueError) as error:
+except (OSError, ValueError, RuntimeError) as error:
     print(f"AOR 启动失败：{{error}}", file=sys.stderr)
     raise SystemExit(1)
 '''
@@ -312,7 +320,8 @@ def _install(
         registered = _registered(install_home)
         if registered is not None and registered.get("bin_path") != str(bin_path):
             raise ValueError("此安装已登记其他命令位置，不会隐式迁移。")
-        old_root = _current(install_home) if registered else None
+        # 首次安装中断可能只留下有效登记，允许使用相同目录继续完成安装。
+        old_root = _current(install_home) if registered and os.path.lexists(install_home / "current") else None
         if old_root is not None:
             _assert_source(old_root)
         context = {
@@ -332,20 +341,23 @@ def _install(
                 output.flush()
                 os.fsync(output.fileno())
             temporary_launcher.chmod(0o755)
-            if registered is None:
-                atomic_json(install_home / "install.json", {
-                    "schema_version": 1, "repository": OFFICIAL_REPOSITORY, "channel": "stable", "manager": "aor",
-                    "bin_path": str(bin_path), "created_at": datetime.now(timezone.utc).isoformat(),
-                })
             try:
+                if registered is None:
+                    atomic_json(install_home / "install.json", {
+                        "schema_version": 1, "repository": OFFICIAL_REPOSITORY, "channel": "stable", "manager": "aor",
+                        "bin_path": str(bin_path), "created_at": datetime.now(timezone.utc).isoformat(),
+                    })
                 _switch(install_home, candidate)
                 os.replace(temporary_launcher, bin_path)
-            except OSError:
+            except (OSError, KeyboardInterrupt):
                 if old_root is not None:
                     _switch(install_home, old_root)
                 else:
-                    (install_home / "current").unlink(missing_ok=True)
-                    (install_home / "install.json").unlink(missing_ok=True)
+                    current = install_home / "current"
+                    if current.is_symlink() and current.resolve() == candidate:
+                        current.unlink()
+                    if registered is None:
+                        (install_home / "install.json").unlink(missing_ok=True)
                 raise
         finally:
             temporary_launcher.unlink(missing_ok=True)

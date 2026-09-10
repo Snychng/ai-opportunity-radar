@@ -115,6 +115,30 @@ class InstallationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "来源|仓库"):
             self.local_install()
 
+    def test_git_environment_cannot_redirect_install_into_another_repository(self) -> None:
+        other = repository(self.base / "unrelated", "1.0.0")
+        (other / "personal.txt").write_text("保留的项目文件", encoding="utf-8")
+        git(other, "add", ".")
+        git(other, "commit", "-qm", "无关项目")
+        before = git(other, "rev-parse", "HEAD")
+        origin = git(other, "remote", "get-url", "origin")
+        with patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}), \
+             patch.object(aor_install, "OFFICIAL_REPOSITORY", str(self.source)), \
+             patch.object(aor_install, "check_update", return_value=self.latest("3.2.0")):
+            result = aor_install.install(self.source, self.home, self.bin_dir)
+        self.assertEqual(result["version"], "3.2.0")
+        self.assertEqual(git(other, "rev-parse", "HEAD"), before)
+        self.assertEqual(git(other, "remote", "get-url", "origin"), origin)
+        self.assertEqual((other / "personal.txt").read_text(), "保留的项目文件")
+        self.assertEqual(git(other, "status", "--porcelain"), "")
+
+    def test_reserved_command_directories_fail_before_mutation_and_allow_retry(self) -> None:
+        for name in ("current", "current/commands", "versions/bin", "install.json", "update.lock"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "目录|路径"):
+                aor_install.install_local(self.source, self.home, self.home / name)
+            self.assertFalse(self.home.exists())
+        self.assertEqual(self.local_install()["status"], "installed")
+
     def test_install_does_not_overwrite_unrelated_executable(self) -> None:
         self.bin_dir.mkdir()
         launcher = self.bin_dir / "aor"
@@ -295,6 +319,30 @@ class InstallationTests(unittest.TestCase):
         self.assertFalse(os.path.lexists(self.home / "current"))
         self.assertFalse((self.home / "install.json").exists())
         self.assertFalse((self.bin_dir / "aor").exists())
+
+    def test_metadata_failure_after_replace_rolls_back_and_allows_retry(self) -> None:
+        original = aor_install.atomic_json
+
+        def write_then_fail(path, payload):
+            original(path, payload)
+            raise OSError("模拟安装记录落盘后的同步失败")
+
+        with patch.object(aor_install, "atomic_json", side_effect=write_then_fail):
+            with self.assertRaises(OSError):
+                self.local_install()
+        self.assertFalse(os.path.lexists(self.home / "current"))
+        self.assertFalse((self.home / "install.json").exists())
+        self.assertEqual(self.local_install()["status"], "installed")
+
+    def test_incomplete_first_install_can_resume_with_same_registration(self) -> None:
+        self.home.mkdir()
+        aor_install.atomic_json(self.home / "install.json", {
+            "schema_version": 1, "manager": "aor", "channel": "stable",
+            "repository": aor_install.OFFICIAL_REPOSITORY, "bin_path": str(self.bin_dir / "aor"),
+        })
+        self.assertEqual(self.local_install()["status"], "installed")
+        self.assertTrue((self.home / "current").is_symlink())
+        self.assertTrue((self.bin_dir / "aor").exists())
 
     def test_external_current_pointer_cannot_be_updated(self) -> None:
         self.local_install()
