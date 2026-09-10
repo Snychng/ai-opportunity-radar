@@ -5,7 +5,7 @@
 ## 1. 共享运行契约
 
 - `schema_version`、`query_plan_version`、`scoring_version`：当前为 `3.0`。
-- `run_id`：`RUN-YYYYMMDD-XXXXXXXXXX`，由日期、模式、定向范围和版本确定。
+- `run_id`：`RUN-YYYYMMDD-XXXXXXXXXX`。独立 plan 按日期、模式、定向范围、版本及结构化意图确定；research 每次创建唯一运行并回填子计划，允许同日独立研究。
 - `as_of`：北京时间 `YYYY-MM-DD`，必须与 `run_id` 日期一致。
 - 同一轮原始、规范化、扩展、过滤、评分和状态文件保留同一 `run_id`。历史证据或研究结果跨轮复用时，显式声明 `reused_for_run_id`；执行费用只能属于本轮，不能通过复用标记合并旧费用。
 
@@ -22,7 +22,7 @@ query_plan
   -> OPP/SIG stable IDs
   -> A-level scoring
   -> full_result_digest
-  -> validated_report
+  -> structured report.json（兼容链路仍可校验旧 Markdown）
   -> state_observations
 ```
 
@@ -130,7 +130,7 @@ A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence`
 `filter_ideas.py` 按业务身份归并为 `opportunity_family`，保留报价与交付 `variants`，选取单个实际合格变体作为代表，不拼凑不同变体的门槛。输出以下集合：
 
 - `deep_candidates`：A 级，`record_kind=opportunity`
-- `validated_ideas`：B 级，`record_kind=opportunity`
+- `validated_ideas`：B 级收费对标支持的候选，`record_kind=opportunity`；字段名保持兼容，不表示客户已验证
 - `regional_signals`：R 级，`record_kind=signal`
 - `rejected`：附 `rejection_reasons`
 - `overflow`：超过 B 级 40 条或 R 级 80 条的合格候选；不丢弃，但不进入当日日报主卡片
@@ -154,7 +154,7 @@ A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence`
 
 输出全部 A、全部 B、全部 R、全部 overflow、建议日报展示数量、完整清单额外数量、按失败门槛数量排序的接近合格项，以及请求、费用、证据利用率、单个合格结论成本和来源产出。同一路径和相同内容的执行结果副本均去重，避免费用重复计算。额外报告 `qualified_family_count`、`validated_opportunity_family_count`、`regional_hypothesis_family_count` 与 `cost_per_validated_family_usd`；R 级是迁移假设，不能计为已验证市场。
 
-完整清单是用户主交付物；日报负责 Top 深度分析与固定结构，但不能替代完整清单。
+新编排将完整清单放入结构化报告并渲染；Markdown 只负责展示。手动 digest 与旧日报仍兼容，但不能取代 report.json 的新提交契约。validated_* 指标指研究资格，不是客户已验证数量。
 
 ## 6. 稳定 OPP/SIG 身份
 
@@ -177,7 +177,7 @@ A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence`
 
 正式日报、A 级评分及实验引用前，执行 `manage_state.py prepare` 分配 ID；快速摘要不强制准备。A/B 使用 `--kind opportunity`，R 使用 `--kind signal`。实验的 `record_id` 必须引用返回的 `id`，不能填写 `candidate_id`。不要手工编造 ID。
 
-`prepare` 不提交研究观察；准备好稳定 ID 就可以记录 `planned` 实验，不要求先跑真实采集、生成日报或 `record-batch`。单条候选提取、准备和实验文件生成的可执行样例见 [README](../README.md#为自己选择值得验证的项目)。
+`prepare` 不提交研究观察；准备好稳定 ID 就可以记录 `planned` 实验，不要求先跑真实采集、生成日报或 `record-batch`。个人约束与实验输入见 [个人验证](personal-validation.md)；完整编排示例见 [README](../README.md#可运行离线示例)。
 
 ## 7. 状态与升级
 
@@ -211,7 +211,28 @@ OPP.promoted_from -> SIG ID
 - 阶段版本不一致时失败关闭，不静默混用。
 - 缺六项硬门槛时写拒绝原因，不猜测补齐。
 - 报告校验失败时不写机会状态。
-- 未生成完整结论清单或费用产出时，报告校验失败。
+- 新报告使用结构化字段与计数校验；旧 Markdown 报告仍按原格式检查完整清单链接及费用产出。
 - 状态文件损坏时明确报错，不自动覆盖。
 - 持久研究数据统一写入 `RADAR_HOME`；示例临时输出可指定其他位置，不写入项目或技能目录。
 - 通用 CLI、定向范围文件见 [Agent 集成](agent-integration.md)；个人约束和实验日志见 [个人验证](personal-validation.md)。
+
+## 9. 编排交接契约
+
+运行清单另有 `workflow_version=1.0`，包含 status、stages、artifacts、evidence_artifacts、execution_artifacts 与 offline。artifact 以路径和 canonical JSON SHA-256 登记；直接修改会导致摘要不符。
+
+- `benchmarks` 输入沿用本文件对标与扩展结构；使用 research 返回模板。没有合格对标时允许空数组，但必须有非空 `empty_reason`。
+- `assessment` 包含 `scores` 数组、`claims` 数组及 `decision`。每个 A 候选含 overflow 都按稳定 id 提交评分；没有 A 时 scores 可空。编排接收 track、scores、auxiliary_scores、score_basis、validation_plan；评分依据使用 score_basis。
+- 输入未带 run_id/as_of 时由本轮补齐；带入其他运行的 benchmarks/assessment 被拒绝。历史材料通过 `--evidence` 导入，不能将未来资料放进过去的研究。
+- `resume --assessment` 完成结构化校验与本地 commit；已提交运行拒绝新输入。`research --parent-run-id` 记录后续关系。
+
+## 10. 来源意图与主张
+
+intent_plan 分离 question、search_query、ranking_query；编译后按请求指纹归并并保存 intent_refs/provenance，详情见 [查询模式](query-patterns.md)。`sources import` 接收宿主已核验网页的原文子串与核验声明，不将价格页转换成直接付款，详情见 [来源目录](source-catalog.md)。
+
+证据库使用 evidence_id、revision_id、content_hash、观察日期与 raw_ref；重复来源标签不增加独立来源。新主张引用使用 evidence_refs 内的 evidence_id/revision_id/quote，可选 field；旧 state 付款信号的 evidence_revision_id 属于另一层兼容契约，不要混用字段名。引用定位成功不等于语义成立，详见 [证据库与评估](evidence-library.md)。
+
+## 11. 报告与付费回执
+
+结构化报告使用 `report_version=1.0`，候选与顶层运行元数据一致，`market_validated=false`。decision 必填四项非空文本；计数含 overflow；有效报告的 commit 回执保存 report_sha256 与 records_sha256。报告还保留 evidence_inventory（证据统计输入）和 run_ledger（整轮费用与尝试状态）；metrics、source_yield 和 Markdown 清单从这些结构化材料重算，不依赖旧 digest_markdown。完整字段见 [报告契约](report-template.md)。
+
+付费结果区分本次调用 results/summary、预算保护 execution_budget 和跨批累计 run_ledger。`execution_budget.scope=run` 只在共用持久 journal 时成立；旧无 journal 调用为 batch。unknown 不能自动重买，详细参数与恢复语义见 [TikHub](tikhub-integration.md)。

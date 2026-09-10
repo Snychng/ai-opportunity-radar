@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "source": "web",
+      "url": "https://vendor.example/pricing",
+      "title": "演示客服产品定价",
+      "original_text": "Demo customer support plan costs $29/month. This is fictional example text.",
+      "supporting_quote": "Demo customer support plan costs $29/month.",
+      "evidence_role": "official_pricing",
+      "observed_at": "2026-09-10T10:00:00+08:00",
+      "language": "en",
+      "country": "US",
+      "verification": {
+        "verified_by": "demo-host-agent",
+        "verified_at": "2026-09-10T10:00:00+08:00",
+        "method": "opened_page"
+      },
+      "intent_refs": [
+        "support-price"
+      ],
+      "is_demo": true
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # 高信号查询模式
 
+最后更新：2026-09-10。
+
 ## 1. 查询优先级
 
 按证据价值排序：
@@ -105,3 +107,13 @@ site:reddit.com [product] paying too much
 中文对应：失败项目、停止维护、退款、免费方案、开源替代、平台内置、本地竞品和本地价格。
 
 “没有搜到”只表示当前证据不足，不能证明市场空白。
+
+## 7. 结构化 intent_plan
+
+使用 `aor research --intent-plan-file FILE` 或 `aor plan --intent-plan-file FILE`。默认计划可用 `plan --include-recent-activity` 增加旧 GitHub Issue 的近期活动查询，发布时间与活动时间分别保留。可运行格式见 [intent-plan-demo.json](../examples/intent-plan-demo.json)；示例为 `{is_demo: true, intent_plan: {...}}` 包装；按 README 先提取 intent_plan，再传给 CLI。intent_plan 顶层严格只接收 intents，单条意图也不接受额外 is_demo 字段。这里只演示离线编译，不执行网页搜索。
+
+每项意图必填 `id/question/evidence_type/search_query/ranking_query/source/locale/candidate_gaps`；`locale` 含 country/language，candidate_gaps 可为空。最多 20 项意图，社区合并后最多 12 个请求。evidence_type 允许 official_pricing、product_update、product_review、hiring、outsourcing、payment、workflow_pain、alternative、regional_gap、counter_evidence；这些是寻找目标，不是已取得证据。
+
+search_query 发送给指定来源，ranking_query 保留为研究排序上下文，不能假设远端搜索接口会执行它。HN/GitHub 必须提供英语 search_query 与 en locale；只有中文自由主题且无英语 scope 查询时返回 needs_host_queries。请宿主补出符合意图的英语查询，不能将中文主题与 manual 等英文词机械拼接。
+
+显式意图替换本次检索计划，不追加默认付费来源；scope/focus 继续作为研究上下文。编译输出 community、tikhub、web_import 子计划，web_import.required_imports 是宿主人工待办。重复请求按 source/endpoint/method/params 指纹合并，保留所有 intent_refs、provenance 和 request_aliases；多个排序问题不会变成多次付费调用。真实付款和地区事实仍需核验原文。

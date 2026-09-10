@@ -1,0 +1,6 @@
+{
+  "is_demo": true,
+  "benchmarks": [],
+  "dimensions": {},
+  "empty_reason": "离线演示只有虚构定价摘录，没有真实可核验收费对标；保留空结果，不生成市场机会。"
+}

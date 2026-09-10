@@ -2,25 +2,41 @@
 
 最后更新：2026-09-10。
 
-## 1. 总流程
+## 1. 文件化主流程
 
 ```text
-历史与已购证据复用
-  -> 免费商业/需求证据
-  -> 付费对标 BENCH
-  -> 六轴扩展 100–200
-  -> 六项硬门槛
-  -> 只为明确缺口付费补证
-  -> A/B/R 分层
-  -> A/B 准备 OPP、R 准备 SIG
-  -> A 级深度评分
-  -> 完整结论清单 + 三层日报
-  -> 校验后写状态
-  -> 个人约束筛选一个主验证项目
-  -> 记录真实任务、报价与付款实验
+research → evidence-packet.json → Agent 核验并填写 benchmarks
+         → resume --benchmarks → tiered.json 与 assessment 模板
+         → Agent 评分依据、主张与行动判断 → resume --assessment
+         → report.json 校验 → 本地状态提交 → completed
 ```
 
-研究顺序是“付费事实 → 需求行为 → 产品缺口 → 点子”。上图为完整研究交付路径；快速摘要可在分层后直接使用 CAND。个人评估与 planned 实验可在准备 OPP/SIG 后开展，无需等待日报或研究观察入库。
+`research` 自动分配本轮唯一 ID，初始化目录、编译计划，先取得 history-context，再尝试免费来源并刷新证据包。JSON 返回 `status/next_action/input_template/artifacts`；`inspect RUN_ID --home DATA_HOME` 查看这些信息。新运行产物位于 `DATA_HOME/runs/RUN_ID/`，手动工具的 `raw/YYYY-MM-DD/` 仍兼容。
+
+| 状态 | 宿主下一步 |
+|---|---|
+| `awaiting_benchmarks` | 读 evidence-packet 与必要原文，复制模板到独立输入文件，填写对标和维度；无合格对标填 `empty_reason` |
+| `awaiting_assessment` | 读 tiered（含 overflow），按返回稳定 ID 填 A 级评分输入及 decision；用 assessment 文件恢复 |
+| `committing` | 用同一运行、不带新输入恢复；等待原报告幂等提交完成 |
+| `completed` | 读取 report.json、report.md、summary.md、receipt.json；修订另开带 parent-run-id 的研究 |
+
+`resume RUN_ID --benchmarks FILE` 执行扩展、过滤和稳定 ID 准备；`resume RUN_ID --assessment FILE` 自动校验并提交本地状态，不只是保存草稿。decision 必填 `summary/largest_unknown/next_action/stop_condition`；没有主项目时 `primary_id=null`，无 A 级时 `scores=[]`。有 A 级时按当前模板用 `score_basis` 提供各维度 rationale 与 evidence_refs，不复制演示分数。可同时传 `--profile FILE` 评估个人约束。
+
+通过 `resume --evidence FILE` 导入材料，可重复指定文件；跨轮证据保留来源运行，不能将旧费用混入新运行。产物受摘要保护，不直接编辑运行目录中的文件；将修订作为输入传回。已完成研究不接受新输入，使用 `research --parent-run-id RUN_ID` 建立后续研究。
+
+### 离线执行
+
+严格离线会话设置 `AOR_OFFLINE=1`，并使用 `research --offline` 或 `resume RUN_ID --offline`。环境变量避免 CLI 更新预检联网，`--offline` 也跳过本次更新预检并停止编排采集；以离线模式创建的运行会持久保留该约束，付费入口拒绝执行。`--no-collect` 仅用于已有材料处理，不是所有底层命令的网络沙箱。
+
+[README 离线示例](../README.md#可运行离线示例) 可直接完成交接、空结果报告校验与重放提交，所有输入均为 `is_demo: true`。没有采集不等于来源不可用，空演示不等于没有市场。
+
+### 社区采集选项
+
+`research --include-comments` 可选启用评论，`--include-recent-activity` 可选启用旧帖近期活动查询；默认均关闭；`--concurrency` 控制新研究免费检索并发数，允许 1–4，默认 3，只影响免费检索，付费执行仍串行。这些选项在创建研究时设置，恢复沿用运行中的采集配置。旧帖活动日期不能冒充新发帖日期。先取历史上下文再采集，既有资料不代表本轮在线覆盖，也不使程序默认跳过实时检索；本轮 source 状态不采纳历史复用载荷。离线运行保留本地流程，不执行这些可选网络查询。
+
+### 兼容手动流程
+
+`plan → community → BENCH → expand → filter → state prepare → score（仅 A）→ digest → report` 仍可使用。手动处理需给全部 A/B 分配 OPP、R 分配 SIG并回填（包含 overflow）。新编排已负责这些确定性步骤，不应再手动重复提交。个人评估与 planned 实验在准备稳定 ID 后可开展，无需等待日报。
 
 ## 2. 采集窗口与来源
 
@@ -94,10 +110,10 @@ TikHub 必须先实时估价，再显式预算执行。每个付费请求必须�
 
 只为 A 级补齐三轨评分；评分器重新核验资格，不接受单来源降置信度后继续评分。拟进入 Top 5 前必须查：直接/间接竞品、免费替代、用户不购买原因、失败产品、平台内置能力、数据与合规依赖、当地竞品。
 
-先对分层候选（含 overflow）准备稳定 ID，A 级再评分，将结果回填 tiered JSON；随后用 `build_result_digest.py` 生成不丢结论的完整清单，按固定三层写日报：
+新编排自动准备稳定 ID、应用 Agent 的 A 级评分并回填 tiered；从同一结构化对象生成完整清单与 Markdown 展示。手动链路仍可使用 `build_result_digest.py`。内容保持以下分层：
 
 - 深度机会：解释购买触发、证据、反证、MVP、首笔收入与最大风险。
-- 快速点子：只写付款者、对标、需求、替代、缺口、渠道和 MVP。
+- 收费对标支持的候选（B）：只写付款者、对标、需求、替代、缺口、渠道和 MVP。
 - 区域创意：只写来源市场、目标地区、本地差异、最小产品、缺证和升级条件。
 - 接近合格：展示最多 20 个失败门槛最少的候选和补证路径。
 - 费用产出：展示请求、成本、证据利用率、单个合格结论成本和来源转化。
@@ -108,7 +124,7 @@ TikHub 必须先实时估价，再显式预算执行。每个付费请求必须�
 
 从分层结果提取 A/B 或 R，分别用 `prepare --kind opportunity` / `--kind signal` 分配稳定 ID，再评分和写正式报告。实验 `record_id` 引用返回的 OPP/SIG；`prepare` 不提交研究观察。稳定身份基于任务，不基于标题；国家、地区和主渠道存在时加入身份，避免跨市场合并。
 
-校验通过后用同一 `run_id` 分别提交 OPP 与 SIG。同一运行、相同输入重放不新增事件；同一运行更改输入会报冲突。写前 journal 保证中断后可恢复；同链接纠错保留证据版本并使旧引用失效，新运行补证须绑定当前修订与事实。历史回顾只取截止日快照，不读取未来字段。
+新流程以 `report.json` 校验后用同一 `run_id` 分别提交 OPP 与 SIG；Markdown 仅用于展示，旧格式仍可单独校验。同一运行、相同输入重放不新增事件；同一运行更改输入会报冲突。写前 journal 保证中断后可恢复；同链接纠错保留证据版本并使旧引用失效，新运行补证须绑定当前修订与事实。历史回顾只取截止日快照，不读取未来字段。
 
 R/SIG 只有在目标地区出现直接付款且独立来源达标后，才通过 `manage_state.py promote` 升级。升级保留双向链接。
 

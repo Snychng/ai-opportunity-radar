@@ -1,5 +1,7 @@
 # 通用 Agent 集成
 
+最后更新：2026-09-10。
+
 本项目无需特定模型、客户端、插件或厂商 SDK。推荐按 [安装与更新](installation-updates.md) 创建受管安装，让 Agent 读取 `~/.local/share/aor/current/SKILL.md`，并按需读取同目录的 `references/`。源码使用者也可以读取任意克隆目录中的根 `SKILL.md`。
 
 ## 最小能力
@@ -22,22 +24,29 @@
 | skills | 列出本项目清单登记的技能 |
 | doctor | 检查本地环境、安装和最新稳定版本 |
 | install / update | 创建受管安装 / 显式升级受管安装 |
+| research / resume / inspect | 首选文件交接、恢复及进度检查 |
+| sources | 来源能力、配置诊断与宿主核验网页导入 |
+| library / eval | 本地证据索引、上下文与离线评估 |
 | plan / community | 查询计划与免费发现 |
 | paid / normalize | 付费缺口计划、估价执行与结果规范化 |
 | expand / filter | 扩展变体、硬过滤与机会家族 |
 | state / score | ID、历史、恢复、升级与 A 级评分 |
-| digest / report | 完整清单与报告校验 |
+| digest / report | 完整清单、结构化报告校验与提交；兼容旧 Markdown 校验 |
 | validation | 个人约束评估与实验记录 |
 
 使用 COMMAND --help 查看参数；有子命令时可继续使用 SUBCOMMAND --help。管理命令支持 `--json`，例如 `aor doctor --offline --json`；无参数概览使用 `aor --json`。业务预检提示写入标准错误，不混入业务标准输出中的 JSON。
 
 `agent-manifest.json` 是项目提供的机器可读索引，不要求宿主实现专用协议。`skills` 只读取该清单注册表，目前为一个根技能；未来本项目子技能随同一 Release 安装和升级，不管理宿主的其他技能。产品版本与研究数据的 `schema_version` 分开维护。
 
-快速使用可按 `expand → filter → digest` 浏览 CAND 清单；正式研究先为各层准备稳定 OPP/SIG，将返回记录和 A 级评分回填分层结果后再生成清单及日报。实验必须引用稳定 ID，但 planned 实验不依赖日报或研究观察入库。完整可执行示例见 [README](../README.md#为自己选择值得验证的项目)。
+首选 `research → Agent evidence-packet/benchmarks → resume → Agent assessment → resume → completed`，详细交接见 [研究工作流](research-workflow.md)。宿主读取返回的 status、next_action、input_template、artifacts，不能假定每次命令都会完成研究。`resume --assessment` 会提交本地状态；需要只读查看时使用 inspect。
+
+严格离线会话设置 `AOR_OFFLINE=1`，并用 `research/resume --offline`；环境变量覆盖 CLI 更新预检，参数禁止研究采集。`sources` 与 `library/eval` 的独立领域脚本只操作本地文件，但统一入口仍应设置环境变量避免预检联网。没有实时采集不得宣称在线覆盖。
+
+旧命令继续支持 `expand → filter → state prepare → score → digest` 手动串联。实验必须引用稳定 ID，planned 不依赖日报或研究观察入库。可运行离线示例见 [README](../README.md#可运行离线示例)。
 
 ## 精确定向
 
-将下列结构写入 scope.json，然后运行 `radar.py plan --scope-file /path/to/scope.json`：
+将下列结构写入 scope.json，然后运行 `aor research --scope-file /path/to/scope.json`；旧 `plan --scope-file` 也兼容：
 
 ```json
 {
@@ -50,7 +59,7 @@
 }
 ```
 
-国家与语言使用 CLI 接受的代码；结构化范围覆盖日期轮换。查询语言与地区是检索意图，不能作为原文语言和付款者所在地的证据。自由主题通过 --focus-file 读取；未指定国家/语言保持 unknown。
+国家与语言使用 CLI 接受的代码；结构化范围覆盖日期轮换。HN/GitHub 还需英语查询；只有日语查询时默认社区计划会要求宿主补词。复杂定向使用 `--intent-plan-file`，格式见 [查询模式](query-patterns.md)。查询语言与地区是检索意图，不能作为原文语言和付款者所在地的证据。自由主题通过 --focus-file 读取；未指定国家/语言保持 unknown。
 
 ## 执行约定
 

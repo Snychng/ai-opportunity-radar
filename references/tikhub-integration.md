@@ -179,6 +179,7 @@ export TIKHUB_API_KEY='由用户在本机安全设置，不写入文件'
 python3 "$SKILL_DIR/scripts/tikhub_query.py" run \
   --plan "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-plan.json" \
   --max-cost-usd 0.10 \
+  --journal "$RADAR_HOME/runs/$RUN_ID/paid-journal.sqlite3" --batch-id gap-1 \
   --output "$RADAR_HOME/raw/YYYY-MM-DD/tikhub-gap-results.json"
 ```
 
@@ -216,5 +217,36 @@ TikHub 预计：N 次，$X（约 ¥Y）
 - 第三方 HTTP 错误正文不会进入报告；错误以 `auth_error`、`rate_limited`、`timeout` 等结构化状态记录。
 - HTTP 200 但响应 `code` 非 0/200 或 `success=false` 时按业务错误处理，不计为成功。
 - 单一来源错误会记录在该请求下，其他来源继续执行；但批次结果超过安全上限时会停止继续花费。
-- 默认每个请求只尝试一次；提高到 2 或 3 次时，仅网络、超时、限流和 5xx 错误退避重试，401/403/4xx 不浪费重试费用。
+- 默认每个请求只尝试一次；提高到 2 或 3 次后，可确定失败且允许重试的限流/5xx 才在额度内退避。超时、网络错误、无效响应或响应过大可能已经计费，记为 `outcome_unknown`，不自动重试。401/403 等不可重试错误直接保留失败。
 - 估价与结果保存计划哈希、价格目录哈希、抓价时间和价格来源，便于后续对账。
+
+## 请求 journal、累计预算与恢复
+
+严格离线研究不能运行付费补证；`estimate` 的实时价格读取和 `run` 的账户预检也是网络访问。下面假定真实补证计划已经建立，用户已授权该预算；变量须来自同一实际运行。
+
+```bash
+aor paid run --plan "$PAID_PLAN" --max-cost-usd 0.10 \
+  --journal "$PAID_JOURNAL" --batch-id gap-1 --output "$PAID_RESULT"
+aor paid run --plan "$PAID_PLAN" --max-cost-usd 0.10 \
+  --journal "$PAID_JOURNAL" --batch-id gap-1 --resume --output "$RESUME_RESULT"
+```
+
+- `--journal` 绑定 run_id/as_of；同一研究的所有补证批共用该文件。未指定 journal 的旧调用保持单批兼容，但没有跨进程恢复和跨批累计保护，不能宣称可恢复。
+- 同一 `--batch-id` 绑定同一计划摘要；再次执行必须 `--resume`。计划改变要用新 batch-id，不能覆盖旧批；新批仍共用 journal，预算不重置。
+- 请求指纹来自 source、endpoint、method、params，成功请求跨批复用。状态依次为 planned、started，再到 succeeded、failed 或 outcome_unknown；发送前登记尝试和原价成本。
+- 硬预算校验为“历史累计原价尝试成本 + 本次允许新增尝试的最坏原价成本”。折扣、免费额度和新批都不会抹去历史尝试费用。`--max-attempts` 是每个请求指纹累计最大尝试数（1–3），不是每次恢复新增次数。
+- 恢复时未完成的 started 变成 outcome_unknown。超时或断网无法证明供应方未执行或未计费；普通 resume 不重买，也不把未知当成功。
+- 只有已获得明确重试授权，才在同批恢复参数中增加 `--resolve-unknown REQUEST_ID`；确定失败的跨调用重试使用 `--retry-failed REQUEST_ID`。二者可重复，仍须有剩余次数和累计预算。resolve-unknown 是允许再次尝试，不是将旧账单改为未扣费。
+- `results/summary` 的尝试与费用表示本次调用，复用项标记 reused；`run_ledger` 是同 run 累计。保留各次结果文件，汇总本次调用费用，不把累计 ledger 反复相加。恢复也可能读取实时价格和账户，不能理解成完全离线回放。
+
+### 从 research 编排发起明确补证
+
+```bash
+aor resume "$RUN_ID" --home "$RADAR_HOME" --paid-plan "$PAID_PLAN" \
+  --max-cost-usd 0.10 --batch-id gap-1
+# 恢复付费批次的参数是 --resume-batch：
+aor resume "$RUN_ID" --home "$RADAR_HOME" --paid-plan "$PAID_PLAN" \
+  --max-cost-usd 0.10 --batch-id gap-1 --resume-batch
+```
+
+编排固定使用 `runs/RUN_ID/paid-journal.sqlite3`，保存每次执行与规范化结果，再返回 awaiting_benchmarks，要求 Agent 用新增事实修订对标和主张。它拒绝通用 search_discovery 草稿、离线运行和已开始提交的运行。编排支持 `--max-attempts`、可重复 `--resolve-unknown` 和 `--retry-failed`，语义同上；恢复批次使用 `--resume-batch`。其余参数以 `--help` 为准。

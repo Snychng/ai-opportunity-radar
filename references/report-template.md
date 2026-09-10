@@ -1,8 +1,44 @@
-# V3 日报输出契约
+# 结构化报告与旧日报兼容契约
 
 最后更新：2026-09-10。
 
-可以增加必要内容，但不得删除固定章节、数量声明和卡片字段。数量不足时写原因，不得用弱证据凑数。以下数字、价格、事实与链接都是格式占位，不能直接作为本轮结果；报告数量应从实际完整清单与日报卡片计算。
+## 首选：report.json
+
+`research/resume` 从同一结构化对象生成报告并提交。`report.json` 是校验与 commit 的依据；`report.md` 展示完整清单、主张及评分依据，`summary.md` 提供决策摘要，`receipt.json` 记录本地提交结果。
+
+```bash
+AOR_OFFLINE=1 aor report "$REPORT_JSON" --json
+AOR_OFFLINE=1 aor report "$REPORT_JSON" --commit --home "$RADAR_HOME"
+```
+
+report JSON 当前要求 `schema_version=3.0`、`report_version=1.0`、合法且一致的 `run_id/as_of`。主要字段：
+
+| 字段 | 约束与用途 |
+|---|---|
+| `tiered` | deep_candidates=A、validated_ideas=B、regional_signals=R；含 overflow；全部使用稳定 OPP/SIG |
+| `decision` | 非空 summary、largest_unknown、next_action、stop_condition；primary_id 可空，非空须在报告中 |
+| `metrics`、`source_yield` | 从同轮候选、证据和执行结果生成，分层计数含 overflow |
+| `source_coverage` | 本轮来源状态；没有实时采集不得根据已有证据补写平台成功 |
+| `claims`、`claim_evidence` | 主张及可寻址原文修订，校验引用位置和截止日期，不判断商业语义 |
+| `profile_assessment` | 个人约束评估；未提供为 null，警告不等于已评估适配 |
+| `market_validated` | 必须为 false；程序不能宣称自己的产品已被客户验证 |
+| `execution_results` | 各次调用的执行结果，不重复累计历史调用 |
+| `evidence_inventory` | 保留运行元数据及证据 id/url/source 的统计输入；不代替原文与主张证据 |
+| `run_ledger` | 同 run 整轮尝试状态及累计原价/估计费用；没有付费 journal 时可为 null |
+
+验证器从 tiered、execution_results、evidence_inventory 与 run_ledger 重算 metrics/source_yield，并检查候选分层、稳定 ID 去重、A 级计算、计数、决策与主张引用。渲染器也从这些结构化字段重算清单，不读取旧 digest_markdown 缓存作为事实来源。存在候选而未提供主张清单时保留警告；不要把结构通过解释成原文语义已自动核验。演示报告必须保留演示提示，空结果允许，只要如实解释没有合格对标。
+
+`--commit` 先校验再提交 OPP/SIG，回执包含 report_sha256、records_sha256 与结果；同一有效报告可幂等重放。编排在第二次交接的 resume 中已经执行 commit，通常不必再手动提交。正式运行的修改另开新 run，不能通过编辑 Markdown 改写历史。展示文件丢失时，不带新输入 resume 可从结构化报告重新渲染。
+
+B 层对用户称“收费对标支持的候选”。`validated_ideas` 与部分 validated_* 指标沿用历史字段名，仅表示研究资格，不能翻译成“客户已验证”。A/B/R 都不替代真实任务、接受报价、付款和交付实验。
+
+## 兼容：旧 Markdown 日报
+
+`aor report old-report.md --json` 仍校验旧日报。下面保留验证器需要的原始标题和标签，包括“已验证快速点子”；它只是旧格式标记，语义仍是收费对标支持的候选。新生成的 report.md 不要求套用这个旧模板，也不应再用旧 Markdown 验证器拦截新报告。
+
+Markdown 不支持 `--commit`；新正式提交使用 report.json。旧手动 `state record-batch` 入口仍存在，但不会自动把 Markdown 转成结构化报告。
+
+以下为旧格式模板，数量、金额、ID 和原文均为占位演示，使用前必须替换为真实数据：
 
 ```markdown
 # AI 创业机会雷达日报｜YYYY-MM-DD
@@ -224,7 +260,7 @@
 - 说明未覆盖来源、单来源、未知日期、缺失本地付款、数据产品化风险与验证器警告。
 ```
 
-## 固定规则
+## 旧 Markdown 固定规则
 
 - 深度机会只能标记 `A`；快速点子可标记 `A` 或 `B`；区域迁移卡只能标记 `R`。
 - 敏感领域只允许：`无`、`恋爱约会与情感陪伴`、`成人内容`、`游戏虚拟角色与社交娱乐`。
