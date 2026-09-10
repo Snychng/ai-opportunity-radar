@@ -162,7 +162,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _research(args: argparse.Namespace, context: dict) -> int:
-    preflight(context)
+    if "--offline" not in args.arguments:
+        preflight(context)
     script = Path(__file__).resolve().parent / COMMANDS[args.command]
     environment = process_environment(PYTHONDONTWRITEBYTECODE="1", AOR_NO_UPDATE_CHECK="1")
     arguments = [args.command, *args.arguments] if args.command in {"research", "resume", "inspect"} else args.arguments

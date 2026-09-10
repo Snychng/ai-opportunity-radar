@@ -306,7 +306,7 @@ def _tikhub_plan(
     return finalize_plan(plan)
 
 
-def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None, *, scope: dict[str, Any] | None = None, intent_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None, *, scope: dict[str, Any] | None = None, intent_plan: dict[str, Any] | None = None, include_recent_activity: bool = False) -> dict[str, Any]:
     """构建独立、可审计且跨阶段共享 run_id 的 V3 计划。"""
     focus = resolve_focus(focus, None)
     scope = resolve_scope(scope)
@@ -354,6 +354,21 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
         if focus or scope:
             coverage_schedule["planned_sources"] = retrieval_plans["tikhub"]["scope"]["planned_sources"]
             coverage_schedule["excluded_sources"] = retrieval_plans["tikhub"]["scope"]["excluded_sources"]
+    if include_recent_activity:
+        from copy import deepcopy
+        from aor.sources.planning import finalize_plan
+
+        community = retrieval_plans["community"]
+        for item in list(community["requests"]):
+            if item["source"] == "github":
+                activity = deepcopy(item)
+                activity["id"] += "-recent-activity"
+                activity["params"]["q"] = activity["params"]["q"].replace("created:", "updated:")
+                community["requests"].append(activity)
+        community["include_recent_activity"] = True
+        finalize_plan(community)
+        if len(community["requests"]) > 12:
+            raise ValueError("开启近期活动后社区请求超过 12 个，请缩小查询范围")
     return {
         "schema_version": SCHEMA_VERSION,
         "query_plan_version": QUERY_PLAN_VERSION,
@@ -454,12 +469,13 @@ def main() -> int:
     focus_group.add_argument("--focus-file", type=Path, help="从 UTF-8 文件安全读取定向扫描主题")
     parser.add_argument("--scope-file", type=Path, help="包含国家、语言、人群、任务及本地查询的结构化 JSON 范围")
     parser.add_argument("--intent-plan-file", type=Path, help="宿主提供的问题、商业证据类型、独立搜索与排序查询、来源、locale 及候选缺口")
+    parser.add_argument("--include-recent-activity", action="store_true", help="额外检索近期有活动的旧 GitHub Issue")
     parser.add_argument("--output", type=Path, help="可选总计划输出文件；默认打印到标准输出")
     parser.add_argument("--export-community-plan", type=Path, help="导出本 Skill 自带的 HN/GitHub 查询计划")
     parser.add_argument("--export-tikhub-plan", type=Path, help="导出可独立估价和执行的 TikHub 查询计划")
     args = parser.parse_args()
     try:
-        plan = build_plan(parse_date(args.date), args.home, resolve_focus(args.focus, args.focus_file), scope=read_scope(args.scope_file), intent_plan=read_json_file(args.intent_plan_file, 64000) if args.intent_plan_file else None)
+        plan = build_plan(parse_date(args.date), args.home, resolve_focus(args.focus, args.focus_file), scope=read_scope(args.scope_file), intent_plan=read_json_file(args.intent_plan_file, 64000) if args.intent_plan_file else None, include_recent_activity=args.include_recent_activity)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     if args.export_community_plan:

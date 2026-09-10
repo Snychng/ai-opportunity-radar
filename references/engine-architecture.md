@@ -29,7 +29,7 @@
 | `sources/planning.py` | `validate_intent_plan/compile_intents/deduplicate_requests` | 编译意图到受控来源计划；不判断商业主张 |
 | `sources/registry.py` | `source_catalog/diagnose_sources` | 能力目录、配置存在性；不访问网络 |
 | `sources/importing.py` | `import_web_evidence` | 宿主网页原文和核验声明导入；不抓网页 |
-| `community.py`、`net.py`、`text.py` | 社区采集、有界网络访问、文本处理 | 由 `scripts/community_query.py` 适配 CLI；免费并发 1–4，默认 3 |
+| `community.py`、`net.py`、`text.py` | 社区采集、有界网络访问、文本处理 | 由 `scripts/community_query.py` 适配 CLI；免费并发 1–4，编排默认 3、底层兼容入口默认 1 |
 | `evidence/quality.py` | `assess_quality/aggregate_status/mark_reposts` | 本地相关性、窗口、来源状态及转载标记 |
 | `evidence/identity.py`、`retrieval.py` | 来源身份与 RRF 检索融合 | 不以多渠道标签增加独立来源 |
 | `evidence/claims.py` | `validate_claims/build_evidence_packet` | 原文位置、修订、截止时间及受容量约束的 Agent 上下文 |

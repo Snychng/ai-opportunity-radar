@@ -80,6 +80,7 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
       - run: ruff check scripts src tests
+      - run: python scripts/evaluate_research.py
       - name: 构建并校验归档
         run: |
           python scripts/build_release.py --ref "$RELEASE_COMMIT" --output-dir "$RUNNER_TEMP/aor-dist"

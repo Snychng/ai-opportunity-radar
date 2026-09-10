@@ -340,6 +340,7 @@ def build_result_digest(
     evidence_payloads: Iterable[dict[str, Any]] = (),
     research_payloads: Iterable[dict[str, Any]] = (),
     rejected_limit: int = 20,
+    run_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """生成指标和 Markdown；所有合格及 overflow 候选都必须展示。"""
     if not isinstance(tiered, dict):
@@ -358,6 +359,19 @@ def build_result_digest(
     research_payloads = list(research_payloads)
     _validate_inputs(tiered, execution_payloads, evidence_payloads, research_payloads)
     execution_totals, execution_sources = _execution_metrics(execution_payloads)
+    if run_ledger is not None:
+        if run_ledger.get("run_id") != tiered.get("run_id") or run_ledger.get("as_of") != tiered.get("as_of"):
+            raise DigestError("请求账本必须属于本轮 run_id/as_of")
+        states = run_ledger.get("attempt_states", {})
+        execution_totals = {"requests": run_ledger["attempts"], "ok": states.get("succeeded", 0),
+                            "error": sum(states.get(key, 0) for key in ("failed", "outcome_unknown", "started")),
+                            "estimated_cost_usd": _decimal(run_ledger["estimated_attempted_cost_usd_exact"])}
+        execution_sources = {row["source"]: {
+            "requests": row["attempts"], "ok": row.get("succeeded", 0),
+            "error": sum(row.get(key, 0) for key in ("failed", "outcome_unknown", "started")),
+            "estimated_cost_usd": _decimal(row["estimated_attempted_cost_usd_exact"]),
+        } for row in run_ledger.get("by_source", [])}
+    cost_available = bool(execution_payloads) or run_ledger is not None
     evidence_markers, evidence_by_source = _normalized_evidence(evidence_payloads)
     cluster_count = _cluster_count(research_payloads)
     used_markers = _used_evidence_markers(all_qualified)
@@ -369,7 +383,7 @@ def build_result_digest(
     suggested_report_display_count = min(len(deep), 5) + min(len(quick), 40) + min(len(regional), 80)
     additional_conclusion_count = qualified_count - suggested_report_display_count
     cost = execution_totals["estimated_cost_usd"]
-    cost_per_qualified = cost / qualified_count if execution_payloads and qualified_count else None
+    cost_per_qualified = cost / qualified_count if cost_available and qualified_count else None
     utilization = (Decimal(len(used_normalized)) / len(evidence_markers) * 100) if evidence_markers else None
     benchmarks = _as_list(tiered.get("benchmarks"), label="benchmarks")
 
@@ -429,13 +443,13 @@ def build_result_digest(
         "paid_request_count": execution_totals["requests"],
         "paid_request_ok": execution_totals["ok"],
         "paid_request_error": execution_totals["error"],
-        "estimated_cost_usd": float(cost) if execution_payloads else None,
+        "estimated_cost_usd": float(cost) if cost_available else None,
         "cost_per_qualified_conclusion_usd": None if cost_per_qualified is None else float(cost_per_qualified.quantize(Decimal("0.000001"))),
-        "cost_per_validated_family_usd": None if not execution_payloads or not validated_family_count else float((cost / validated_family_count).quantize(Decimal("0.000001"))),
+        "cost_per_validated_family_usd": None if not cost_available or not validated_family_count else float((cost / validated_family_count).quantize(Decimal("0.000001"))),
     }
 
     utilization_text = "未知" if utilization is None else f"{utilization.quantize(Decimal('0.01'))}%"
-    cost_text = "未知" if not execution_payloads else f"{cost.quantize(Decimal('0.000001'))}"
+    cost_text = "未知" if not cost_available else f"{cost.quantize(Decimal('0.000001'))}"
     cost_per_text = "未知" if cost_per_qualified is None else f"{cost_per_qualified.quantize(Decimal('0.000001'))}"
     source_table = [
         "| 来源 | 付费请求 | 成功/错误 | 估算费用 USD | 规范化证据 | 关联结论 |",
@@ -513,7 +527,7 @@ def build_result_digest(
 
 - A/B/R 表展示全部合格候选，包含 `overflow`，不会因日报上限而隐藏。
 - 拒绝池按未通过门槛数量从少到多展示前 {rejected_limit} 个；完整拒绝池保留在 tiered JSON。
-- 费用为执行文件中的尝试成本估算，实际账单仍以服务商日志为准。
+- 编排报告费用取整轮请求账本；手动链路取传入执行文件中的尝试估算，实际账单仍以服务商日志为准。
 - 证据利用率只统计传入的规范化证据中，被合格候选直接引用的唯一证据。
 - 合格结论包含 R 级假设；低单价不代表市场已验证。A/B 研究资格也不等于你的产品已获得付款。
 """

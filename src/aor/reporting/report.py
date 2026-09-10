@@ -24,9 +24,12 @@ def report_records(tiered: dict) -> list[dict]:
 def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None = None,
                  evidence: list[dict] | None = None, profile_assessment: dict | None = None,
                  source_coverage: dict | None = None, claims: list[dict] | None = None,
-                 claim_evidence: list[dict] | None = None) -> dict:
+                 claim_evidence: list[dict] | None = None, run_ledger: dict | None = None) -> dict:
     """只组织已研究的数据，不代填市场事实或评分。"""
-    digest = build_result_digest(tiered, executions=executions or [], evidence_payloads=evidence or [])
+    inventory = [{**{key: payload[key] for key in ("schema_version", "run_id", "as_of", "reused_for_run_id") if key in payload},
+                  "evidence": [{key: row[key] for key in ("id", "url", "source") if key in row}
+                               for row in payload.get("evidence", [])]} for payload in evidence or []]
+    digest = build_result_digest(tiered, executions=executions or [], evidence_payloads=inventory, run_ledger=run_ledger)
     report = {
         **validate_stage_envelope(tiered), "report_version": REPORT_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -34,7 +37,7 @@ def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None 
         "metrics": digest["metrics"], "source_yield": digest["source_yield"],
         "source_coverage": source_coverage or {}, "claims": claims or [], "claim_evidence": claim_evidence or [],
         "profile_assessment": profile_assessment, "market_validated": False,
-        "execution_results": executions or [], "digest_markdown": digest["markdown"],
+        "execution_results": executions or [], "evidence_inventory": inventory, "run_ledger": run_ledger,
     }
     validation = validate_structured_report(report)
     if not validation["valid"]:
@@ -73,6 +76,11 @@ def validate_structured_report(report: Any) -> dict:
                     if scored["total_score"] != row.get("total_score"):
                         errors.append(f"{identifier} 的评分与原始分项不一致")
         metrics = report.get("metrics") or {}
+        expected_digest = build_result_digest(tiered, executions=report.get("execution_results") or [],
+                                              evidence_payloads=report.get("evidence_inventory") or [],
+                                              run_ledger=report.get("run_ledger"))
+        if metrics != expected_digest["metrics"] or report.get("source_yield") != expected_digest["source_yield"]:
+            errors.append("报告统计或费用与原始结构化输入不一致")
         for field, expected in (("deep_candidate_count", counts["A"]), ("quick_idea_count", counts["B"]),
                                 ("regional_signal_count", counts["R"]), ("qualified_conclusion_count", len(seen))):
             if metrics.get(field) != expected:
@@ -128,8 +136,33 @@ def render_report(report: dict) -> str:
         lines.append(f"| {source} | {str(outcome).replace('|', '/')} |")
     if not report.get("source_coverage"):
         lines.append("| 已有材料 | 本轮未执行实时采集 |")
-    lines.extend(["", report["digest_markdown"].replace("已验证快速点子", "收费对标支持的候选")
+    digest = build_result_digest(report["tiered"], executions=report.get("execution_results") or [],
+                                 evidence_payloads=report.get("evidence_inventory") or [], run_ledger=report.get("run_ledger"))
+    lines.extend(["", digest["markdown"].replace("已验证快速点子", "收费对标支持的候选")
                   .replace("B 级快速点子", "B 级收费对标支持的候选"), ""])
+    if report.get("run_ledger"):
+        ledger = report["run_ledger"]
+        lines.extend(["## 本轮付费账本", "", f"实际发起 {ledger['attempts']} 次 HTTP 尝试；"
+                      f"原价占用 {ledger['list_attempted_cost_usd_exact']} USD，"
+                      f"估计费用 {ledger['estimated_attempted_cost_usd_exact']} USD。中断与未知结果仍占用预算，金额尚未经供应商账单对账。", ""])
+    lines.extend(["## 商业主张与原文依据", "", "下列支持程度由宿主判断；程序只核验引用及版本，不自动证明商业语义。", ""])
+    for claim in report.get("claims", []):
+        lines.extend([f"- **{claim['id']}** · {claim['verification_status']}：{claim['statement']}"])
+        for ref in claim.get("evidence_refs", []):
+            lines.append(f"  - {ref['evidence_id']} / {ref.get('revision_id') or '旧版'}：{ref['quote']}")
+    if not report.get("claims"):
+        lines.append("尚未提供商业主张清单。")
+    for candidate in report_records(report["tiered"]):
+        if candidate["evidence_tier"] != "A":
+            continue
+        lines.extend(["", f"## {candidate['id']} · {candidate['total_score']} 分", "",
+                      "| 维度 | 分数 | 判断依据 |", "|---|---:|---|"])
+        for field, score in {**candidate["scores"], **candidate["auxiliary_scores"]}.items():
+            basis = candidate.get("score_basis", {}).get(field, {})
+            rationale = str(basis.get("rationale") or "待补判断依据").replace("|", "/").replace("\n", " ")
+            refs = ", ".join(ref["evidence_id"] for ref in basis.get("evidence_refs", []))
+            lines.append(f"| {field} | {score} | {rationale}{'；' + refs if refs else '；未绑定证据引用'} |")
+    lines.append("")
     return "\n".join(lines)
 
 

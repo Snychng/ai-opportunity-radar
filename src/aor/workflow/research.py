@@ -104,16 +104,17 @@ def _input_envelope(value: dict, manifest: dict, *, reused: bool = False) -> dic
 
 def start_research(home: Path, *, as_of: date, focus: str | None = None, scope: dict | None = None,
                    intent_plan: dict | None = None, offline: bool = False,
+                   include_comments: bool = False, include_recent_activity: bool = False, concurrency: int = 3,
                    parent_run_id: str | None = None, evidence_files: list[Path] | None = None,
                    benchmarks_file: Path | None = None, assessment_file: Path | None = None,
                    profile_file: Path | None = None) -> dict:
     home = initialize_home(Path(home).expanduser().resolve())
     if parent_run_id:
         validate_run_id(parent_run_id)
-    run_id = make_run_id(as_of=as_of, mode="research", focus=f"{focus or ''}|{uuid.uuid4().hex}")
+    run_id = make_run_id(as_of=as_of, mode="research", focus=focus, nonce=uuid.uuid4().hex, parent_run_id=parent_run_id)
     directory = _run_dir(home, run_id)
     directory.mkdir(parents=True)
-    options = {"scope": scope}
+    options = {"scope": scope, "include_recent_activity": include_recent_activity}
     if intent_plan is not None:
         options["intent_plan"] = intent_plan
     plan = build_plan(as_of, home, focus, **options)
@@ -124,6 +125,7 @@ def start_research(home: Path, *, as_of: date, focus: str | None = None, scope: 
         "schema_version": "3.0", "workflow_version": "1.0", "run_id": run_id,
         "as_of": as_of.isoformat(), "parent_run_id": parent_run_id, "home": str(home),
         "focus": focus, "offline": offline, "created_at": _now(), "status": "planned",
+        "collection_options": {"include_comments": include_comments, "concurrency": concurrency},
         "artifacts": {}, "stages": {}, "evidence_artifacts": [], "execution_artifacts": [],
     }
     _artifact(directory, manifest, "plan", plan)
@@ -159,7 +161,7 @@ def _accept_inputs(directory: Path, manifest: dict, *, evidence_files: list[Path
 
 def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: float,
                    batch_id: str, resume: bool = False, max_attempts: int = 1,
-                   resolve_unknown: tuple[str, ...] = ()) -> dict:
+                   resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = ()) -> dict:
     """显式预算入口，整轮补证共用请求日志；不自动决定购买哪些证据。"""
     from normalize_tikhub_results import normalize_documents
     from tikhub_query import execute_plan
@@ -181,19 +183,56 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         _artifact(directory, manifest, plan_name, plan)
         payload = execute_plan(plan, token=os.environ.get("TIKHUB_API_KEY", ""), max_cost_usd=max_cost_usd,
                                max_attempts=max_attempts, journal_path=directory / "paid-journal.sqlite3",
-                               resume=resume, batch_id=batch_id, resolve_unknown=resolve_unknown)
+                               resume=resume, batch_id=batch_id, resolve_unknown=resolve_unknown, retry_failed=retry_failed)
         # 每次调用只记录本调用费用，恢复不会把之前的调用结果覆盖或重复累计。
         invocation = batch_name + "-" + uuid.uuid4().hex[:10]
         result_path = _artifact(directory, manifest, invocation, payload)
         manifest["execution_artifacts"].append(invocation)
+        _save(directory, manifest)
         normalized = normalize_documents([payload], source_files=[str(result_path)])
         evidence_name = invocation + "-evidence"
         _artifact(directory, manifest, evidence_name, normalized)
         manifest["evidence_artifacts"].append(evidence_name)
+        manifest.setdefault("normalized_executions", []).append(invocation)
         for name in ("report", "receipt"):
             manifest["artifacts"].pop(name, None)
         return _handoff(directory, manifest, "awaiting_benchmarks",
                         "本批补证已保存，请根据新增事实修订对标与主张，再用 resume --benchmarks FILE 提交。")
+
+
+def _normalize_pending(directory: Path, manifest: dict) -> None:
+    """已产生费用的执行先登记，解析失败不影响记账；恢复只重跑解析。"""
+    from normalize_tikhub_results import normalize_documents
+
+    for name in manifest["execution_artifacts"]:
+        if name in manifest.get("normalized_executions", []):
+            continue
+        payload = _load_artifact(manifest, name)
+        path = manifest["artifacts"][name]["path"]
+        normalized = normalize_documents([payload], source_files=[path])
+        evidence_name = name + "-evidence"
+        _artifact(directory, manifest, evidence_name, normalized)
+        if evidence_name not in manifest["evidence_artifacts"]:
+            manifest["evidence_artifacts"].append(evidence_name)
+        manifest.setdefault("normalized_executions", []).append(name)
+        _save(directory, manifest)
+
+
+def _coverage(manifest: dict, evidence: list[dict]) -> dict:
+    from aor.evidence.quality import aggregate_status
+
+    outcomes = []
+    for payload in evidence:
+        if payload.get("run_id") != manifest["run_id"] or payload.get("reused_for_run_id"):
+            continue
+        for source, status in payload.get("stats", {}).get("source_status", {}).items():
+            outcomes.append({"source": source, "status": status})
+    return aggregate_status(outcomes)
+
+
+def _render_deliverables(directory: Path, report: dict) -> None:
+    (directory / "report.md").write_text(render_report(report), encoding="utf-8")
+    (directory / "summary.md").write_text(render_summary(report, full_path=str(directory / "report.md")), encoding="utf-8")
 
 
 def _collect(directory: Path, manifest: dict, *, collect: bool) -> None:
@@ -205,7 +244,7 @@ def _collect(directory: Path, manifest: dict, *, collect: bool) -> None:
 
     started = time.monotonic()
     plan = _load_artifact(manifest, "community-plan")
-    payload = execute_plan(plan, github_token=os.environ.get("GITHUB_TOKEN", ""))
+    payload = execute_plan(plan, github_token=os.environ.get("GITHUB_TOKEN", ""), **manifest.get("collection_options", {}))
     name = "community-results"
     _artifact(directory, manifest, name, payload)
     if name not in manifest["evidence_artifacts"]:
@@ -224,26 +263,50 @@ def _evidence_payloads(manifest: dict) -> list[dict]:
 def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]:
     """原始材料入可重建索引，再将历史相关证据交给宿主。"""
     from aor.evidence.claims import build_evidence_packet
+    from aor.evidence.identity import canonical_evidence_url
     from aor.storage.evidence_library import EvidenceLibrary
 
     library = EvidenceLibrary(Path(manifest["home"]) / "evidence-library")
     for name in manifest["evidence_artifacts"]:
         payload = _load_artifact(manifest, name)
         rows = [*payload.get("evidence", []), *payload.get("comments", [])]
-        library.ingest(rows, as_of=manifest["as_of"], run_id=payload.get("run_id") or manifest["run_id"],
+        historical = payload.get("run_id") and payload["run_id"] != manifest["run_id"]
+        if historical:
+            rows = [{"observed_at": payload.get("as_of"), "run_id": payload["run_id"], **row} for row in rows]
+        library.ingest(rows, as_of=manifest["as_of"], run_id=None if historical else manifest["run_id"],
                        raw_ref=manifest["artifacts"][name]["path"])
     if "benchmarks" in manifest["artifacts"]:
         benchmarks = _load_artifact(manifest, "benchmarks")
         rows = [item for benchmark in benchmarks.get("benchmarks", []) for item in benchmark.get("evidence", [])]
-        library.ingest(rows, as_of=manifest["as_of"], run_id=manifest["run_id"],
+        known_urls = {canonical_evidence_url(item.get("url")) for item in library.search("", as_of=manifest["as_of"], limit=None)}
+        # 对标中的事实摘要是研究判断，不能覆盖已导入的同页原文修订。
+        additions = [item for item in rows if not canonical_evidence_url(item.get("url"))
+                     or canonical_evidence_url(item.get("url")) not in known_urls]
+        library.ingest(additions, as_of=manifest["as_of"], run_id=manifest["run_id"],
                        raw_ref=manifest["artifacts"]["benchmarks"]["path"])
     plan = _load_artifact(manifest, "plan")
     scope = plan.get("research_scope") or {}
     query = manifest.get("focus") or scope.get("task") or ""
     context = library.search(query, as_of=manifest["as_of"], run_id=manifest["run_id"], limit=100)
+    assessment = _load_artifact(manifest, "assessment") if "assessment" in manifest["artifacts"] else {}
+    claims = assessment.get("claims") or []
+    referenced_ids = {ref.get("evidence_id") for claim in claims for ref in claim.get("evidence_refs", [])}
+    for judgment in assessment.get("scores", []):
+        for basis in (judgment.get("score_basis") or {}).values():
+            referenced_ids.update(ref.get("evidence_id") for ref in basis.get("evidence_refs", []))
+    benchmark_urls = {canonical_evidence_url(item.get("url")) for benchmark in
+                      (_load_artifact(manifest, "benchmarks").get("benchmarks", []) if "benchmarks" in manifest["artifacts"] else [])
+                      for item in benchmark.get("evidence", [])}
+    seen = {row["evidence_id"] for row in context}
+    for row in library.search("", as_of=manifest["as_of"], run_id=manifest["run_id"], limit=None):
+        identities = {row.get("id"), row["evidence_id"], *row.get("aliases", [])}
+        if row["evidence_id"] not in seen and (manifest["run_id"] in row.get("run_ids", [])
+                or identities & referenced_ids or canonical_evidence_url(row.get("url")) in benchmark_urls):
+            context.append(row)
+            seen.add(row["evidence_id"])
     experiment_path = Path(manifest["home"]) / "state/experiment-events.jsonl"
     experiments = [json.loads(line) for line in experiment_path.read_text().splitlines() if line.strip()] if experiment_path.exists() else []
-    packet = build_evidence_packet(context, as_of=manifest["as_of"], run_id=manifest["run_id"],
+    packet = build_evidence_packet(context, claims=claims, as_of=manifest["as_of"], run_id=manifest["run_id"],
                                    experiments=experiments, max_items=30, max_chars=18000)
     _artifact(directory, manifest, "evidence-context", {**_metadata(manifest), "evidence": context})
     _artifact(directory, manifest, "evidence-packet", packet)
@@ -251,7 +314,19 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
 
 
 def _prepare_tiered(directory: Path, manifest: dict) -> dict:
+    from aor.evidence.identity import canonical_evidence_url
+
     benchmarks = _load_artifact(manifest, "benchmarks")
+    context = _load_artifact(manifest, "evidence-context")["evidence"]
+    by_url = {canonical_evidence_url(item.get("url")): item for item in context if item.get("url")}
+    for benchmark in benchmarks.get("benchmarks", []):
+        for item in benchmark.get("evidence", []):
+            stored = by_url.get(canonical_evidence_url(item.get("url")))
+            if stored:
+                # 商业事实和分层输入保留；引用使用证据库实际原文及版本。
+                for key in ("evidence_id", "revision_id", "original_text", "comments", "observed_at", "recorded_on", "aliases"):
+                    if key in stored:
+                        item[key] = deepcopy(stored[key])
     if not benchmarks.get("benchmarks"):
         if not str(benchmarks.get("empty_reason") or "").strip():
             raise ValueError("没有合格对标时请填写 empty_reason；无需编造候选")
@@ -282,7 +357,7 @@ def _apply_assessment(tiered: dict, assessment: dict) -> dict:
             judgment = judgments.get(row["id"])
             if judgment is None:
                 raise ValueError(f"A 级候选缺少评分依据：{row['id']}")
-            allowed = ("track", "scores", "auxiliary_scores", "score_reasons", "scoring_evidence", "validation_plan")
+            allowed = ("track", "scores", "auxiliary_scores", "score_basis", "validation_plan")
             scored.append(score_candidate({**row, **{key: judgment[key] for key in allowed if key in judgment}}))
         if "deep_candidates" in bucket:
             bucket["deep_candidates"] = sorted(scored, key=lambda row: -row["total_score"])
@@ -291,34 +366,59 @@ def _apply_assessment(tiered: dict, assessment: dict) -> dict:
 
 def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | None = None,
                     benchmarks_file: Path | None = None, assessment_file: Path | None = None,
-                    profile_file: Path | None = None, collect: bool = True) -> dict:
+                    profile_file: Path | None = None, collect: bool = True, intent_plan: dict | None = None) -> dict:
     directory = _run_dir(home, run_id)
     if not (directory / "run.json").exists():
         raise ValueError(f"找不到研究运行：{run_id}")
     with _run_lock(directory):
         manifest = _read(directory / "run.json")
         validate_run_as_of(manifest["run_id"], manifest["as_of"])
-        if manifest["status"] == "committing" and (evidence_files or benchmarks_file or assessment_file or profile_file):
+        if manifest["status"] == "committing" and (evidence_files or benchmarks_file or assessment_file or profile_file or intent_plan):
             raise ValueError("报告正在恢复提交，先用原输入恢复完成；修订请另建研究运行")
         if manifest["status"] == "completed":
-            if evidence_files or benchmarks_file or assessment_file or profile_file:
+            if evidence_files or benchmarks_file or assessment_file or profile_file or intent_plan:
                 raise ValueError("已提交研究保持不可变；使用 research --parent-run-id 创建补证运行")
+            _render_deliverables(directory, _load_artifact(manifest, "report"))
             return inspect_run(home, run_id)
+        if intent_plan is not None:
+            previous = _load_artifact(manifest, "plan")
+            if "community" in manifest["stages"] and _load_artifact(manifest, "community-plan")["requests"]:
+                raise ValueError("本轮已有检索执行；新的研究意图请另建运行")
+            plan = build_plan(date.fromisoformat(manifest["as_of"]), Path(manifest["home"]), manifest.get("focus"),
+                              scope=previous.get("research_scope"), intent_plan=intent_plan,
+                              include_recent_activity=previous["retrieval_plans"]["community"].get("include_recent_activity", False))
+            plan["run_id"] = run_id
+            for child in plan["retrieval_plans"].values():
+                child["run_id"] = run_id
+            _artifact(directory, manifest, "plan", plan)
+            for kind, child in plan["retrieval_plans"].items():
+                _artifact(directory, manifest, f"{kind}-plan", child)
+            manifest["stages"].pop("community", None)
+            manifest["evidence_artifacts"] = [name for name in manifest["evidence_artifacts"] if name != "community-results"]
+            for name in ("report", "receipt", "community-results"):
+                manifest["artifacts"].pop(name, None)
         _accept_inputs(directory, manifest, evidence_files=evidence_files or [], benchmarks_file=benchmarks_file,
                        assessment_file=assessment_file, profile_file=profile_file)
+        if "history-context" not in manifest["artifacts"]:
+            _, historical_packet = _refresh_library(directory, manifest)
+            _artifact(directory, manifest, "history-context", historical_packet)
         _collect(directory, manifest, collect=collect)
+        _normalize_pending(directory, manifest)
         evidence = _evidence_payloads(manifest)
         context, packet = _refresh_library(directory, manifest)
         if "benchmarks" not in manifest["artifacts"]:
+            community_plan = _load_artifact(manifest, "community-plan")
+            query_notice = ("社区检索缺少英语查询，可用 resume --intent-plan-file FILE 补充；也可继续导入已核验材料。"
+                            if community_plan.get("plan_status") == "needs_host_queries" else "")
             return _handoff(directory, manifest, "awaiting_benchmarks",
-                            "阅读 evidence-packet.json，补充官网定价、付款和反证；用 resume --benchmarks FILE 提交。",
+                            query_notice + "阅读 evidence-packet.json，补充官网定价、付款和反证；用 resume --benchmarks FILE 提交。",
                             template={**_metadata(manifest), "benchmarks": [], "dimensions": {}, "empty_reason": None})
         tiered = _load_artifact(manifest, "tiered") if "tiered" in manifest["artifacts"] else _prepare_tiered(directory, manifest)
         if "assessment" not in manifest["artifacts"]:
             return _handoff(directory, manifest, "awaiting_assessment",
                             "阅读 tiered.json；为 A 级填写评分依据，为研究填写最大未知项和停止条件；resume --assessment FILE。",
                             template={**_metadata(manifest), "scores": [{"id": row["id"], "track": None,
-                                      "scores": {}, "auxiliary_scores": {}, "score_reasons": {}}
+                                      "scores": {}, "auxiliary_scores": {}, "score_basis": {}}
                                       for row in report_records(tiered) if row["evidence_tier"] == "A"],
                                       "claims": [], "decision": {"summary": None, "primary_id": None,
                                       "largest_unknown": None, "next_action": None, "stop_condition": None}})
@@ -334,17 +434,13 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                 from manage_validation import assess_candidates
 
                 profile_assessment = assess_candidates(report_records(tiered), _load_artifact(manifest, "profile"))
-            coverage = {}
-            for payload in evidence:
-                coverage.update(payload.get("stats", {}).get("source_status", {}))
             report = build_report(tiered, decision=assessment.get("decision") or {}, evidence=evidence,
                                   executions=[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]],
-                                  profile_assessment=profile_assessment, source_coverage=coverage,
-                                  claims=claims, claim_evidence=context)
+                                  profile_assessment=profile_assessment, source_coverage=_coverage(manifest, evidence),
+                                  claims=claims, claim_evidence=context, run_ledger=_paid_ledger(directory))
             _artifact(directory, manifest, "report", report)
-            (directory / "report.md").write_text(render_report(report), encoding="utf-8")
-            (directory / "summary.md").write_text(render_summary(report, full_path=str(directory / "report.md")), encoding="utf-8")
         report = _load_artifact(manifest, "report")
+        _render_deliverables(directory, report)
         manifest["status"] = "committing"
         _save(directory, manifest)
         receipt = commit_report(Path(manifest["home"]), report)
@@ -363,17 +459,28 @@ def inspect_run(home: Path, run_id: str) -> dict:
             "report_path": str(directory / "report.md") if (directory / "report.md").exists() else None}
 
 
+def _paid_ledger(directory: Path) -> dict | None:
+    from aor.storage.request_journal import read_run_ledger
+
+    path = directory / "paid-journal.sqlite3"
+    return read_run_ledger(path) if path.exists() else None
+
+
 def postmortem(home: Path, run_id: str) -> dict:
     """读取本轮真实采集结果；不根据凭证或历史成功推断当前覆盖。"""
     directory = _run_dir(home, run_id)
     manifest = _read(directory / "run.json")
     requests = []
-    sources: dict[str, list[str]] = {}
-    for payload in _evidence_payloads(manifest):
-        for source, status in payload.get("stats", {}).get("source_status", {}).items():
-            sources.setdefault(source, []).append(status)
+    evidence = _evidence_payloads(manifest)
+    reused = []
+    for payload in evidence:
+        if payload.get("run_id") != manifest["run_id"] or payload.get("reused_for_run_id"):
+            reused.append({"run_id": payload.get("run_id"), "as_of": payload.get("as_of")})
+            continue
         requests.extend(payload.get("request_statuses", payload.get("requests", [])))
     return {"run_id": run_id, "status": manifest["status"], "next_action": manifest.get("next_action"),
-            "stages": manifest["stages"], "source_outcomes": sources, "requests": requests,
+            "stages": manifest["stages"], "source_outcomes": _coverage(manifest, evidence), "requests": requests,
+            "reused_evidence": reused,
+            "run_ledger": _paid_ledger(directory),
             "paid_journal": str(directory / "paid-journal.sqlite3") if (directory / "paid-journal.sqlite3").exists() else None,
             "note": "仅表示本轮尝试与实际结果；旧证据复用不代表本轮平台实时可用。"}

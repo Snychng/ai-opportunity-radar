@@ -27,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--parent-run-id")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-collect", action="store_true", help="本次恢复仅处理已有材料")
+    parser.add_argument("--include-comments", action="store_true", help="新研究中对少量相关主题采集顶层评论")
+    parser.add_argument("--include-recent-activity", action="store_true", help="新研究额外检索旧 Issue 的近期活动")
+    parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=3, help="新研究免费检索并发数，1–4")
     parser.add_argument("--evidence", type=Path, action="append", default=[])
     parser.add_argument("--benchmarks", type=Path)
     parser.add_argument("--assessment", type=Path)
@@ -37,20 +40,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume-batch", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=1)
     parser.add_argument("--resolve-unknown", action="append", default=[])
+    parser.add_argument("--retry-failed", action="append", default=[])
     parser.add_argument("--json", action="store_true", help="兼容宿主约定；流程结果默认输出 JSON")
     args = parser.parse_args(argv)
     try:
         inputs = {"evidence_files": args.evidence, "benchmarks_file": args.benchmarks,
                   "assessment_file": args.assessment, "profile_file": args.profile}
+        intent = json.loads(args.intent_plan_file.read_text(encoding="utf-8")) if args.intent_plan_file else None
         if args.paid_plan and (args.action != "resume" or not args.run_id or args.max_cost_usd is None):
             raise ValueError("付费补证需要 resume RUN_ID --paid-plan FILE --max-cost-usd 明确上限")
+        if args.paid_plan and (args.offline or args.no_collect):
+            raise ValueError("本次指定离线或不采集，不能执行付费请求")
         if args.action == "research":
             if args.run_id:
                 raise ValueError("新研究自动分配运行 ID；恢复请使用 resume RUN_ID")
-            intent = json.loads(args.intent_plan_file.read_text(encoding="utf-8")) if args.intent_plan_file else None
             result = start_research(args.home, as_of=parse_date(args.date),
                                     focus=resolve_focus(None, args.focus_file), scope=read_scope(args.scope_file),
                                     intent_plan=intent, offline=args.offline or args.no_collect,
+                                    include_comments=args.include_comments, include_recent_activity=args.include_recent_activity,
+                                    concurrency=args.concurrency,
                                     parent_run_id=args.parent_run_id, **inputs)
         elif not args.run_id:
             raise ValueError(f"{args.action} 必须指定 RUN_ID")
@@ -58,9 +66,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.paid_plan:
                 result = run_paid_batch(args.home, args.run_id, args.paid_plan, max_cost_usd=args.max_cost_usd,
                                         batch_id=args.batch_id, resume=args.resume_batch, max_attempts=args.max_attempts,
-                                        resolve_unknown=tuple(args.resolve_unknown))
+                                        resolve_unknown=tuple(args.resolve_unknown), retry_failed=tuple(args.retry_failed))
             else:
-                result = resume_research(args.home, args.run_id, collect=not (args.offline or args.no_collect), **inputs)
+                result = resume_research(args.home, args.run_id, collect=not (args.offline or args.no_collect), intent_plan=intent, **inputs)
         else:
             result = inspect_run(args.home, args.run_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
