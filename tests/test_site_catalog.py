@@ -172,6 +172,100 @@ class SiteCatalogTests(unittest.TestCase):
                 self.assertEqual(public["snapshot_scope"], "site_catalog")
                 self.assertEqual(public["items"][0]["publication_status"], "withdrawn")
 
+    def reviewed_record(self):
+        record = deepcopy(self.fixture.stored)
+        record["relevance_review"] = {"status": "relevant", "reviewer": "site-reviewer",
+            "reviewed_at": "2026-09-14", "evidence_id": record["evidence_id"],
+            "revision_id": record["revision_id"]}
+        return record
+
+    def test_retained_observed_need_rechecks_same_revision_review_and_role_in_all_views(self):
+        for change in ("unrelated", "role_changed", "invalid_review_binding"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                record = self.reviewed_record()
+                row = {**deepcopy(self.fixture.row), "research_status": "observed_need", "evidence": [record]}
+                first = self.report(row=row, records=[record])
+                changed = deepcopy(record)
+                changed["last_observed_at"] = "2026-09-15"
+                changed["relevance_review"]["reviewed_at"] = "2026-09-15"
+                if change == "unrelated":
+                    changed["relevance_review"]["status"] = "unrelated"
+                elif change == "role_changed":
+                    changed["evidence_role"] = "product_update"
+                else:
+                    changed["relevance_review"]["revision_id"] = "stale-review"
+                later = self.report(day="2026-09-15", empty=True, records=[changed])
+                direct, direct_withheld = export_public(self.report(day="2026-09-15", row=row, records=[changed]))
+                self.assertEqual(direct["items"], [])
+                self.assertIn("已核验行为", direct_withheld[0]["reason"])
+                output = Path(directory) / "site"
+                result = write_site_bundle([later, first], output)
+                self.assertEqual(result["withdrawn_count"], 1)
+                self.assertEqual(result["published_count"], 0)
+                self.assertIn("已核验行为", result["withheld"][0]["reason"])
+                documents = [json.loads(path.read_text()) for path in output.rglob("*.json")]
+                self.assertEqual({doc["view"] for doc in documents}, {"full", "index", "detail"})
+                for document in documents:
+                    self.assertTrue(validate_public_dataset(document)["valid"])
+                    item = document["items"][0]
+                    self.assertEqual(item["publication_status"], "withdrawn")
+                    self.assertEqual(item["freshness"]["status"], "unknown")
+                    if document["view"] != "index":
+                        self.assertEqual(item["evidence_refs"], [])
+                        self.assertEqual(document["evidence"], [])
+
+    def test_negative_review_does_not_refresh_retained_hypothesis_or_reopen_observed_need(self):
+        record = self.reviewed_record()
+        first = self.report(records=[record])
+        changed = deepcopy(record)
+        changed["last_observed_at"] = "2026-09-15"
+        changed["relevance_review"].update(status="unrelated", reviewed_at="2026-09-15")
+        later = self.report(day="2026-09-15", empty=True, records=[changed])
+        catalog, withheld = build_site_catalog([first, later])
+        self.assertFalse(withheld)  # 假设门槛不额外升级为 observed_need 门槛。
+        self.assertEqual(catalog["items"][0]["publication_status"], "published")
+        self.assertEqual(catalog["items"][0]["freshness"]["status"], "unknown")
+        self.assertIsNone(catalog["items"][0]["freshness"]["semantic_reviewed_at"])
+        row = {**deepcopy(self.fixture.row), "research_status": "observed_need", "evidence": [record]}
+        observed = self.report(row=row, records=[record])
+        restored = deepcopy(record)
+        restored["last_observed_at"] = "2026-09-16"
+        restored["relevance_review"]["reviewed_at"] = "2026-09-16"
+        source_only = self.report(day="2026-09-16", empty=True, records=[restored])
+        catalog, _ = build_site_catalog([observed, later, source_only])
+        self.assertEqual(catalog["items"][0]["publication_status"], "withdrawn")
+        reapproved = self.report(day="2026-09-17", row=row, records=[restored])
+        catalog, _ = build_site_catalog([observed, later, source_only, reapproved])
+        self.assertEqual(catalog["items"][0]["publication_status"], "published")
+        self.assertEqual(catalog["items"][0]["freshness"]["last_verified_at"], "2026-09-16")
+
+    def test_other_current_behavior_still_supports_need_and_historical_review_does_not_override_it(self):
+        record = self.reviewed_record()
+        other = fixtures.EvidenceLibrary._event({"source": "reddit", "source_item_id": "post-2",
+            "evidence_kind": "post", "url": "https://www.reddit.com/r/gaming/comments/post2/",
+            "title": "另一位玩家", "original_text": "我们固定每周五组队，总是有人临时改时间。",
+            "observed_at": "2026-09-14", "published_at": "2026-09-14", "industry_ids": ["gaming"],
+            "evidence_role": "usage_behavior", "window_status": "in_window"},
+            as_of="2026-09-14", run_id=self.fixture.plan["run_id"], raw_ref=None)["record"]
+        other["relevance_review"] = {**record["relevance_review"], "evidence_id": other["evidence_id"],
+                                     "revision_id": other["revision_id"]}
+        row = {**deepcopy(self.fixture.row), "research_status": "observed_need", "evidence": [record, other]}
+        first = self.report(row=row, records=[record, other])
+        changed = deepcopy(record)
+        changed["evidence_role"] = "product_update"
+        later = self.report(day="2026-09-15", empty=True, records=[changed])
+        catalog, withheld = build_site_catalog([first, later])
+        self.assertFalse(withheld)
+        self.assertEqual(catalog["items"][0]["publication_status"], "published")
+        public_record = next(r for r in catalog["evidence"] if r["id"] == record["evidence_id"])
+        self.assertEqual(public_record["role"], "product_update")
+        historical = {**deepcopy(other), "historical_reference_only": True, "evidence_role": "product_update"}
+        historical["relevance_review"]["status"] = "unrelated"
+        latest = self.report(day="2026-09-16", empty=True, records=[historical])
+        catalog, withheld = build_site_catalog([first, later, latest])
+        self.assertFalse(withheld)
+        self.assertEqual(catalog["items"][0]["publication_status"], "published")
+
 
 if __name__ == "__main__":
     unittest.main()

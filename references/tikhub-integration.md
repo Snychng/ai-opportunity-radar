@@ -231,7 +231,7 @@ aor paid run --plan "$PAID_PLAN" --max-cost-usd 0.10 \
   --journal "$PAID_JOURNAL" --batch-id gap-1 --resume --output "$RESUME_RESULT"
 ```
 
-- `--journal` 绑定 run_id/as_of；同一研究的所有补证批共用该文件。未指定 journal 的旧调用保持单批兼容，但没有跨进程恢复和跨批累计保护，不能宣称可恢复。
+- `--journal` 绑定 run_id/as_of；同一研究的所有补证批共用该文件。CLI 未指定时使用 `DATA_HOME/runs/RUN_ID/paid-journal.sqlite3`。直接调用 Python `execute_plan` 且不传 `budget_home/journal_path` 的旧接口仍保持单批兼容；它没有持久化或共享预算保护，不能用于持续执行。
 - 同一 `--batch-id` 绑定同一计划摘要；再次执行必须 `--resume`。计划改变要用新 batch-id，不能覆盖旧批；新批仍共用 journal，预算不重置。
 - 请求指纹来自 source、endpoint、method、params，成功请求跨批复用。状态依次为 planned、started，再到 succeeded、failed 或 outcome_unknown；发送前登记尝试和原价成本。
 - 硬预算校验为“历史累计原价尝试成本 + 本次允许新增尝试的最坏原价成本”。折扣、免费额度和新批都不会抹去历史尝试费用。`--max-attempts` 是每个请求指纹累计最大尝试数（1–3），不是每次恢复新增次数。
@@ -252,3 +252,95 @@ aor resume "$RUN_ID" --home "$RADAR_HOME" --paid-plan "$PAID_PLAN" \
 编排固定使用 `runs/RUN_ID/paid-journal.sqlite3`，保存每次执行与规范化结果，再返回 awaiting_benchmarks，要求 Agent 用新增事实修订对标和主张。它拒绝通用 search_discovery 草稿、离线运行和已开始提交的运行。编排支持 `--max-attempts`、可重复 `--resolve-unknown` 和 `--retry-failed`，语义同上；恢复批次使用 `--resume-batch`。其余参数以 `--help` 为准。
 
 跨方向 `--discover` 同样使用 `--resume-batch` 恢复既有 `batch-id`，严格复用已保存的查询和替补计划，不按剩余预算重新选源。未知和失败请求仍须显式 `--resolve-unknown`／`--retry-failed`，恢复参数不会被忽略。新批次才重新读取实时价格安排来源；发送前始终由累计账本守住最坏费用上限。
+
+## 跨 RUN 共享预算
+
+`aor paid run --home DATA_HOME` 和 research 的两个付费入口都使用
+`DATA_HOME/state/budget.sqlite3`。不同 RUN 共用日、月和累计上限；每次发送时同时
+检查原 RUN 的 `--max-cost-usd` 和共享上限。日/月按实际发送的北京时间计算，
+不使用计划的 `as_of`，回填旧日期不能获得旧日额度。金额按实时目录原价保守占用，
+免费余额和折扣不降低硬上限。`global_budget` 是共享报告，不能再加到本次调用费用上。
+
+未配置共享额度时，现有显式一次性 `--max-cost-usd` 仍可执行并记入共享账本，
+状态为 `explicit_one_shot_only`；它不授权持续花费。配置命令只写本地预算政策，
+不联系供应商、不自动执行采集，也不创建调度。下例的额度只是演示，执行前须替换为
+用户已授权的美元上限：
+
+```bash
+aor paid budget-configure --home "$RADAR_HOME" \
+  --daily-limit-usd 0.10 --monthly-limit-usd 1.00 --total-limit-usd 5.00
+aor paid budget-report --home "$RADAR_HOME"
+```
+
+持续执行另需用户明确授权，再于配置时增加 `--enable-recurring`。该模式要求日、月、
+累计三个上限均为有限非负金额；每次持续调用也仍须给出原 RUN 上限：
+
+```bash
+aor resume "$RUN_ID" --home "$RADAR_HOME" --paid-plan "$PAID_PLAN" \
+  --max-cost-usd 0.10 --recurring-budget --batch-id gap-1
+```
+
+`--recurring-budget` 是使用既有持续预算的声明，不是启用开关。持续调用在首次失败、
+超时或结果未知时停止后续请求，整个共享预算进入暂停；即使 `max-attempts` 大于 1，
+本批也不自动重试。核对已发生的请求后才显式恢复：
+
+```bash
+aor paid budget-resume --home "$RADAR_HOME" --acknowledge-pause
+```
+
+这只解除预算暂停，不重买失败/未知请求，不退款，也不清空占用。随后使用原批次恢复参数
+可继续从未发送的请求；需要重新请求失败或未知项时仍须单独的请求级授权和剩余额度。
+提高额度不会自动解除暂停。预算不足在发送前失败；若并发期间额度被其他 RUN 占用，
+此前成功请求留在日志，恢复时复用，后续未发送项保持可恢复状态。
+
+共享账本存在 `reserved` 未结算请求时，新的持续请求会保守停止。预算报告的
+`pending_attempts` 和 `recurring_block_reason=unsettled_attempts` 说明阻塞原因；这不表示
+正常在途请求已失败，也不会撤销它的费用。等待在途请求完成后可继续。若进程已崩溃，
+使用原 RUN、原 journal 和原批次恢复参数先将遗留请求核对为 `outcome_unknown`，
+核实后再执行 `budget-resume`。原批次还有未发送项时，恢复操作可能因共享预算暂停而
+停止，但遗留请求的未知状态已先落盘。存在未结算请求时 `budget-resume` 本身也会拒绝，
+不能用它释放在途占用、跳过核对或重试同一请求。
+
+### 原子记账与历史边界
+
+每次尝试使用 `run_id + 请求指纹 + 尝试序号` 标识。请求日志通过 SQLite `ATTACH`
+连接全局库，在同一 `BEGIN IMMEDIATE` 事务中写入费用预留与本地 started，并在另一
+同库事务中结算结果。仅接受磁盘主库、两库 `DELETE journal_mode` 和 `synchronous=FULL`；
+内存主库或 WAL 会在发送前拒绝。并发 RUN 不能同时花掉同一份剩余额度；SQL 中断会回滚
+两库，进程在发送后退出留下的 reserved/started 则继续全额占用，恢复后记为未知。
+成功、失败、未知都保留保守费用，不根据 HTTP 状态推断退款。
+
+共享账本不会扫描任意历史目录猜测总支出。首次恢复旧请求日志，会幂等登记该日志已有的
+尝试；其他旧 RUN 的整轮估算需要明确导入。`budget-report` 会说明仅覆盖已登记/导入历史。
+历史导入使用以下文件结构，每 RUN 一条；SHA256 是提供此次估算的原始执行文件或
+汇总凭据的摘要，`source_refs` 保存可追溯的脱敏文件引用：
+
+```json
+{
+  "entries": [{
+    "run_id": "RUN-20260714-ABCDEF1234",
+    "amount_usd": "0.02",
+    "occurred_at": "2026-07-14T12:00:00+08:00",
+    "source_sha256": "替换为来源文件的真实64位小写SHA256",
+    "source_refs": ["audits/example/estimated-cost.json"]
+  }]
+}
+```
+
+```bash
+aor paid budget-import --home "$RADAR_HOME" --input "$HISTORICAL_COST_FILE"
+```
+
+导入只记录已发生的估算，标记 `historical_estimate` / `estimated_history_non_invoice`，
+不会创建请求或把它冒充发票。同一 RUN、来源摘要、发生时间和金额完全相同可重复导入，
+金额/来源冲突或该 RUN 已有逐次费用时拒绝整轮汇总，整份输入原子提交。已导入整轮历史的
+旧日志恢复不会再叠加旧尝试，新尝试仍另外占用。历史导入可以使余额显示已耗尽；它不是
+扩大额度或授权后续支出。
+
+若旧兼容接口在历史估算导入后又执行了补证，恢复时会比较日志中尚未逐次登记的费用与
+已导入历史覆盖额。前者更高则停止该日志的执行并提示核对补账，不会忽略差额，也不会
+自动把整轮估算重加一次。当前导入接口不覆盖既有历史；发生差异时需先核验来源和费用
+边界，再做明确的账本修复。该检查不能替代对原历史估算完整性的核验。
+
+本版不引入跨 RUN 自动响应缓存：同一请求在新 RUN 中再次明确执行会再次记账。
+不能仅凭关键词相同复用过期内容；未来缓存必须同时校验查询参数、采集窗口和原始响应。

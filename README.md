@@ -18,6 +18,8 @@ Agent 负责核验原文、分析机会与提出行动；Python CLI 负责采集
 
 网站读取独立的 `public.v1.json`，不直接公开内部 `report.json`。公开数据按白名单导出，提供 JSON Schema、TypeScript 类型、全量／列表／详情视图；未完成发布复核或引用失效的内容不会作为已发布条目输出。[网站接入与版本兼容](references/website-contract.md)。
 
+材料较多时，可用[批量审阅队列](references/review-queue.md)按行业并行处理，并用[真实检索基准](references/retrieval-benchmark.md)统计用户任务、供应商推广和旧材料。网站可参照[消费端示例](examples/website-consumer/README.md)接入，展示来源复核日期、待补证与归档状态。跨运行费用使用[共享预算](references/tikhub-integration.md)记录；持续采集默认关闭。
+
 ## Skill 执行流程
 
 ```mermaid

@@ -1,6 +1,7 @@
 """保留可追溯的探索线索，独立于 A/B/R 资格及个人立项结论。"""
 
 from copy import deepcopy
+from datetime import date
 import fcntl
 import json
 import os
@@ -33,7 +34,8 @@ def validate_lead_fields(candidate: dict, *, allowed_industries: set[str] | None
 
 
 def lead_revision(row: dict) -> str:
-    ignored = {"run_id", "as_of", "revision", "lead_version", "revision_id", "previous_revision_id", "publication_review"}
+    ignored = {"run_id", "as_of", "revision", "lead_version", "revision_id", "previous_revision_id", "publication_review",
+               "reference_status", "reference_issues", "stored_research_status", "review_reason"}
     return canonical_sha256({k: v for k, v in row.items() if k not in ignored})[:16]
 
 
@@ -114,8 +116,30 @@ def normalize_leads(values, *, run_id: str, as_of: str, allowed_industries: set[
     return list(result.values())
 
 
+def current_reference_issue(evidence_id: str, revision_id: str, states: dict) -> str | None:
+    """线索及网站共用当前状态判别；精确历史引用的可解析性不代表它仍可支持当前结论。"""
+    state = states.get(evidence_id)
+    if not state:
+        return "引用缺少当前证据对象状态"
+    if state.get("retracted") or state.get("status") in {"retracted", "withdrawn"}:
+        return "引用对象当前已撤回，不能使用旧修订继续发布"
+    if state.get("status") in {"ambiguous", "superseded", "derivation_superseded", "needs_review", "deleted", "removed"}:
+        return "引用对象的当前状态不可确定，需要重新复核"
+    if state.get("current_revision_id") != revision_id:
+        return "引用对象的当前正文已变化或版本不唯一，需要重新复核"
+    return None
+
+
+def current_lead_evidence(home: Path, *, as_of: str) -> list[dict]:
+    from aor.storage.evidence_library import EvidenceLibrary
+    as_of = date.fromisoformat(as_of).isoformat()
+    library = EvidenceLibrary(Path(home) / "evidence-library")
+    return library.search("", as_of=as_of, limit=None, include_retracted=True, include_superseded=True) if library.journal_path.exists() else []
+
+
 def lead_history(home: Path, *, as_of: str, evidence: list[dict] | None = None) -> list[dict]:
     """恢复截止研究日的最新观察；历史线索不冒充本轮发现或已验证市场。"""
+    as_of = date.fromisoformat(as_of).isoformat()
     path = Path(home) / "state/research-leads.jsonl"
     latest = {}
     for line in path.read_text().splitlines() if path.exists() else []:
@@ -128,18 +152,35 @@ def lead_history(home: Path, *, as_of: str, evidence: list[dict] | None = None) 
         if previous is None or row["as_of"] >= previous["as_of"]:
             latest[row["lead_id"]] = row
     rows = list(latest.values())
+    if evidence is None and (Path(home) / "evidence-library/evidence.jsonl").exists():
+        evidence = current_lead_evidence(home, as_of=as_of)
     if evidence is not None:
         from aor.evidence.retrieval import resolve_evidence_reference
+        from aor.reporting.report import evidence_current_state
+        states = evidence_current_state(evidence)
         for row in rows:
-            for ref in row.get("evidence", []):
+            issues, bound = [], []
+            for ref in [*row.get("evidence", []), *(row.get("ai_value") or {}).get("evidence_refs", [])]:
                 try:
-                    stored = resolve_evidence_reference(ref, evidence)
-                    if stored.get("retracted") or stored.get("status") in {"retracted", "withdrawn"}:
-                        raise ValueError("引用已撤回")
-                except ValueError:
+                    stored = resolve_evidence_reference(ref, evidence, require_revision=True)
+                    issue = current_reference_issue(stored["evidence_id"], stored["revision_id"], states)
+                    if issue:
+                        raise ValueError(issue)
+                    if ref in row.get("evidence", []):
+                        bound.append(stored)
+                except ValueError as exc:
+                    issues.append({"evidence_id": ref.get("evidence_id"), "revision_id": ref.get("revision_id"), "reason": str(exc)})
+            if row.get("research_status") == "observed_need" and not issues:
+                from aor.sources.coverage import BEHAVIOR_ROLES, _review_status
+                if not any(_review_status(record, as_of) == "relevant" and record.get("evidence_role") in BEHAVIOR_ROLES
+                           for record in bound):
+                    issues.append({"reason": "观察到需求的状态缺少当前已复核的用户行为"})
+            if issues:
+                row["reference_status"], row["reference_issues"] = "needs_review", issues
+                row["review_reason"] = "原始引用已变化、撤回或无法唯一解析；历史观察保留，需重新核验"
+                if row.get("research_status") not in {"archived", "disproven", "promoted"}:
+                    row["stored_research_status"] = row.get("research_status")
                     row["research_status"] = "needs_review"
-                    row["review_reason"] = "原始引用已变化、撤回或无法唯一解析；历史观察保留，需重新核验"
-                    break
     return sorted(rows, key=lambda row: (row["as_of"], row["lead_id"]), reverse=True)
 
 
@@ -150,9 +191,12 @@ def transition_lead(home: Path, lead_id: str, *, status: str, reason: str, run_i
     validate_run_as_of(run_id, as_of)
     if status not in LEAD_STATES or not isinstance(reason, str) or not reason.strip():
         raise ValueError("线索状态变更需要有效状态与理由")
-    row = next((r for r in lead_history(home, as_of=as_of) if r["lead_id"] == lead_id), None)
+    evidence = current_lead_evidence(home, as_of=as_of)
+    row = next((r for r in lead_history(home, as_of=as_of, evidence=evidence) if r["lead_id"] == lead_id), None)
     if row is None:
         raise ValueError("找不到要修订的探索线索")
+    if status in {"needs_verification", "observed_need", "promoted"} and row.get("reference_status") == "needs_review":
+        raise ValueError("引用状态已失效，请先修订并重新核验引用；不能仅变更线索状态恢复")
     if status == "promoted":
         from filter_ideas import classify_candidate
         if not promoted_record or not promoted_record.get("id") or classify_candidate(promoted_record)[0] not in {"A", "B", "R"}:
@@ -160,10 +204,13 @@ def transition_lead(home: Path, lead_id: str, *, status: str, reason: str, run_i
         row["promoted_to"] = promoted_record["id"]
     elif status == "observed_need":
         from aor.sources.coverage import BEHAVIOR_ROLES, _review_status
+        from aor.evidence.retrieval import resolve_evidence_reference
         if not any(_review_status(e, as_of) == "relevant"
                    and e.get("evidence_role") in BEHAVIOR_ROLES
-                   for e in row.get("evidence", [])):
+                   for e in [resolve_evidence_reference(ref, evidence, require_revision=True) for ref in row.get("evidence", [])]):
             raise ValueError("观察到需求需要已复核的用户行为原文")
+    for key in ("reference_status", "reference_issues", "stored_research_status", "review_reason"):
+        row.pop(key, None)
     row.update(research_status=status, transition_reason=reason, as_of=as_of, run_id=run_id,
                previous_revision_id=row.get("revision_id"))
     row["revision_id"] = lead_id + ":" + lead_revision(row)

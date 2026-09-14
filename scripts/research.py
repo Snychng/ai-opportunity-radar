@@ -39,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--discover", action="store_true", help="执行有明确预算的跨行业发现，跳过实时价格缺失来源")
     parser.add_argument("--max-discovery-requests", type=int, default=12, help="本次发现批次请求上限，默认 12")
     parser.add_argument("--max-cost-usd", type=float, help="本轮累计付费请求原价上限")
+    parser.add_argument("--recurring-budget", action="store_true", help="使用已显式启用的共享持续预算；不会创建自动化")
     parser.add_argument("--batch-id", default="default")
     parser.add_argument("--resume-batch", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=1)
@@ -50,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         inputs = {"evidence_files": args.evidence, "benchmarks_file": args.benchmarks,
                   "assessment_file": args.assessment, "profile_file": args.profile}
         intent = json.loads(args.intent_plan_file.read_text(encoding="utf-8")) if args.intent_plan_file else None
+        if args.recurring_budget and not (args.discover or args.paid_plan):
+            raise ValueError("recurring-budget 仅适用于显式付费发现或补证")
         if args.reparse and (args.action != "resume" or not args.run_id or args.discover or args.paid_plan
                              or args.benchmarks or args.assessment or args.evidence or args.profile or intent):
             raise ValueError("离线重解析使用 resume RUN_ID --reparse；补充研究输入请在返回的新运行继续")
@@ -79,11 +82,13 @@ def main(argv: list[str] | None = None) -> int:
                 result = run_discovery(args.home, args.run_id, max_cost_usd=args.max_cost_usd,
                                        batch_id=args.batch_id, max_requests=args.max_discovery_requests,
                                        resume=args.resume_batch, max_attempts=args.max_attempts,
-                                       resolve_unknown=tuple(args.resolve_unknown), retry_failed=tuple(args.retry_failed))
+                                       resolve_unknown=tuple(args.resolve_unknown), retry_failed=tuple(args.retry_failed),
+                                       recurring=args.recurring_budget)
             elif args.paid_plan:
                 result = run_paid_batch(args.home, args.run_id, args.paid_plan, max_cost_usd=args.max_cost_usd,
                                         batch_id=args.batch_id, resume=args.resume_batch, max_attempts=args.max_attempts,
-                                        resolve_unknown=tuple(args.resolve_unknown), retry_failed=tuple(args.retry_failed))
+                                        resolve_unknown=tuple(args.resolve_unknown), retry_failed=tuple(args.retry_failed),
+                                        recurring=args.recurring_budget)
             else:
                 result = resume_research(args.home, args.run_id, collect=not (args.offline or args.no_collect), intent_plan=intent, **inputs)
         else:

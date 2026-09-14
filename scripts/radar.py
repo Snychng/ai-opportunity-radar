@@ -31,6 +31,8 @@ COMMANDS = {
     "sources": "source_query.py",
     "library": "evidence_library.py",
     "eval": "evaluate_research.py",
+    "review-queue": "review_queue.py",
+    "retrieval-eval": "evaluate_retrieval.py",
 }
 
 

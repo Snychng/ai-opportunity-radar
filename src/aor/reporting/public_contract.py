@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 import math
 from pathlib import Path
@@ -88,7 +88,7 @@ def validate_public_dataset(value: dict, *, consumer: bool = False) -> dict:
             except ValueError:
                 errors.append(f"{path}: 日期或链接格式不符")
         elif actual in {"integer", "number"}:
-            if not math.isfinite(node) or node < spec.get("minimum", -math.inf):
+            if not math.isfinite(node) or node < spec.get("minimum", -math.inf) or node > spec.get("maximum", math.inf):
                 errors.append(f"{path}: 数值不符")
 
     check(value, root, "$")
@@ -155,6 +155,40 @@ def validate_public_dataset(value: dict, *, consumer: bool = False) -> dict:
                    ("recent_demand_count", "commercial_evidence_count", "counterevidence_count")):
                 errors.append("证据维度数量不能超过已审材料数量")
         records = value.get("evidence") or []
+        policy = value.get("freshness_policy")
+        if policy and policy["due_soon_days"] >= policy["review_period_days"]:
+            errors.append("到期提醒天数必须小于复核周期")
+        evidence_by_id = {(r["id"], r["revision_id"]): r for r in records}
+        for record in records:
+            if any(record.get(k) and record[k] > value["as_of"] for k in ("source_observed_at", "semantic_reviewed_at")):
+                errors.append("证据复核或来源观察日期晚于截止日")
+        for item in value["items"]:
+            freshness = item.get("freshness")
+            if not freshness:
+                continue  # 旧版 public 1.0 没有复核期限字段，保持可读。
+            if not policy:
+                errors.append("复核期限缺少计算周期")
+                continue
+            if freshness["as_of"] != value["as_of"]:
+                errors.append("条目复核截止日与快照不一致")
+            if any(freshness[k] and freshness[k] > value["as_of"] for k in
+                   ("last_verified_at", "source_observed_at", "semantic_reviewed_at", "publication_checked_at")):
+                errors.append("条目核验日期晚于快照截止日")
+            source, semantic = freshness["source_observed_at"], freshness["semantic_reviewed_at"]
+            verified = min(source, semantic) if source and semantic else None
+            due = (date.fromisoformat(verified) + timedelta(days=policy["review_period_days"])).isoformat() if verified else None
+            status = ("unknown" if due is None else "overdue" if value["as_of"] > due else
+                      "due" if value["as_of"] >= (date.fromisoformat(due) - timedelta(days=policy["due_soon_days"])).isoformat() else "fresh")
+            if (freshness["last_verified_at"], freshness["review_due_at"], freshness["status"]) != (verified, due, status):
+                errors.append("复核期限或状态与来源观察和语义复核日期不一致")
+            if value["view"] != "index":
+                needed = [evidence_by_id.get((ref["id"], ref["revision_id"]), {})
+                          for ref in [*item["evidence_refs"], *item["ai_value"]["evidence_refs"]]]
+                for field in ("source_observed_at", "semantic_reviewed_at"):
+                    dates = [record.get(field) for record in needed]
+                    oldest = min(dates) if dates and all(dates) else None
+                    if freshness[field] != oldest:
+                        errors.append("条目复核日期必须覆盖全部必要证据修订")
         refs = {(r["id"], r["revision_id"]) for r in records}
         if len(refs) != len(records):
             errors.append("证据修订重复")

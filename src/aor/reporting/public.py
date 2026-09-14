@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 import fcntl
 import ipaddress
 import os
@@ -84,31 +84,88 @@ def _observed_behavior(stored: dict, as_of: str) -> bool:
 
 def evidence_publication_issue(evidence_id: str, revision_id: str, report: dict) -> str | None:
     """历史引文可供审计；网站发布还必须确认该对象的当前状态与正文版本。"""
+    from aor.opportunity.exploration import current_reference_issue
+    from aor.reporting.report import evidence_current_state
     states = report.get("current_evidence_state")
-    if isinstance(states, dict):
-        state = states.get(evidence_id)
-        if not state:
-            return "引用缺少当前证据对象状态"
-        if state.get("retracted") or state.get("status") in {"retracted", "withdrawn"}:
-            return "引用对象当前已撤回，不能使用旧修订继续发布"
-        if state.get("status") in {"ambiguous", "superseded", "derivation_superseded", "needs_review", "deleted", "removed"}:
-            return "引用对象的当前状态不可确定，需要重新复核"
-        if state.get("current_revision_id") != revision_id:
-            return "引用对象的当前正文已变化或版本不唯一，需要重新复核"
+    if not isinstance(states, dict):
+        states = evidence_current_state(report.get("claim_evidence", []))
+    return current_reference_issue(evidence_id, revision_id, states)
+
+
+def _public_day(value, as_of: str) -> str | None:
+    try:
+        day = date.fromisoformat(str(value)[:10]).isoformat()
+        return day if day <= as_of else None
+    except (ValueError, TypeError):
         return None
-    # 兼容刚引入网站契约时的档案；多版本未明确当前状态时保守停止发布。
-    current = [row for row in report.get("claim_evidence", []) if row.get("evidence_id") == evidence_id
-               and not row.get("historical_reference_only")]
-    if not current:
-        return "引用缺少当前证据对象状态"
-    if any(row.get("retracted") or row.get("status") in {"retracted", "withdrawn"} for row in current):
-        return "引用对象当前已撤回，不能使用旧修订继续发布"
-    if {row.get("revision_id") for row in current} != {revision_id}:
-        return "引用对象的当前正文已变化或版本不唯一，需要重新复核"
-    return None
 
 
-def export_public(report: dict) -> tuple[dict, list[dict]]:
+def public_evidence_dates(record: dict, as_of: str) -> dict:
+    """仅接受真实来源观察与绑定当前修订的语义复核，发布批准不充当页面重抓。"""
+    from aor.sources.coverage import _review_status
+    review = record.get("relevance_review") or {}
+    semantic = review.get("reviewed_at") if _review_status(record, as_of) in {"relevant", "unrelated"} else None
+    return {"source_observed_at": _public_day(record.get("last_observed_at") or record.get("observed_at"), as_of),
+            "semantic_reviewed_at": _public_day(semantic, as_of)}
+
+
+def apply_freshness(dataset: dict, *, as_of: str | None = None, review_period_days: int = 30,
+                    due_soon_days: int = 7) -> dict:
+    """在明确截止日计算复核期限，保留过期历史项及其业务身份。"""
+    if (type(review_period_days) is not int or not 1 <= review_period_days <= 3650
+            or type(due_soon_days) is not int or not 0 <= due_soon_days < review_period_days):
+        raise ValueError("复核周期须为 1–3650 天，到期提醒天数须非负且小于周期")
+    day = date.fromisoformat(as_of or dataset["as_of"]).isoformat()
+    if day < dataset["as_of"]:
+        raise ValueError("复核截止日不能早于输入研究报告")
+    result = deepcopy(dataset)
+    result["as_of"] = day
+    result["freshness_policy"] = {"review_period_days": review_period_days, "due_soon_days": due_soon_days}
+    catalog = {(row["id"], row["revision_id"]): row for row in result.get("evidence", [])}
+    for row in result["items"]:
+        refs = [*row["evidence_refs"], *row["ai_value"]["evidence_refs"]]
+        records = [catalog.get((ref["id"], ref["revision_id"]), {}) for ref in refs]
+        def oldest(field):
+            values = [_public_day(record.get(field), day) for record in records]
+            return min(values) if values and all(values) else None
+        source, semantic = oldest("source_observed_at"), oldest("semantic_reviewed_at")
+        verified = min(source, semantic) if source and semantic else None
+        due = (date.fromisoformat(verified) + timedelta(days=review_period_days)).isoformat() if verified else None
+        status = ("unknown" if due is None else "overdue" if day > due else
+                  "due" if day >= (date.fromisoformat(due) - timedelta(days=due_soon_days)).isoformat() else "fresh")
+        row["freshness"] = {"as_of": day, "status": status, "last_verified_at": verified, "review_due_at": due,
+                            "source_observed_at": source, "semantic_reviewed_at": semantic,
+                            "publication_checked_at": _public_day((row.get("freshness") or {}).get("publication_checked_at"), day)}
+        # 网站按条目修订更新缓存，日期状态变化也必须有新公开修订；业务 ID 仍稳定。
+        row["revision_id"] = row["id"] + ":public:" + canonical_sha256({k: v for k, v in row.items() if k != "revision_id"})[:16]
+    result["revision"] = ""
+    result["revision"] = canonical_sha256(result)[:16]
+    return result
+
+
+def build_refresh_tasks(dataset: dict) -> list[dict]:
+    """返回私有执行清单；只给公开来源 URL 与固定修订，不自行请求网络或恢复归档。"""
+    catalog = {(row["id"], row["revision_id"]): row for row in dataset.get("evidence", [])}
+    tasks = []
+    for row in dataset["items"]:
+        freshness = row.get("freshness") or {}
+        if row["publication_status"] != "published" or freshness.get("status", "unknown") == "fresh":
+            continue
+        refs = {(ref["id"], ref["revision_id"]): ref for ref in [*row["evidence_refs"], *row["ai_value"]["evidence_refs"]]}
+        tasks.append({"task_id": "REFRESH-" + canonical_sha256([row["id"], dataset["as_of"], sorted(refs)])[:16],
+                      "item_id": row["id"], "action": "refresh_source_and_semantic_review", "execution_status": "not_started",
+                      "reason": freshness.get("status", "unknown"), "as_of": dataset["as_of"],
+                      "review_due_at": freshness.get("review_due_at"),
+                      "evidence_refs": [{"evidence_id": key[0], "revision_id": key[1], "url": catalog[key]["url"]}
+                                        for key in sorted(refs) if key in catalog],
+                      "steps": ["重新访问原始来源并保存观察时间、原文与修订", "对当前修订填写 evidence_reviews",
+                                "如引用或结论变化，在新研究运行修订条目并重新完成 publication_reviews"],
+                      "expected_outputs": ["normalized_evidence", "evidence_reviews", "revised_report_if_changed"]})
+    return tasks
+
+
+def export_public(report: dict, *, as_of: str | None = None, review_period_days: int = 30,
+                  due_soon_days: int = 7) -> tuple[dict, list[dict]]:
     """返回可公开数据及仅供内部使用的隔离原因；不自动批准任何线索。"""
     from aor.evidence.retrieval import resolve_evidence_reference
     from aor.opportunity.exploration import meaningful_ai_value, validate_lead_fields
@@ -177,7 +234,8 @@ def export_public(report: dict) -> tuple[dict, list[dict]]:
                         "title": public_text(stored.get("title"), limit=300), "excerpt": quote,
                         "role": public_text(stored.get("evidence_role") or "unclassified"),
                         "observed_at": str(stored.get("observed_at") or report["as_of"]),
-                        "published_at": stored.get("published_at"), "date_confidence": str(stored.get("date_confidence") or "unknown")}))
+                        "published_at": stored.get("published_at"), "date_confidence": str(stored.get("date_confidence") or "unknown"),
+                        **public_evidence_dates(stored, report["as_of"])}))
                 if not refs:
                     raise ValueError("发布内容没有有效引用")
             tier = row.get("evidence_tier")
@@ -195,6 +253,7 @@ def export_public(report: dict) -> tuple[dict, list[dict]]:
                     "evidence_refs": refs, "missing_evidence": [public_text(v) for v in row.get("missing_requirements", [])],
                     "next_action": public_text(row.get("next_question") or "补齐引用和关键市场证据，再判断是否值得验证"),
                     "publication_status": "withdrawn" if withdrawn else "published", "updated_at": report["as_of"],
+                    "freshness": {"publication_checked_at": _public_day((row.get("publication_review") or {}).get("reviewed_at"), report["as_of"])},
                     "source_run_ids": [report["run_id"]], "last_source_run_id": report["run_id"],
                     "origin_lead_id": row.get("origin_lead_id") or origins.get(identifier), "promoted_to": row.get("promoted_to")}
             if withdrawn:
@@ -209,6 +268,7 @@ def export_public(report: dict) -> tuple[dict, list[dict]]:
             continue
         coverage.append({"industry_id": row["industry_id"], "status": row["status"],
                          "material_count": row["material_count"], "reviewed_count": row.get("semantic_reviewed_count", 0),
+                         "historical_material_count": row.get("historical_evidence_count", 0),
                          "recent_demand_count": row.get("recent_user_behavior_count", 0),
                          "commercial_evidence_count": row.get("commercial_benchmark_count", 0),
                          "counterevidence_count": row.get("counter_evidence_count", 0),
@@ -227,16 +287,17 @@ def export_public(report: dict) -> tuple[dict, list[dict]]:
         dataset["quality"]["review_summary"] = {"source_run_id": report["run_id"],
             "evidence_count": quality["overall_evidence_count"], "reviewed_count": quality["reviewed_evidence_count"],
             "unreviewed_count": quality["unreviewed_evidence_count"]}
-    dataset["revision"] = canonical_sha256(dataset)[:16]
+    dataset = apply_freshness(dataset, as_of=as_of, review_period_days=review_period_days, due_soon_days=due_soon_days)
     result = validate_public_dataset(dataset)
     if not result["valid"]:
         raise ValueError("公开契约验证失败：" + "；".join(result["errors"]))
     return dataset, withheld
 
 
-def write_public_bundle(report: dict, output: Path) -> dict:
+def write_public_bundle(report: dict, output: Path, *, as_of: str | None = None, review_period_days: int = 30,
+                        due_soon_days: int = 7) -> dict:
     """单个研究运行公开导出；全站累积使用 site.write_site_bundle。"""
-    dataset, withheld = export_public(report)
+    dataset, withheld = export_public(report, as_of=as_of, review_period_days=review_period_days, due_soon_days=due_soon_days)
     return write_public_dataset(dataset, output, withheld=withheld)
 
 
@@ -255,7 +316,7 @@ def write_public_dataset(dataset: dict, output: Path, *, withheld: list[dict] | 
     output = Path(os.path.abspath(output))
     listing = deepcopy(dataset)
     listing.pop("evidence")
-    listing["items"] = [{k: row[k] for k in ("id", "revision_id", "title", "summary", "industry_ids", "stage", "evidence_tier", "publication_status", "source_run_ids", "last_source_run_id")}
+    listing["items"] = [{k: row[k] for k in ("id", "revision_id", "title", "summary", "industry_ids", "stage", "evidence_tier", "publication_status", "source_run_ids", "last_source_run_id", "freshness") if k in row}
                         for row in dataset["items"]]
     listing["view"] = "index"
     bundles = {"public.v1.json": dataset, "index.json": listing}
@@ -294,4 +355,5 @@ def write_public_dataset(dataset: dict, output: Path, *, withheld: list[dict] | 
     return {"path": str(output / "public.v1.json"), "index": str(output / "index.json"),
             "published_count": sum(item["publication_status"] == "published" for item in dataset["items"]),
             "withdrawn_count": sum(item["publication_status"] == "withdrawn" for item in dataset["items"]),
-            "withheld": withheld, "contract_version": PUBLIC_VERSION, "snapshot_scope": dataset["snapshot_scope"]}
+            "withheld": withheld, "refresh_tasks": build_refresh_tasks(dataset),
+            "contract_version": PUBLIC_VERSION, "snapshot_scope": dataset["snapshot_scope"]}

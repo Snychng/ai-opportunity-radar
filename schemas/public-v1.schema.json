@@ -153,6 +153,20 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 4000
+        },
+        "source_observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "semantic_reviewed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
         }
       },
       "required": [
@@ -347,6 +361,9 @@
         "last_source_run_id": {
           "type": "string",
           "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
         }
       },
       "required": [
@@ -388,6 +405,10 @@
           "maxLength": 4000
         },
         "material_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "historical_material_count": {
           "type": "integer",
           "minimum": 0
         },
@@ -545,6 +566,9 @@
         "last_source_run_id": {
           "type": "string",
           "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
         }
       }
     },
@@ -634,6 +658,9 @@
               "type": "null"
             }
           ]
+        },
+        "freshness_policy": {
+          "$ref": "#/$defs/FreshnessPolicy"
         }
       },
       "required": [
@@ -735,6 +762,9 @@
               "type": "null"
             }
           ]
+        },
+        "freshness_policy": {
+          "$ref": "#/$defs/FreshnessPolicy"
         }
       },
       "required": [
@@ -843,6 +873,9 @@
               "type": "null"
             }
           ]
+        },
+        "freshness_policy": {
+          "$ref": "#/$defs/FreshnessPolicy"
         }
       },
       "required": [
@@ -1002,6 +1035,87 @@
         "evidence_count",
         "reviewed_count",
         "unreviewed_count"
+      ]
+    },
+    "Freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "enum": [
+            "fresh",
+            "due",
+            "overdue",
+            "unknown"
+          ]
+        },
+        "last_verified_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "review_due_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "source_observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "semantic_reviewed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "publication_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        }
+      },
+      "required": [
+        "as_of",
+        "status",
+        "last_verified_at",
+        "review_due_at",
+        "source_observed_at",
+        "semantic_reviewed_at",
+        "publication_checked_at"
+      ]
+    },
+    "FreshnessPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "review_period_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "due_soon_days": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "review_period_days",
+        "due_soon_days"
       ]
     }
   }

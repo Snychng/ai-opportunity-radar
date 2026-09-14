@@ -8,8 +8,12 @@ from pathlib import Path
 import re
 
 from contracts import canonical_sha256
-from aor.reporting.public import evidence_publication_issue, export_public, write_public_dataset
+from aor.reporting.public import (
+    _observed_behavior, apply_freshness, evidence_publication_issue, export_public,
+    public_evidence_dates, public_text, write_public_dataset,
+)
 from aor.reporting.public_contract import validate_public_dataset
+from aor.sources.coverage import _review_status
 
 
 def _run_order(report: dict) -> tuple[str, float, str]:
@@ -30,7 +34,8 @@ def _withdraw(previous: dict, run: dict) -> dict:
     return row
 
 
-def build_site_catalog(reports: list[dict], *, site_id: str = "SITE-DEFAULT") -> tuple[dict, list[dict]]:
+def build_site_catalog(reports: list[dict], *, site_id: str = "SITE-DEFAULT", as_of: str | None = None,
+                       review_period_days: int = 30, due_soon_days: int = 7) -> tuple[dict, list[dict]]:
     """严格校验每次运行后，按时间与稳定实体 ID 累积公开目录。
 
     新运行完全没提及的旧项保留；同 ID 被隔离则撤回历史发布，不能继续展示旧
@@ -46,7 +51,7 @@ def build_site_catalog(reports: list[dict], *, site_id: str = "SITE-DEFAULT") ->
     for report in reports:
         if not isinstance(report, dict) or report.get("report_version") != "1.1":
             raise ValueError("全站目录只接受 report_version=1.1 的已修订报告，旧档案不能混作公开数据")
-        document, withheld = export_public(report)
+        document, withheld = export_public(report, review_period_days=review_period_days, due_soon_days=due_soon_days)
         run_id = report["run_id"]
         if run_id in unique and canonical_sha256(unique[run_id]) != canonical_sha256(report):
             raise ValueError("同一 run_id 存在冲突报告，不能确定全站内容顺序")
@@ -56,14 +61,35 @@ def build_site_catalog(reports: list[dict], *, site_id: str = "SITE-DEFAULT") ->
     latest = ordered[-1]
     latest_public = exported[latest["run_id"]][0]
     items, source_evidence, tombstones, blocked = {}, {}, {}, {}
+    current_records = {}
     withheld_log = []
     runs = []
+    def merge_dates(target, dates):
+        # 同一正文修订的旧缓存不能回滚已知观察/复核日期，缺失字段也不抹去已有核验。
+        for field in ("source_observed_at", "semantic_reviewed_at"):
+            known = [value for value in (target.get(field), dates.get(field)) if value]
+            target[field] = max(known) if known else None
     for report in ordered:
         public, withheld = exported[report["run_id"]]
         run = public["source_runs"][0]
         runs.append(run)
         for record in public["evidence"]:
-            source_evidence[(record["id"], record["revision_id"])] = record
+            key = (record["id"], record["revision_id"])
+            previous = source_evidence.get(key, {})
+            source_evidence[key] = deepcopy(record)
+            merge_dates(source_evidence[key], previous)
+        # 后续运行可只复查来源，不必重复提交旧条目；新观察和语义复核各自更新，发布日保持原样。
+        for record in report.get("claim_evidence", []):
+            if record.get("historical_reference_only"):
+                continue
+            key = (record.get("evidence_id"), record.get("revision_id"))
+            current_records[key] = record
+            if key in source_evidence:
+                merge_dates(source_evidence[key], public_evidence_dates(record, report["as_of"]))
+                source_evidence[key]["role"] = public_text(record.get("evidence_role") or "unclassified")
+                # 反向审阅不是对现有结论的再次确认，不能给仍保留的假设延长核验期限。
+                if _review_status(record, report["as_of"]) == "unrelated":
+                    source_evidence[key]["semantic_reviewed_at"] = None
         for new in public["items"]:
             row = deepcopy(new)
             prior = items.get(row["id"])
@@ -92,6 +118,11 @@ def build_site_catalog(reports: list[dict], *, site_id: str = "SITE-DEFAULT") ->
             issues = [evidence_publication_issue(ref["id"], ref["revision_id"], report)
                       for ref in [*item["evidence_refs"], *item["ai_value"]["evidence_refs"]] if ref["id"] in known_objects]
             reason = next((issue for issue in issues if issue), None)
+            if not reason and item["stage"] == "observed_need" and not any(
+                _observed_behavior(current_records.get((ref["id"], ref["revision_id"]), {}), report["as_of"])
+                for ref in item["evidence_refs"]
+            ):
+                reason = "观察到需求的状态缺少已核验行为证据"
             if reason:
                 record = {"id": identifier, "reason": reason, "run_id": run["run_id"], "as_of": run["as_of"]}
                 withheld_log.append(record)
@@ -131,14 +162,16 @@ def build_site_catalog(reports: list[dict], *, site_id: str = "SITE-DEFAULT") ->
                "source_runs": runs, "site_manifest": manifest, "items": current_items, "evidence": evidence,
                "generated_at": max(runs, key=lambda row: datetime.fromisoformat(row["generated_at"].replace("Z", "+00:00")))["generated_at"]}
     dataset["quality"]["withheld_item_count"] = len(blocked)
-    dataset["revision"] = canonical_sha256(dataset)[:16]
+    dataset = apply_freshness(dataset, as_of=as_of, review_period_days=review_period_days, due_soon_days=due_soon_days)
     validation = validate_public_dataset(dataset)
     if not validation["valid"]:
         raise ValueError("全站目录契约无效：" + "；".join(validation["errors"]))
     return dataset, withheld_log
 
 
-def write_site_bundle(reports: list[dict], output: Path, *, site_id: str = "SITE-DEFAULT") -> dict:
-    dataset, withheld = build_site_catalog(reports, site_id=site_id)
+def write_site_bundle(reports: list[dict], output: Path, *, site_id: str = "SITE-DEFAULT", as_of: str | None = None,
+                      review_period_days: int = 30, due_soon_days: int = 7) -> dict:
+    dataset, withheld = build_site_catalog(reports, site_id=site_id, as_of=as_of,
+                                          review_period_days=review_period_days, due_soon_days=due_soon_days)
     result = write_public_dataset(dataset, output, withheld=withheld)
     return {**result, "dataset_id": dataset["dataset_id"], "site_manifest": dataset["site_manifest"]}

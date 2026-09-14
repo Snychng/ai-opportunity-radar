@@ -161,7 +161,8 @@ def _accept_inputs(directory: Path, manifest: dict, *, evidence_files: list[Path
 
 def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: float,
                    batch_id: str, resume: bool = False, max_attempts: int = 1,
-                   resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = ()) -> dict:
+                   resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = (),
+                   recurring: bool = False) -> dict:
     """显式预算入口，整轮补证共用请求日志；不自动决定购买哪些证据。"""
     from normalize_tikhub_results import PARSER_VERSION, normalize_documents
     from tikhub_query import execute_plan
@@ -184,9 +185,16 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         if plan_name in manifest["artifacts"] and _load_artifact(manifest, plan_name) != plan:
             raise ValueError("同一批次计划已改变；新计划使用新的 batch-id")
         _artifact(directory, manifest, plan_name, plan)
-        payload = execute_plan(plan, token=os.environ.get("TIKHUB_API_KEY", ""), max_cost_usd=max_cost_usd,
-                               max_attempts=max_attempts, journal_path=directory / "paid-journal.sqlite3",
-                               resume=resume, batch_id=batch_id, resolve_unknown=resolve_unknown, retry_failed=retry_failed)
+        try:
+            payload = execute_plan(plan, token=os.environ.get("TIKHUB_API_KEY", ""), max_cost_usd=max_cost_usd,
+                                   max_attempts=max_attempts, journal_path=directory / "paid-journal.sqlite3",
+                                   resume=resume, batch_id=batch_id, resolve_unknown=resolve_unknown, retry_failed=retry_failed,
+                                   budget_home=home, recurring=recurring)
+        except ValueError:
+            manifest["paid_pause"] = {"batch_id": batch_id, "status": "blocked_before_or_between_requests",
+                                      "next_action": "核对共享预算与请求日志；不自动重试失败或未知请求。"}
+            _save(directory, manifest)
+            raise
         # 每次调用只记录本调用费用，恢复不会把之前的调用结果覆盖或重复累计。
         invocation = batch_name + "-" + uuid.uuid4().hex[:10]
         result_path = _artifact(directory, manifest, invocation, payload)
@@ -201,16 +209,24 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         for name in ("expanded", "tiered", "report", "receipt"):
             manifest["artifacts"].pop(name, None)
         _refresh_library(directory, manifest)
+        if recurring and payload["summary"].get("stopped_early"):
+            manifest["paid_pause"] = {"batch_id": batch_id, "status": payload["summary"].get("stop_reason"),
+                                      "requires_explicit_resume": True}
+            return _handoff(directory, manifest, "paid_paused",
+                            "持续采集因失败或未知结果暂停。核对账本后显式恢复共享预算；失败/未知请求仍需单独授权，不自动重买。")
+        manifest.pop("paid_pause", None)
         return _handoff(directory, manifest, "awaiting_benchmarks",
                         "本批采集与完整索引已保存；逐行业核验相关性、用户行为和 AI 增量价值。提交 benchmarks 或 leads，保留无产出来源与缺口。")
 
 
 def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str = "discovery",
                   max_requests: int = 12, resume: bool = False, max_attempts: int = 1,
-                  resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = ()) -> dict:
+                  resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = (),
+                  recurring: bool = False) -> dict:
     """显式一次性预算发现；缺价格来源记录跳过，不阻断其他行业。"""
     from aor.sources.discovery import prepare_discovery_plan
     from tikhub_query import fetch_live_pricing
+    from aor.storage.budget import BudgetStore
 
     directory = _run_dir(home, run_id)
     with _run_lock(directory):
@@ -219,6 +235,9 @@ def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str
             raise ValueError("离线研究不会执行付费发现")
         if manifest["status"] in {"completed", "committing"}:
             raise ValueError("已提交研究不能增加付费采集；请另建研究运行")
+        if recurring:
+            with BudgetStore(home) as budget:
+                budget.require_authorization(recurring=True)
         saved_name = "paid-" + canonical_sha256(batch_id)[:12] + "-plan"
         ready_name = "discovery-ready-" + canonical_sha256(batch_id)[:12]
         existing = saved_name if saved_name in manifest["artifacts"] else ready_name if ready_name in manifest["artifacts"] else None
@@ -243,7 +262,8 @@ def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str
             _artifact(directory, manifest, "plan", research_plan)
         _save(directory, manifest)
     return run_paid_batch(home, run_id, path, max_cost_usd=max_cost_usd, batch_id=batch_id, resume=resume,
-                          max_attempts=max_attempts, resolve_unknown=resolve_unknown, retry_failed=retry_failed)
+                          max_attempts=max_attempts, resolve_unknown=resolve_unknown, retry_failed=retry_failed,
+                          recurring=recurring)
 
 
 def _normalize_pending(directory: Path, manifest: dict) -> None:

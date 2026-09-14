@@ -51,6 +51,30 @@ def experiment() -> dict:
 
 
 class ValidationWorkflowTests(unittest.TestCase):
+    def test_lead_can_plan_ai_comparison_without_promotion(self):
+        item = experiment()
+        item.update(record_id="LEAD-970AAEEB7BFF", status="planned", counts={}, evidence=[])
+        item["ai_comparison"] = {
+            "baseline": "现有工具加人工复核", "ai_variant": "AI 标注错误后人工确认",
+            "task_selection": "同一批授权商品图", "evaluation_method": "随机顺序盲评",
+            "planned_sample_size": 10,
+            "metrics": [{"id": "minutes", "unit": "分钟", "acceptance_rule": "总耗时下降30%，正确率不降低"}],
+            "measurements": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self.assertEqual(record_experiment(home, item)["status"], "created")
+            self.assertEqual(len(list_experiments(home, record_id=item["record_id"])), 1)
+            self.assertFalse((home / "state/research-leads.jsonl").exists())
+            item["ai_comparison"]["measurements"] = [{"metric_id": "minutes", "baseline_value": 5,
+                "ai_value": 3, "sample_size": 10, "evidence_ref": "results.json"}]
+            with self.assertRaises(ValidationError):
+                record_experiment(home, item)
+            item.update(status="completed", run_id="RUN-20260910-ABCDEF1235")
+            with self.assertRaises(ValidationError):
+                record_experiment(home, item)
+            item["evidence"] = [{"local_ref": "results.json", "fact": "测试样本逐项评分记录"}]
+            self.assertEqual(record_experiment(home, item)["status"], "created")
+
     def test_unknown_profile_does_not_become_positive_fit(self) -> None:
         result = assess_candidates([opportunity()], {})
         self.assertEqual(result["candidates"][0]["action"], "clarify")

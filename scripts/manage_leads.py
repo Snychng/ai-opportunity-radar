@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sys
 import aor_bootstrap  # noqa: F401
-from aor.opportunity.exploration import LEAD_STATES, lead_history, transition_lead
+from aor.opportunity.exploration import LEAD_STATES, current_lead_evidence, lead_history, transition_lead
 from contracts import beijing_today
 from manage_state import DEFAULT_HOME
 
@@ -25,7 +25,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.action == "list":
-            result = {"leads": lead_history(args.home, as_of=args.date)}
+            result = {"as_of": args.date, "leads": lead_history(args.home, as_of=args.date,
+                       evidence=current_lead_evidence(args.home, as_of=args.date))}
         else:
             if not args.lead_id or not args.run_id or not args.status or not args.reason:
                 raise ValueError("状态变更需要 lead_id、run-id、status 和 reason")

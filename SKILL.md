@@ -19,6 +19,7 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 
 1. `research` 启动，以返回的 `run_id`、`status`、`next_action`、`input_template` 为准；用 `inspect RUN_ID` 查看进度。
 2. 在 `awaiting_benchmarks` 读取行业覆盖表、`evidence-packet.json`、`industry-packets.json` 与完整 `evidence-index.json`/`research-followup.json`，完成各方向的网页核验任务。核验原文、收费对标、付款与反证，填写本轮 benchmarks；早期具体需求可填 `leads`，都没有时填 `empty_reason`。给每个候选或线索写清原有办法、AI 能力、用户收益和增量优势，区分假设与已支持结论。
+   材料多时使用 [批量审阅队列](references/review-queue.md) plan/claim/submit；可并行按行业分配，但同一修订只由有效租约提交。使用 [真实检索基准](references/retrieval-benchmark.md) 统计供方推广和直接用户任务，未知与缺正文保持待补证，不凭词面筛选宣布已核验。
 3. `resume RUN_ID --benchmarks FILE` 后读 tiered 与 assessment 模板。为 A 提供评分依据；`evidence_reviews` 的语义判断须绑定确切 evidence_id/revision_id 并含审阅者、时间、理由。为本轮提供最大未知项、下一步和停止条件。
 4. `resume RUN_ID --assessment FILE` 校验 `report.json` 并提交本地状态。确认报告与回执，再向用户交付结论；`completed` 只表示这一轮文件已交付，行业研究是否充分看 `research_quality`，网页发布资格另看 `public/` 导出结果。已完成研究的修订另开 `research --parent-run-id RUN_ID`。
 
@@ -31,6 +32,7 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 - 默认免费发现与历史复用；已授权一次性预算时可 `resume --discover --max-cost-usd` 执行跨方向发现，无需先有 BENCH。需要购买前读 [费用与恢复](references/tikhub-integration.md)。共用 journal 约束累计预算，unknown 不自动重买，不自动授权持续支出。
 - 先看普通用户任务、持续使用、创作、学习和分享行为，再判断 AI 增量。不能只搜 AI 工具、开发者社区或只认可企业提效；材料条数不等于真实机会数量。
 - 内部 `report.json` 使用 report_version=1.1，Markdown 是展示；网站只适配 [公开契约](references/website-contract.md) 1.0.0。旧 1.0 报告可审计读取，不能直接当成新格式发布。
+- 日常导出显式传入实际 `--as-of`，读取 freshness 与补证任务；过期和来源撤回分开处理。持续采集需另有明确授权和共享日/月/累计预算，一次性预算不能启用 recurring。
 - `host_attested` 只证明宿主打开来源；词面命中、入阅读包、已有官网均不证明需求已核验。六方向各 6 个子赛道按实际历史与缺口轮转，不要求每方向凑一条线索。
 - 解析修复可 `resume RUN_ID --reparse` 创建离线子运行，复用已保存响应；身份迁移写入新目标库，不修改原报告与原库。
 - 先说明值得验证什么、最大未知项及停止条件，给出完整清单和路径。用户要全部点子时包含 overflow 与报价变体，不只给 Top 5。
