@@ -174,8 +174,11 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         if manifest["offline"] or os.environ.get("AOR_OFFLINE", "").lower() in {"1", "true", "yes"}:
             raise ValueError("离线研究不会执行付费请求")
         plan = _input_envelope(_read(plan_file), manifest)
-        if plan.get("stage") == "search_discovery":
-            raise ValueError("研究编排只执行明确缺口或详情评论补证；先建立对标与缺口计划")
+        if plan.get("stage") == "search_discovery" and (
+            (plan.get("cost_policy") or {}).get("purpose") != "cross_industry_discovery"
+            or not str(plan.get("discovery_objective") or "").strip()
+        ):
+            raise ValueError("付费发现需要明确跨行业目标；请使用 resume --discover --max-cost-usd")
         batch_name = "paid-" + canonical_sha256(batch_id)[:12]
         plan_name = batch_name + "-plan"
         if plan_name in manifest["artifacts"] and _load_artifact(manifest, plan_name) != plan:
@@ -196,8 +199,31 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         manifest.setdefault("normalized_executions", []).append(invocation)
         for name in ("expanded", "tiered", "report", "receipt"):
             manifest["artifacts"].pop(name, None)
+        _refresh_library(directory, manifest)
         return _handoff(directory, manifest, "awaiting_benchmarks",
-                        "本批补证已保存，请根据新增事实修订对标与主张，再用 resume --benchmarks FILE 提交。")
+                        "本批采集与完整索引已保存；逐行业核验相关性、用户行为和 AI 增量价值。提交 benchmarks 或 leads，保留无产出来源与缺口。")
+
+
+def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str = "discovery",
+                  max_requests: int = 12) -> dict:
+    """显式一次性预算发现；缺价格来源记录跳过，不阻断其他行业。"""
+    from aor.sources.discovery import prepare_discovery_plan
+    from tikhub_query import fetch_live_pricing
+
+    directory = _run_dir(home, run_id)
+    with _run_lock(directory):
+        manifest = _read(directory / "run.json")
+        if manifest["offline"] or os.environ.get("AOR_OFFLINE", "").lower() in {"1", "true", "yes"}:
+            raise ValueError("离线研究不会执行付费发现")
+        if manifest["status"] in {"completed", "committing"}:
+            raise ValueError("已提交研究不能增加付费采集；请另建研究运行")
+        ledger = _paid_ledger(directory) or {}
+        plan = prepare_discovery_plan(_load_artifact(manifest, "tikhub-plan"), fetch_live_pricing(),
+                                      max_cost_usd=max_cost_usd, prior_cost_usd=ledger.get("list_attempted_cost_usd_exact", "0"),
+                                      max_requests=max_requests)
+        path = _artifact(directory, manifest, "discovery-ready-" + canonical_sha256(batch_id)[:12], plan)
+        _save(directory, manifest)
+    return run_paid_batch(home, run_id, path, max_cost_usd=max_cost_usd, batch_id=batch_id)
 
 
 def _normalize_pending(directory: Path, manifest: dict) -> None:
@@ -291,7 +317,8 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
                        raw_ref=manifest["artifacts"][name]["path"])
     if "benchmarks" in manifest["artifacts"]:
         benchmarks = _load_artifact(manifest, "benchmarks")
-        rows = [item for benchmark in benchmarks.get("benchmarks", []) for item in benchmark.get("evidence", [])]
+        rows = [item for benchmark in [*benchmarks.get("benchmarks", []), *benchmarks.get("leads", [])]
+                for item in benchmark.get("evidence", [])]
         known_urls = {canonical_evidence_url(item.get("url")) for item in
                       library.search("", as_of=manifest["as_of"], limit=None, include_retracted=True)}
         # 对标中的事实摘要是研究判断，不能覆盖已导入的同页原文修订。
@@ -321,10 +348,22 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
             seen.add(row["evidence_id"])
     experiment_path = Path(manifest["home"]) / "state/experiment-events.jsonl"
     experiments = [json.loads(line) for line in experiment_path.read_text().splitlines() if line.strip()] if experiment_path.exists() else []
+    from aor.evidence.selection import evidence_index
+    from aor.sources.industries import industry_ids
+    # 行业来自查询链路，历史原文及版本保持原样。
+    for row in context:
+        row["industry_ids"] = industry_ids(row)
     packet = build_evidence_packet(context, claims=claims, as_of=manifest["as_of"], run_id=manifest["run_id"],
                                    experiments=experiments, max_items=30, max_chars=18000)
     _artifact(directory, manifest, "evidence-context", {**_metadata(manifest), "evidence": context})
     _artifact(directory, manifest, "evidence-packet", packet)
+    _artifact(directory, manifest, "evidence-index", evidence_index(context, packet))
+    from aor.opportunity.exploration import lead_history
+    _artifact(directory, manifest, "research-lead-history", {**_metadata(manifest),
+              "leads": lead_history(Path(manifest["home"]), as_of=manifest["as_of"])})
+    from aor.sources.coverage import build_industry_coverage
+    _artifact(directory, manifest, "industry-coverage", build_industry_coverage(plan, [*_evidence_payloads(manifest),
+              *[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]]]))
     return context, packet
 
 
@@ -336,7 +375,7 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
     context = EvidenceLibrary(Path(manifest["home"]) / "evidence-library").search(
         "", as_of=manifest["as_of"], limit=None, include_retracted=True)
     by_url = {canonical_evidence_url(item.get("url")): item for item in context if item.get("url")}
-    for benchmark in benchmarks.get("benchmarks", []):
+    for benchmark in [*benchmarks.get("benchmarks", []), *benchmarks.get("leads", [])]:
         for item in benchmark.get("evidence", []):
             stored = by_url.get(canonical_evidence_url(item.get("url")))
             if stored:
@@ -355,14 +394,25 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
                     if key in source:
                         signal[key] = source[key]
     if not benchmarks.get("benchmarks"):
-        if not str(benchmarks.get("empty_reason") or "").strip():
+        if not str(benchmarks.get("empty_reason") or "").strip() and not benchmarks.get("leads"):
             raise ValueError("没有合格对标时请填写 empty_reason；无需编造候选")
         expanded = {**_metadata(manifest), "benchmarks": [], "candidates": [], "summary": {"raw": 0},
-                    "warnings": [benchmarks["empty_reason"]]}
+                    "warnings": [benchmarks.get("empty_reason") or "本轮只保留待验证线索，尚未建立收费对标"]}
     else:
         expanded = expand_ideas(benchmarks)
+    plan = _load_artifact(manifest, "plan")
+    expanded["preserve_research_leads"] = True
+    for candidate in expanded.get("candidates", []):
+        candidate["require_ai_value"] = plan.get("require_ai_value", False)
     _artifact(directory, manifest, "expanded", expanded)
     tiered = filter_ideas(expanded)
+    from aor.opportunity.exploration import normalize_leads
+    explicit_leads = normalize_leads(benchmarks.get("leads", []), run_id=manifest["run_id"], as_of=manifest["as_of"])
+    merged_leads = {r["lead_id"]: r for r in [*tiered.get("research_leads", []), *explicit_leads]}
+    tiered["research_leads"] = list(merged_leads.values())
+    for lead in tiered["research_leads"]:
+        lead.update(run_id=manifest["run_id"], as_of=manifest["as_of"])
+    tiered["summary"]["research_leads"] = len(merged_leads)
     for key, tier in BUCKETS:
         for bucket in (tiered, tiered.get("overflow") or {}):
             rows = bucket.get(key) or []
@@ -440,8 +490,10 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
             query_notice = ("社区检索缺少英语查询，可用 resume --intent-plan-file FILE 补充；也可继续导入已核验材料。"
                             if community_plan.get("plan_status") == "needs_host_queries" else "")
             return _handoff(directory, manifest, "awaiting_benchmarks",
-                            query_notice + "阅读 evidence-packet.json，补充官网定价、付款和反证；用 resume --benchmarks FILE 提交。",
-                            template={**_metadata(manifest), "benchmarks": [], "dimensions": {}, "empty_reason": None})
+                            query_notice + "按 industry-coverage.json 检查未覆盖方向，执行 web_import-plan.json 的网页核验；"
+                            "阅读 evidence-packet.json 与完整 evidence-index.json。B 补需求行为，R 补迁移理由，A 补直接付款。"
+                            "每个方向写清 AI 相比原方案的增量价值；收费对标不足但有真实线索时填写 leads。付费发现用 resume --discover --max-cost-usd。",
+                            template={**_metadata(manifest), "benchmarks": [], "leads": [], "dimensions": {}, "empty_reason": None})
         tiered = _load_artifact(manifest, "tiered") if "tiered" in manifest["artifacts"] else _prepare_tiered(directory, manifest)
         if "assessment" not in manifest["artifacts"]:
             return _handoff(directory, manifest, "awaiting_assessment",
@@ -466,7 +518,8 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
             report = build_report(tiered, decision=assessment.get("decision") or {}, evidence=evidence,
                                   executions=[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]],
                                   profile_assessment=profile_assessment, source_coverage=_coverage(manifest, evidence),
-                                  claims=claims, claim_evidence=context, run_ledger=_paid_ledger(directory))
+                                  claims=claims, claim_evidence=context, run_ledger=_paid_ledger(directory),
+                                  research_plan=_load_artifact(manifest, "plan"), evidence_packet=packet)
             _artifact(directory, manifest, "report", report)
         return _finish_report(directory, manifest)
 

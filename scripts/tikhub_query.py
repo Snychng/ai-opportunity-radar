@@ -186,8 +186,8 @@ RADAR_ENDPOINTS: dict[str, dict[str, Any]] = {
         "query",
         {
             "search_type": "post",
-            "sort": "NEW",
-            "time_range": "WEEK",
+            "sort": "RELEVANCE",
+            "time_range": "month",
             "safe_search": "unset",
             "allow_nsfw": "0",
             "after": "",

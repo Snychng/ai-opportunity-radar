@@ -47,6 +47,55 @@ def _document(
 
 
 class NormalizeTikHubResultsTests(unittest.TestCase):
+    def test_xiaohongshu_nested_note_list_preserves_detail_and_publication_time(self):
+        result = _result("xiaohongshu", {"code": 0, "data": [{"note_list": [{
+            "id": "detail-note", "title": "长期找剪辑", "desc": "每周发布一期访谈，需要长期配合完成剪辑。",
+            "time": 1784000000,
+        }], "comment_list": []}]})
+        result.update(kind="detail", selected_item_id="xiaohongshu:detail-note",
+                      parent_url="https://www.xiaohongshu.com/explore/detail-note")
+        document = _document([result], stage="comment_deep_dive")
+        document["parent_search_run_id"] = RUN_ID
+        normalized = normalize_documents([document])
+        self.assertEqual(len(normalized["evidence"]), 1)
+        self.assertIn("每周发布一期", normalized["evidence"][0]["original_text"])
+        self.assertEqual(normalized["evidence"][0]["date_confidence"], "high")
+
+    def test_nested_reddit_and_bilibili_results_are_not_silently_dropped(self):
+        results = [
+            _result("reddit", {"search": {"dynamic": {"components": {"main": {"edges": [{"node": {
+                "children": [{"post": {"id": "t3_nested", "postTitle": "Finding reliable gaming teammates",
+                    "content": {"markdown": "We play every weekend and need teammates who keep the same schedule."},
+                    "url": "https://www.reddit.com/r/gaming/comments/nested/",
+                    "createdAt": "2026-07-13T12:01:00.000000+0000", "subreddit": {"name": "gaming"}}}]
+            }}]}}}}}),
+            _result("bilibili", {"code": 0, "data": {"result": [{"bvid": "BVnested", "title": "游戏角色定制过程",
+                                                         "description": "记录角色设计过程", "pubdate": 1784000000}]}}),
+        ]
+        normalized = normalize_documents([_document(results)])
+        self.assertEqual(len(normalized["evidence"]), 2)
+        reddit = next(r for r in normalized["evidence"] if r["source"] == "reddit")
+        self.assertIn("every weekend", reddit["original_text"])
+        self.assertEqual(reddit["title"], "Finding reliable gaming teammates")
+        self.assertEqual(reddit["date_confidence"], "high")
+
+    def test_relative_publication_date_does_not_break_evidence_ingestion(self):
+        from aor.storage.evidence_library import EvidenceLibrary
+        result = _result("youtube", {"videos": [{
+            "video_id": "relative1", "title": "Language practice experience",
+            "description": "I practice conversations every week",
+            "published_time": "2 weeks ago",
+        }]})
+        normalized = normalize_documents([_document([result])])
+        row = normalized["evidence"][0]
+        self.assertIsNone(row["published_at"])
+        self.assertEqual(row["published_at_raw"], "2 weeks ago")
+        self.assertEqual(row["date_confidence"], "low")
+        with tempfile.TemporaryDirectory() as home:
+            library = EvidenceLibrary(Path(home))
+            library.ingest([row], as_of="2026-07-14", run_id=RUN_ID)
+            self.assertEqual(len(library.search("", as_of="2026-07-14")), 1)
+
     def test_normalizes_all_phase_one_source_shapes(self) -> None:
         results = [
             _result("tiktok", {"search_item_list": [{"aweme_info": {

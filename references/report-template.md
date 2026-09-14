@@ -25,6 +25,11 @@ report JSON 当前要求 `schema_version=3.0`、`report_version=1.0`、合法且
 | `execution_results` | 各次调用的执行结果，不重复累计历史调用 |
 | `evidence_inventory` | 保留运行元数据及证据 id/url/source 的统计输入；不代替原文与主张证据 |
 | `run_ledger` | 同 run 整轮尝试状态及累计原价/估计费用；没有付费 journal 时可为 null |
+| `coverage_plan`、`industry_coverage` | 选定方向与本轮请求、材料、相关性、人工核验、候选及线索；不宣称完整市场覆盖 |
+| `evidence_selection`、`research_quality` | 证据包遗漏、行业缺口及零结果诊断；遗漏不代表无机会 |
+| `tiered.research_leads` | 稳定 LEAD、原文支持、AI 增量假设、缺失条件及下一问题；独立于正式候选数 |
+
+新 Markdown 报告先展示逐方向覆盖表，并完整列出探索线索；校验器重算覆盖和诊断，不能通过手改计数伪造覆盖。线索保存到 `state/research-leads.jsonl`，后续研究使用 `research-lead-history.json`，不冒充本轮新证据。
 
 验证器从 tiered、execution_results、evidence_inventory 与 run_ledger 重算 metrics/source_yield，并检查候选分层、稳定 ID 去重、A 级计算、计数、决策与主张引用。渲染器也从这些结构化字段重算清单，不读取旧 digest_markdown 缓存作为事实来源。存在候选而未提供主张清单时保留警告；不要把结构通过解释成原文语义已自动核验。演示报告必须保留演示提示，空结果允许，只要如实解释没有合格对标。
 

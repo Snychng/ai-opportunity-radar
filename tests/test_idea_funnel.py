@@ -29,6 +29,9 @@ def benchmark() -> dict:
         "acquisition_channel": "Shopify 商家社区",
         "mvp_days": 21,
         "mvp_scope": "导入 FAQ 并自动生成一次回复",
+        "industry_ids": ["ecommerce"],
+        "ai_value": {"status": "hypothesis", "baseline": "人工读取问题并检索既有客服资料", "capability": "模型从商品资料和历史问题中生成回复",
+                     "user_benefit": "减少商家反复查找并修改回复的时间", "incremental_advantage": "相比固定关键词模板能处理不同表达的同类问题"},
         "payment_signals": [{"type": "purchase", "region": "美国", "payer": "独立站商家", "url": "https://vendor.example/receipt", "fact": "商家已支付49美元购买客服服务"}],
         "demand_signals": [{"type": "complaint", "url": "https://forum.example/1", "fact": "商家抱怨每天耗费两小时重复回复问题"}],
         "evidence": [

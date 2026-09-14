@@ -16,10 +16,12 @@ EVIDENCE_ROLES = (
     "official_pricing", "product_update", "product_review", "hiring",
     "outsourcing", "payment", "workflow_pain", "alternative", "regional_gap",
     "counter_evidence",
+    "usage_behavior", "creative_output", "learning_progress", "social_sharing",
 )
 MANUAL_PLATFORMS = (
     "web", "producthunt", "indiehackers", "appstore", "googleplay",
     "chrome_web_store", "g2", "capterra", "trustpilot", "v2ex",
+    "steam", "shopify_app_store", "etsy",
 )
 
 

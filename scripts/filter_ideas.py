@@ -16,6 +16,8 @@ from contracts import (ContractError, canonical_evidence_url, canonical_sha256, 
 DEMAND_SIGNAL_TYPES = {
     "complaint", "workaround", "manual", "manual_workaround", "hiring", "hire", "job_posting",
     "outsourcing", "outsource", "cancellation", "cancelled", "switching", "switched",
+    "repeat_usage", "repeat_purchase", "paid_renewal", "creative_output", "learning_progress",
+    "task_completion", "organic_sharing", "community_participation",
 }
 DIRECT_PAYMENT_TYPES = {
     "paid", "payment", "purchase", "customer_purchase", "transaction", "sale", "sales",
@@ -156,7 +158,7 @@ def evaluate_gates(candidate: dict[str, Any]) -> dict[str, bool]:
     mvp_days = candidate.get("mvp_days")
     if isinstance(mvp_days, bool) or not isinstance(mvp_days, int):
         mvp_days = 0
-    return {
+    gates = {
         "paid_market": valid_benchmarks and bool(_signal_types(candidate.get("payment_signals"), candidate) & MARKET_SIGNAL_TYPES),
         "clear_payer": _present(candidate.get("payer")),
         "current_alternative": _present(candidate.get("current_alternative")),
@@ -164,11 +166,15 @@ def evaluate_gates(candidate: dict[str, Any]) -> dict[str, bool]:
         "acquisition_channel": _present(candidate.get("acquisition_channel")),
         "mvp_within_30_days": 1 <= mvp_days <= 30 and _present(candidate.get("mvp_scope")),
     }
+    if candidate.get("require_ai_value"):
+        from aor.opportunity.exploration import meaningful_ai_value
+        gates["clear_ai_value"] = meaningful_ai_value(candidate.get("ai_value"))
+    return gates
 
 
 def classify_candidate(candidate: dict[str, Any]) -> tuple[str | None, list[str], dict[str, bool]]:
     gates = evaluate_gates(candidate)
-    failed = [gate for gate in HARD_GATES if not gates[gate]]
+    failed = [gate for gate, passed in gates.items() if not passed]
     if failed:
         return None, failed, gates
 
@@ -222,6 +228,7 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
         families.setdefault(fingerprint, []).append(candidate)
 
     buckets: dict[str, list[dict[str, Any]]] = {"A": [], "B": [], "R": [], "rejected": []}
+    leads = []
     for fingerprint, family_candidates in families.items():
         evaluated = [(candidate, *classify_candidate(candidate)) for candidate in family_candidates]
         # 以单个独立合格的变体为代表，禁止拼凑不同变体的门槛或付款事实。
@@ -250,7 +257,15 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
         if tier is None:
             value.pop("evidence_tier", None)
             value["rejection_reasons"] = reasons
-            buckets["rejected"].append(value)
+            from aor.opportunity.exploration import exploration_lead
+            lead = exploration_lead(value, reasons, require_ai=bool(value.get("require_ai_value")))
+            if lead and payload.get("preserve_research_leads"):
+                leads.append(lead)
+            else:
+                value["disposition"] = ("ai_value_not_established" if "clear_ai_value" in reasons else
+                                        "personal_fit_unresolved" if set(reasons) <= {"mvp_within_30_days", "acquisition_channel"} else
+                                        "insufficient_evidence")
+                buckets["rejected"].append(value)
             continue
         value["evidence_tier"] = tier
         value["analysis_depth"] = "deep_candidate" if tier == "A" else "quick" if tier == "B" else "regional_hypothesis"
@@ -274,16 +289,13 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
         "tier_b_qualified": len(buckets["B"]),
         "tier_r_qualified": len(buckets["R"]),
         "rejected": len(buckets["rejected"]),
+        "research_leads": len(leads),
     }
     warnings: list[str] = []
     if expansion_summary.get("truncated") is True:
         warnings.append("扩展已达到数量或扫描上限：本次仅过滤已生成的候选，尚未确认是否仍有未生成组合")
-    if counts["raw"] < 100:
-        warnings.append("原始候选少于 100：允许输出，但应说明付费对标或扩展维度不足")
-    if counts["tier_b"] < 20:
-        warnings.append("B 级快速点子少于 20：不得用弱证据补齐")
-    if counts["tier_r"] < 30:
-        warnings.append("R 级区域迁移点子少于 30：不得冒充已验证机会")
+    if not any(counts[k] for k in ("tier_a", "tier_b", "tier_r")):
+        warnings.append("本轮未形成正式候选；请区分行业未覆盖、证据不足、个人不适配及已有反证，不代表市场没有机会")
     if overflow_b:
         warnings.append(f"B 级合格候选超过 {QUICK_IDEA_MAX}：日报只保留前 {QUICK_IDEA_MAX} 个，其余进入 overflow")
     if overflow_r:
@@ -291,7 +303,8 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         **envelope,
         "benchmarks": deepcopy(benchmarks),
-        "policy": {"hard_gates": list(HARD_GATES), "tiers": ["A", "B", "R"]},
+        "policy": {"hard_gates": list(HARD_GATES), "conditional_gates": {"clear_ai_value": "require_ai_value=true"},
+                   "tiers": ["A", "B", "R"]},
         "summary": counts,
         "expansion_summary": deepcopy(expansion_summary),
         "warnings": warnings,
@@ -300,6 +313,7 @@ def filter_ideas(payload: dict[str, Any]) -> dict[str, Any]:
         "regional_signals": emitted_r,
         "overflow": {"validated_ideas": overflow_b, "regional_signals": overflow_r},
         "rejected": buckets["rejected"],
+        "research_leads": leads,
     }
 
 

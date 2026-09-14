@@ -136,7 +136,7 @@ def _normalize_date(value: Any) -> tuple[str | None, str, Any]:
             rendered = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat().replace("+00:00", "Z")
             return rendered, "high", value
         except (OSError, OverflowError, ValueError):
-            return str(value), "low", value
+            return None, "low", value
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -151,7 +151,7 @@ def _normalize_date(value: Any) -> tuple[str | None, str, Any]:
             except (OSError, OverflowError, ValueError):
                 pass
         if re.search(r"\b(?:ago|前|刚刚|yesterday|today)\b", text, re.IGNORECASE):
-            return text, "low", value
+            return None, "low", value
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
@@ -163,8 +163,8 @@ def _normalize_date(value: Any) -> tuple[str | None, str, Any]:
             parsed = parsedate_to_datetime(text)
             return parsed.isoformat().replace("+00:00", "Z"), "high", value
         except (TypeError, ValueError, OverflowError):
-            return text, "low", value
-    return _clean_text(value), "low", value
+            return None, "low", value
+    return None, "low", value
 
 
 def _status_update(statuses: dict[str, str], source: str, new_status: str) -> None:
@@ -197,6 +197,10 @@ def _extract_items(source: str, data: dict[str, Any]) -> list[dict[str, Any]]:
         items = []
         for edge in _list(_path(data, "search", "dynamic", "components", "main", "edges")):
             node = _dict(_first(_path(edge, "node"), _path(edge, "post"), _path(edge, "data")))
+            for child in _list(node.get("children")):
+                post = _dict(_path(child, "post"))
+                if post.get("id") and (post.get("postTitle") or post.get("title")):
+                    items.append(post)
             if node and any(key in node for key in ("id", "name", "title", "selftext", "permalink")):
                 items.append(node)
         return items
@@ -205,7 +209,8 @@ def _extract_items(source: str, data: dict[str, Any]) -> list[dict[str, Any]]:
     if source == "xiaohongshu":
         return [item for row in _list(_path(data, "data", "items")) if (item := _dict(_path(row, "note")))]
     if source == "bilibili":
-        return [_dict(item) for item in _list(data.get("result")) if isinstance(item, dict)]
+        results = _first(data.get("result"), _path(data, "data", "result"))
+        return [_dict(item) for item in _list(results) if isinstance(item, dict)]
     if source == "zhihu":
         return [item for row in _list(data.get("data")) if (item := _dict(_path(row, "object")))]
     if source == "wechat_search":
@@ -303,11 +308,13 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
         raw_id = _clean_text(_first(item.get("id"), item.get("name")), limit=200)
         post_id = raw_id[3:] if raw_id and raw_id.startswith("t3_") else raw_id
         permalink = _clean_text(item.get("permalink"), limit=2000)
-        url = f"https://www.reddit.com{permalink}" if permalink and permalink.startswith("/") else permalink
+        url = f"https://www.reddit.com{permalink}" if permalink and permalink.startswith("/") else permalink or item.get("url")
         return {
-            "source_item_id": post_id, "title": item.get("title"), "text": _first(item.get("selftext"), item.get("body")),
-            "author": item.get("author"), "container": _first(item.get("subreddit_name_prefixed"), item.get("subreddit")),
-            "date": _first(item.get("created_utc"), item.get("created")), "language": item.get("lang"), "url": url,
+            "source_item_id": post_id, "title": _first(item.get("title"), item.get("postTitle")),
+            "text": _first(item.get("selftext"), item.get("body"), _path(item, "content", "markdown")),
+            "author": _first(_path(item, "author", "name"), item.get("author")),
+            "container": _first(item.get("subreddit_name_prefixed"), _path(item, "subreddit", "name"), item.get("subreddit")),
+            "date": _first(item.get("created_utc"), item.get("created"), item.get("createdAt")), "language": item.get("lang"), "url": url,
             "engagement": _engagement(likes=_first(item.get("score"), item.get("ups")), comments=item.get("num_comments"),
                                       shares=item.get("num_crossposts")),
             "identifiers": {"post_id": f"t3_{post_id}"} if post_id else {},
@@ -321,7 +328,7 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "source_item_id": note_id, "title": item.get("title"), "text": item.get("desc"),
             "author": _first(_path(item, "user", "nickname"), _path(item, "user", "name"), _path(item, "user", "user_id")),
-            "container": "小红书", "date": _first(item.get("timestamp"), item.get("update_time")),
+            "container": "小红书", "date": _first(item.get("timestamp"), item.get("time"), item.get("update_time")),
             "language": item.get("language"),
             "url": f"https://www.xiaohongshu.com/explore/{note_id}" if note_id else None,
             "engagement": _engagement(likes=item.get("liked_count"), comments=item.get("comments_count"),
@@ -528,7 +535,7 @@ def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> 
 
 def _detail_items(source: str, data: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     """沿固定响应容器提取详情，不把任意嵌套字段混成帖子证据。"""
-    containers = ("data", "item", "items", "video", "video_info", "aweme_detail", "aweme_info", "itemInfo", "itemStruct", "post", "note", "note_card", "result", "article", "answer", "tweet", "legacy", "media")
+    containers = ("data", "item", "items", "video", "video_info", "aweme_detail", "aweme_info", "itemInfo", "itemStruct", "post", "note", "note_list", "note_card", "result", "article", "answer", "tweet", "legacy", "media")
     result: list[tuple[dict[str, Any], str]] = []
 
     def visit(value: Any, pointer: str, depth: int) -> None:
@@ -638,12 +645,14 @@ def _failure_status(result: dict[str, Any]) -> str:
 
 def _request_links(result: dict[str, Any]) -> dict[str, Any]:
     """同一个 HTTP 响应可服务多个意图，保留执行器已归并的关联。"""
-    return {key: deepcopy(result[key]) for key in ('request_ids', 'intent_refs', 'query_metadata') if key in result}
+    from aor.sources.industries import industry_ids
+    return {**{key: deepcopy(result[key]) for key in ('request_ids', 'intent_refs', 'query_metadata') if key in result},
+            'industry_ids': industry_ids(result)}
 
 
 def _merge_request_links(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
     """证据归并时合并请求关联，原文与作者仍属于首次保留的条目。"""
-    for key in ('request_ids', 'intent_refs', 'query_metadata'):
+    for key in ('request_ids', 'intent_refs', 'query_metadata', 'industry_ids'):
         value = incoming.get(key)
         if key not in existing and value is not None:
             existing[key] = deepcopy(value)

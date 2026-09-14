@@ -45,7 +45,17 @@
           "is_demo": true
         }
       ],
-      "is_demo": true
+      "is_demo": true,
+      "industry_ids": [
+        "ecommerce"
+      ],
+      "ai_value": {
+        "status": "hypothesis",
+        "baseline": "人工逐条查看资料并回复用户问题",
+        "capability": "使用语言模型检索商品资料并草拟回复",
+        "user_benefit": "减少重复检索和撰写内容所需的时间",
+        "incremental_advantage": "相比固定模板能处理用户不同表达并引用对应商品资料"
+      }
     },
     {
       "product": "示例：人工客服外包服务",
@@ -90,7 +100,17 @@
           "is_demo": true
         }
       ],
-      "is_demo": true
+      "is_demo": true,
+      "industry_ids": [
+        "ecommerce"
+      ],
+      "ai_value": {
+        "status": "hypothesis",
+        "baseline": "人工逐条查看资料并回复用户问题",
+        "capability": "使用语言模型检索商品资料并草拟回复",
+        "user_benefit": "减少重复检索和撰写内容所需的时间",
+        "incremental_advantage": "相比固定模板能处理用户不同表达并引用对应商品资料"
+      }
     }
   ],
   "dimensions": {

@@ -348,6 +348,7 @@ def build_result_digest(
     if not 0 <= rejected_limit <= 100:
         raise DigestError("rejected_limit 必须在 0 到 100 之间")
     deep, quick, regional = _all_qualified(tiered)
+    leads = _as_list(tiered.get("research_leads"), label="research_leads")
     rejected = _as_list(tiered.get("rejected"), label="rejected")
     rejected = sorted(
         rejected,
@@ -412,7 +413,7 @@ def build_result_digest(
         raise DigestError("warnings 必须是字符串数组")
     inherited_demo = tiered.get("is_demo") is True
     contains_demo = inherited_demo or any(
-        _is_demo(record) for record in [*all_qualified, *benchmarks, *_as_list(tiered.get("rejected"), label="rejected")]
+        _is_demo(record) for record in [*all_qualified, *leads, *benchmarks, *_as_list(tiered.get("rejected"), label="rejected")]
     )
     raw_count = int(summary.get("raw") or 0)
     metrics = {
@@ -435,6 +436,8 @@ def build_result_digest(
         "regional_hypothesis_family_count": len({_family_key(record) for record in regional}),
         "delivery_variant_count": sum(len(record.get("variants") or [record]) for record in all_qualified),
         "rejected_total": len(_as_list(tiered.get("rejected"), label="rejected")),
+        "research_lead_count": len(leads),
+        "lead_used_normalized_evidence_count": len(_used_evidence_markers(leads) & evidence_markers),
         "rejected_displayed": len(rejected),
         "normalized_evidence_count": len(evidence_markers),
         "used_normalized_evidence_count": len(used_normalized),
@@ -472,11 +475,14 @@ def build_result_digest(
     if warnings:
         notices.append("运行提示：\n\n" + "\n".join(f"- {_text(item)}" for item in warnings))
 
+    lead_section = "## 待验证线索完整清单\n\n" + _leads_table(leads) if leads else ""
     markdown = f"""# AI 创业机会完整结论清单｜{_text(tiered.get('as_of'), '未注明日期')}
 
 {chr(10).join(notices)}
 
 > 本文件展示全部合格 A/B/R 候选，包括超出日报数量上限的 overflow；不会只保留 Top 5。
+
+{lead_section}
 
 ## 结果总览
 
@@ -492,6 +498,7 @@ def build_result_digest(
 - A/B 研究资格家族数量：{metrics['validated_opportunity_family_count']}
 - 交付与报价变体数量：{metrics['delivery_variant_count']}
 - 被拒绝候选总数：{metrics['rejected_total']}
+- 待验证研究线索：{metrics['research_lead_count']}（不计入合格结论）
 - 展示的接近合格候选数量：{metrics['rejected_displayed']}
 
 ## 费用产出
@@ -502,6 +509,7 @@ def build_result_digest(
 - 规范化证据数量：{metrics['normalized_evidence_count']}
 - 聚类候选数量：{metrics['cluster_candidate_count']}
 - 已利用证据数量：{metrics['used_normalized_evidence_count']}
+- 探索线索引用证据：{metrics['lead_used_normalized_evidence_count']}（单独统计，不增加合格结论数）
 - 证据利用率：{utilization_text}
 - 单个合格结论估算成本 USD：{cost_per_text}
 
@@ -532,6 +540,18 @@ def build_result_digest(
 - 合格结论包含 R 级假设；低单价不代表市场已验证。A/B 研究资格也不等于你的产品已获得付款。
 """
     return {"metrics": metrics, "source_yield": source_rows, "markdown": markdown}
+
+
+def _leads_table(leads: list[dict]) -> str:
+    lines = ["| 线索 | 用户与需求 | AI 增量价值假设 | 待核验 | 证据 |", "|---|---|---|---|---|"]
+    for row in leads:
+        lines.append(f"| {_cell(row.get('lead_id'))} · {_cell(row.get('title'))} | "
+                     f"{_cell(row.get('target_user'))}：{_cell(row.get('problem_or_desire'))} | "
+                     f"{_cell((row.get('ai_value') or {}).get('incremental_advantage'))} | "
+                     f"{_cell(row.get('missing_requirements'))}；下一步：{_cell(row.get('next_question'))} | {_evidence_links(row)} |")
+    if not leads:
+        lines.append("| 暂无 | 本轮尚未保存可追溯线索 | — | 按覆盖缺口继续调查 | — |")
+    return "\n".join(lines)
 
 
 def _read_object(path: Path) -> dict[str, Any]:

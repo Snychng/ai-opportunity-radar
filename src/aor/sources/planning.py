@@ -38,9 +38,13 @@ def validate_intent_plan(plan: Any) -> dict[str, Any]:
     seen = set()
     result = []
     for raw in plan["intents"]:
-        if not isinstance(raw, dict) or set(raw) != fields:
+        if not isinstance(raw, dict) or not fields <= set(raw) or set(raw) - fields - {"industry_ids"}:
             raise ValueError("单条意图必须包含：" + ", ".join(sorted(fields)))
         item = deepcopy(raw)
+        if "industry_ids" in item:
+            if not isinstance(item["industry_ids"], list) or len(item["industry_ids"]) > 10:
+                raise ValueError("industry_ids 必须为最多 10 项的数组")
+            item["industry_ids"] = [text_field(v, "industry_ids", 36) for v in item["industry_ids"]]
         for name in fields - {"locale", "candidate_gaps"}:
             item[name] = text_field(item[name], name, 100 if name == "search_query" else 1000)
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,39}", item["id"]) or item["id"].endswith("-") or item["id"] in seen:

@@ -46,7 +46,7 @@ def import_web_evidence(payload: Any, *, run_id: str, as_of: str) -> dict[str, A
     if not isinstance(payload["items"], list) or not 1 <= len(payload["items"]) <= 100:
         raise ValueError("单次导入必须包含 1 到 100 条网页摘录")
     required = {"source", "url", "title", "original_text", "supporting_quote", "evidence_role", "observed_at", "verification"}
-    optional = {"published_at", "language", "country", "original_url", "original_publisher", "intent_refs", "candidate_gaps", "is_demo"}
+    optional = {"published_at", "language", "country", "original_url", "original_publisher", "intent_refs", "candidate_gaps", "is_demo", "industry_ids"}
     sources = {row["source"] for row in source_catalog()}
     evidence = []
     seen = set()
@@ -81,7 +81,7 @@ def import_web_evidence(payload: Any, *, run_id: str, as_of: str) -> dict[str, A
         if not isinstance(raw.get("is_demo", False), bool):
             raise ValueError("is_demo 必须为布尔值")
         refs = {}
-        for field in ("intent_refs", "candidate_gaps"):
+        for field in ("intent_refs", "candidate_gaps", "industry_ids"):
             values = raw.get(field, [])
             if not isinstance(values, list) or len(values) > 20:
                 raise ValueError(f"{field} 必须是不超过 20 项的数组")

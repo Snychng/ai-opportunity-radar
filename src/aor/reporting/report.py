@@ -24,11 +24,18 @@ def report_records(tiered: dict) -> list[dict]:
 def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None = None,
                  evidence: list[dict] | None = None, profile_assessment: dict | None = None,
                  source_coverage: dict | None = None, claims: list[dict] | None = None,
-                 claim_evidence: list[dict] | None = None, run_ledger: dict | None = None) -> dict:
+                 claim_evidence: list[dict] | None = None, run_ledger: dict | None = None,
+                 research_plan: dict | None = None, evidence_packet: dict | None = None) -> dict:
     """只组织已研究的数据，不代填市场事实或评分。"""
     inventory = [{**{key: payload[key] for key in ("schema_version", "run_id", "as_of", "reused_for_run_id") if key in payload},
-                  "evidence": [{key: row[key] for key in ("id", "url", "source") if key in row}
-                               for row in payload.get("evidence", [])]} for payload in evidence or []]
+                  "evidence": [{key: row[key] for key in ("id", "url", "original_url", "source", "industry_ids", "query_metadata",
+                               "intent_refs", "request_ids", "query_id", "relevance_status", "verification", "is_demo", "retracted", "status") if key in row}
+                               for row in [*payload.get("evidence", []), *payload.get("comments", [])]],
+                  "requests": deepcopy(payload.get("requests", []))} for payload in evidence or []]
+    from aor.sources.coverage import build_industry_coverage, research_quality
+    coverage_plan = deepcopy(research_plan or {})
+    coverage = build_industry_coverage(coverage_plan, [*inventory, *(executions or [])], tiered)
+    selection = {"omitted": deepcopy((evidence_packet or {}).get("omitted", {}))}
     digest = build_result_digest(tiered, executions=executions or [], evidence_payloads=inventory, run_ledger=run_ledger)
     report = {
         **validate_stage_envelope(tiered), "report_version": REPORT_VERSION,
@@ -38,6 +45,8 @@ def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None 
         "source_coverage": source_coverage or {}, "claims": claims or [], "claim_evidence": claim_evidence or [],
         "profile_assessment": profile_assessment, "market_validated": False,
         "execution_results": executions or [], "evidence_inventory": inventory, "run_ledger": run_ledger,
+        "coverage_plan": coverage_plan, "industry_coverage": coverage, "evidence_selection": selection,
+        "research_quality": research_quality(coverage, selection, tiered),
     }
     validation = validate_structured_report(report)
     if not validation["valid"]:
@@ -54,6 +63,23 @@ def validate_structured_report(report: Any) -> dict:
         if not envelope.get("run_id") or report.get("report_version") != REPORT_VERSION:
             raise ValueError("结构化报告必须包含运行元数据及 report_version=1.0")
         tiered = report["tiered"]
+        if "industry_coverage" in report:
+            from aor.sources.coverage import build_industry_coverage, research_quality
+            actual_coverage = build_industry_coverage(report.get("coverage_plan") or {},
+                    [*(report.get("evidence_inventory") or []), *(report.get("execution_results") or [])], tiered)
+            if report["industry_coverage"] != actual_coverage:
+                errors.append("行业覆盖与实际请求及证据不一致")
+            if report.get("research_quality") != research_quality(actual_coverage, report.get("evidence_selection") or {}, tiered):
+                errors.append("研究覆盖结论与结构化输入不一致")
+        from aor.opportunity.exploration import exploration_lead
+        lead_ids = set()
+        for lead in tiered.get("research_leads", []):
+            checked = exploration_lead(lead, lead.get("missing_requirements", []), require_ai=True)
+            if checked is None or checked["lead_id"] != lead.get("lead_id") or lead.get("market_validated") is not False:
+                errors.append("探索线索缺少原文依据、AI 价值假设或合法身份")
+            if lead.get("lead_id") in lead_ids:
+                errors.append("探索线索重复")
+            lead_ids.add(lead.get("lead_id"))
         if validate_stage_envelope(tiered) != envelope:
             raise ValueError("报告与候选的运行元数据不一致")
         seen: set[str] = set()
@@ -79,6 +105,11 @@ def validate_structured_report(report: Any) -> dict:
         expected_digest = build_result_digest(tiered, executions=report.get("execution_results") or [],
                                               evidence_payloads=report.get("evidence_inventory") or [],
                                               run_ledger=report.get("run_ledger"))
+        # 旧 1.0 报告没有探索线索字段；仅允许缺省的零值新增指标，保留原报告哈希。
+        if "research_leads" not in tiered and "industry_coverage" not in report:
+            for field in ("research_lead_count", "lead_used_normalized_evidence_count"):
+                if field not in metrics and expected_digest["metrics"][field] == 0:
+                    expected_digest["metrics"].pop(field)
         if metrics != expected_digest["metrics"] or report.get("source_yield") != expected_digest["source_yield"]:
             errors.append("报告统计或费用与原始结构化输入不一致")
         for field, expected in (("deep_candidate_count", counts["A"]), ("quick_idea_count", counts["B"]),
@@ -121,8 +152,12 @@ def render_summary(report: dict, *, full_path: str | None = None) -> str:
                   f"下一步：{decision['next_action']}", "", f"停止条件：{decision['stop_condition']}", "",
                   f"研究分层：A {metrics['deep_candidate_count']} / B {metrics['quick_idea_count']} / "
                   f"R {metrics['regional_signal_count']}。A/B/R 不代表客户验证已完成。", ""])
+    lines.extend([f"待验证线索：{metrics.get('research_lead_count', 0)} 条；与正式候选分开展示。", ""])
+    quality = report.get("research_quality") or {}
+    if quality.get("coverage_incomplete"):
+        lines.extend([f"覆盖缺口：{len(quality['industries_needing_review'])} 个方向尚需核验用户原文；不能据此判断没有机会。", ""])
     if report.get("profile_assessment") is None:
-        lines.extend(["个人适配：尚未提供个人约束，以上研究排序不能直接视为个人立项建议。", ""])
+        lines.extend(["个人适配：尚未完成时间、技能、渠道与预算的综合评估，以上研究排序不能直接视为立项建议。", ""])
     if full_path:
         lines.extend([f"[完整清单]({full_path})", ""])
     return "\n".join(lines)
@@ -130,7 +165,7 @@ def render_summary(report: dict, *, full_path: str | None = None) -> str:
 
 def render_report(report: dict) -> str:
     """结构化对象是校验来源，Markdown 仅负责阅读展示。"""
-    lines = [render_summary(report), "## 来源覆盖", "",
+    lines = [render_summary(report), render_industries(report), "## 来源覆盖", "",
              "| 来源 | 本轮结果 |", "|---|---|"]
     for source, outcome in sorted(report.get("source_coverage", {}).items()):
         lines.append(f"| {source} | {str(outcome).replace('|', '/')} |")
@@ -152,6 +187,17 @@ def render_report(report: dict) -> str:
             lines.append(f"  - {ref['evidence_id']} / {ref.get('revision_id') or '旧版'}：{ref['quote']}")
     if not report.get("claims"):
         lines.append("尚未提供商业主张清单。")
+    for lead in report["tiered"].get("research_leads", []):
+        value = lead["ai_value"]
+        lines.extend(["", f"## {lead['lead_id']} · AI 增量对比", "",
+                      f"- 原有办法：{_safe_text(value['baseline'])}",
+                      f"- AI 能力：{_safe_text(value['capability'])}",
+                      f"- 用户收益：{_safe_text(value['user_benefit'])}",
+                      f"- 增量判断：{_safe_text(value['incremental_advantage'])}",
+                      f"- 状态：{'待验证假设' if value['status'] == 'hypothesis' else '宿主标记为有证据支持，仍需核验'}"])
+        for item in lead.get("evidence", []):
+            if item.get("fact"):
+                lines.append(f"- 材料含义：{_safe_text(item['fact'])}")
     for candidate in report_records(report["tiered"]):
         if candidate["evidence_tier"] != "A":
             continue
@@ -166,6 +212,23 @@ def render_report(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _safe_text(value: str) -> str:
+    return str(value).replace("<", "&lt;").replace(">", "&gt;").replace("\n", " ")
+
+
+def render_industries(report: dict) -> str:
+    labels = {"reviewed_evidence": "已核验材料", "related_material": "已取得相关材料，待核验",
+              "needs_relevance_review": "已有材料，相关性待核验", "collection_failed": "采集失败",
+              "no_results": "本次检索无结果", "not_collected": "已规划，尚未采集", "not_scheduled": "本轮未安排", "partial": "部分采集失败"}
+    lines = ["## 行业全景", "", "| 方向 | 本轮调查 | 请求 | 相关/已核验材料 | 正式候选 | 待验证线索 |", "|---|---|---:|---:|---:|---:|"]
+    for row in (report.get("industry_coverage") or {}).get("industries", []):
+        name = row["name"].replace("|", "/").replace("\n", " ")
+        lines.append(f"| {name} | {labels[row['status']]} | {row['request_count']} | "
+                     f"{row['related_evidence_count']}/{row['verified_evidence_count']} | {row['qualified_count']} | {row['lead_count']} |")
+    lines.extend(["", "相关材料不等于需求成立；未调查和无结果不等于没有市场机会。", ""])
+    return "\n".join(lines)
+
+
 def commit_report(home: Path, report: dict) -> dict:
     """先核验整份报告，再幂等提交 OPP/SIG；中断后可用原报告重放。"""
     from datetime import date
@@ -176,6 +239,9 @@ def commit_report(home: Path, report: dict) -> dict:
         raise ValueError("；".join(validation["errors"]))
     report_hash = canonical_sha256(report)
     records = report_records(report["tiered"])
+    from aor.opportunity.exploration import record_leads
+    if report["tiered"].get("research_leads"):
+        record_leads(home, report["tiered"]["research_leads"], run_id=report["run_id"])
     results = {}
     for kind, prefix in (("opportunity", "OPP-"), ("signal", "SIG-")):
         rows = [{**row, "report_sha256": report_hash} for row in records if row["id"].startswith(prefix)]

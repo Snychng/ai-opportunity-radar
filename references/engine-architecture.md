@@ -27,14 +27,18 @@
 | `scripts/radar.py` | 固定命令分发、安装上下文与更新预检 | 子进程参数数组；无动态 shell |
 | `workflow/research.py` | `start_research/resume_research/inspect_run/run_paid_batch/postmortem` | 运行锁、产物摘要、Agent 交接、提交恢复 |
 | `sources/planning.py` | `validate_intent_plan/compile_intents/deduplicate_requests` | 编译意图到受控来源计划；不判断商业主张 |
+| `sources/industries.py`、`industries.json` | 可配置六方向目录、中英文任务与来源分配 | 默认排除制造和农业；不按关键词猜用户行业 |
+| `sources/discovery.py`、`coverage.py` | 实时估价的发现批次、行业覆盖与零结果诊断 | 既有同轮 journal 限额；相关性不等于人工核验 |
 | `sources/registry.py` | `source_catalog/diagnose_sources` | 能力目录、配置存在性；不访问网络 |
 | `sources/importing.py` | `import_web_evidence` | 宿主网页原文和核验声明导入；不抓网页 |
 | `community.py`、`net.py`、`text.py` | 社区采集、有界网络访问、文本处理 | 由 `scripts/community_query.py` 适配 CLI；免费并发 1–4，编排默认 3、底层兼容入口默认 1 |
 | `evidence/quality.py` | `assess_quality/aggregate_status/mark_reposts` | 本地相关性、窗口、来源状态及转载标记 |
 | `evidence/identity.py`、`retrieval.py` | 来源身份与 RRF 检索融合 | 不以多渠道标签增加独立来源 |
 | `evidence/claims.py` | `validate_claims/build_evidence_packet` | 原文位置、修订、截止时间及受容量约束的 Agent 上下文 |
+| `evidence/selection.py` | 行业、来源及角色平衡抽样与完整索引 | 保留遗漏信息；不自动证实商业语义 |
 | `storage/evidence_library.py` | `EvidenceLibrary` | JSONL 观察日志与可重建 SQLite/FTS 索引 |
 | `opportunity/basis.py`、`selection.py` | 评分依据引用、候选研究优先级、实验背景 | 选择元数据不自动改变证据等级或分数 |
+| `opportunity/exploration.py` | AI 增量描述、探索线索及历史 | 独立 LEAD 状态，不降低 A/B/R 门槛 |
 | `scripts/expand_ideas.py`、`filter_ideas.py`、`score_candidates.py` | 扩展、家族归并、硬过滤、A 级计算 | 保留旧入口；语义与评分依据由 Agent 提供 |
 | `request_identity.py`、`paid_execution.py` | 请求指纹、选择尝试、执行与结果复用 | 串行执行；TikHub 实时价格、白名单和账户预检由兼容脚本提供 |
 | `storage/request_journal.py` | `RequestJournal` | SQLite 请求状态及同 run 跨批累计费用 |
@@ -66,6 +70,9 @@ DATA_HOME/
 │   ├── history-context.json             采集前历史证据上下文
 │   ├── evidence-context.json            截止日内完整检索上下文
 │   ├── evidence-packet.json              交给 Agent 的有界原文包
+│   ├── evidence-index.json               全部上下文条目与是否入包
+│   ├── industry-coverage.json            逐方向实际覆盖与缺口
+│   ├── research-lead-history.json        截止研究日的最新探索线索
 │   ├── awaiting_*-template.json          当前交接模板
 │   ├── benchmarks.json / expanded.json / tiered.json
 │   ├── assessment.json                  Agent 判断与评分输入

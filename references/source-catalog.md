@@ -15,7 +15,7 @@ AOR_OFFLINE=1 aor sources import --input examples/web-import-demo.json \
 
 `catalog` 返回 source/platform、provider、capabilities、cost、preferred_languages、regions、region_filter、default_enabled、manual_import_only。`diagnose` 只消费凭证存在性的布尔标记，返回 `configuration_status`、`network_checked=false`、`live_health=not_checked`，不是在线健康检查。
 
-人工导入输入为 `{items: [...]}`，每批 1–100 条。必填 `source/url/title/original_text/supporting_quote/evidence_role/observed_at/verification`；可选 `published_at/language/country/original_url/original_publisher/intent_refs/candidate_gaps/is_demo`。verification 含 `verified_by/verified_at/method`，method 仅允许 `opened_page` 或 `authorized_browser`。quote 必须是 original_text 的原文子串；搜索摘要不能冒充打开过的正文。
+人工导入输入为 `{items: [...]}`，每批 1–100 条。必填 `source/url/title/original_text/supporting_quote/evidence_role/observed_at/verification`；可选 `published_at/language/country/original_url/original_publisher/intent_refs/industry_ids/candidate_gaps/is_demo`。verification 含 `verified_by/verified_at/method`，method 仅允许 `opened_page` 或 `authorized_browser`。quote 必须是 original_text 的原文子串；搜索摘要不能冒充打开过的正文。
 
 导入器只检查宿主的核验声明，输出 `provider=host-verified-web`、`stage=web_evidence_import`、`input_sha256` 和 `evidence[]`，核验状态为 `host_attested`；它不会独立打开网页。定价只产生 pricing 信号，`payment_status=not_established`；即使 evidence_role 为 payment，也不能跳过后续付款主张核验。同批重复内容会拒绝并要求合并 intent_refs。
 
@@ -46,6 +46,8 @@ AOR_OFFLINE=1 aor sources import --input examples/web-import-demo.json \
 ### 一期生效范围
 
 一期采用 `existing_adapters_only`：TikHub 的 12 个已实现平台作为主采集层，Hacker News 与 GitHub 作为已有辅助层。其余来源不进入默认自动采集，但可在能力目录的人工导入边界内由宿主核验网页后导入。新增自动适配器仍须完成端点、参数、费用和授权边界验证，不能用人工导入冒充自动平台覆盖。
+
+新默认研究以六方向任务分配来源，HN 仅为辅助，GitHub 不进入默认查询。Steam、Shopify App Store、Etsy 以人工核验导入补充玩家、商家和创作者证据，没有宣称新增自动抓取。每个方向都有网页核验任务；宿主未执行时如实保留缺口。实际覆盖以 `industry_coverage` 为准，平台目录完整不等于本轮研究完整。
 
 ## 2. 来源分组
 

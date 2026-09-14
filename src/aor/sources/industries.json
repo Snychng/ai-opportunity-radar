@@ -1,0 +1,182 @@
+[
+  {
+    "id": "ecommerce",
+    "name": "电商与零售",
+    "audience": "网店商家、品牌和零售团队",
+    "demand_model": "efficiency",
+    "queries": {
+      "en": [
+        "product photos editing",
+        "shopify inventory spreadsheet",
+        "customer returns workflow"
+      ],
+      "zh": [
+        "商品图 批量 返工",
+        "多店铺 库存 表格",
+        "电商 售后 工具"
+      ]
+    },
+    "sources": {
+      "en": [
+        "reddit",
+        "youtube",
+        "instagram"
+      ],
+      "zh": [
+        "xiaohongshu",
+        "douyin",
+        "zhihu"
+      ]
+    }
+  },
+  {
+    "id": "gaming",
+    "name": "游戏与虚拟娱乐",
+    "audience": "玩家、游戏创作者和社区组织者",
+    "demand_model": "experience",
+    "queries": {
+      "en": [
+        "finding gaming teammates",
+        "custom game characters",
+        "game guide subscription"
+      ],
+      "zh": [
+        "游戏 找队友",
+        "游戏 角色 定制",
+        "玩家 攻略 付费"
+      ]
+    },
+    "sources": {
+      "en": [
+        "reddit",
+        "tiktok",
+        "youtube"
+      ],
+      "zh": [
+        "bilibili",
+        "douyin",
+        "xiaohongshu"
+      ]
+    }
+  },
+  {
+    "id": "content_creation",
+    "name": "内容与创作",
+    "audience": "视频、播客、摄影和文字创作者",
+    "demand_model": "creation",
+    "queries": {
+      "en": [
+        "video subtitle editing",
+        "podcast editing service",
+        "photo culling workflow"
+      ],
+      "zh": [
+        "视频 字幕 返工",
+        "播客 剪辑 外包",
+        "摄影 选片 工具"
+      ]
+    },
+    "sources": {
+      "en": [
+        "youtube",
+        "instagram",
+        "threads"
+      ],
+      "zh": [
+        "bilibili",
+        "xiaohongshu",
+        "wechat_search"
+      ]
+    }
+  },
+  {
+    "id": "learning",
+    "name": "成人学习与知识",
+    "audience": "成人学习者、讲师和培训机构",
+    "demand_model": "learning",
+    "queries": {
+      "en": [
+        "language conversation practice",
+        "course study progress",
+        "learning feedback subscription"
+      ],
+      "zh": [
+        "外语 口语 陪练",
+        "成人学习 复习",
+        "课程 作业 反馈"
+      ]
+    },
+    "sources": {
+      "en": [
+        "youtube",
+        "reddit",
+        "tiktok"
+      ],
+      "zh": [
+        "bilibili",
+        "xiaohongshu",
+        "zhihu"
+      ]
+    }
+  },
+  {
+    "id": "personal_life",
+    "name": "生活与个人管理",
+    "audience": "家庭和个人消费者",
+    "demand_model": "experience",
+    "queries": {
+      "en": [
+        "family photo organization",
+        "home inventory app",
+        "personal wardrobe planning"
+      ],
+      "zh": [
+        "家庭照片 整理",
+        "家居 物品 管理",
+        "穿搭 衣橱 整理"
+      ]
+    },
+    "sources": {
+      "en": [
+        "reddit",
+        "instagram",
+        "threads"
+      ],
+      "zh": [
+        "xiaohongshu",
+        "douyin",
+        "zhihu"
+      ]
+    }
+  },
+  {
+    "id": "internet_products",
+    "name": "传统互联网产品的 AI 改造与迁移",
+    "audience": "使用搜索、推荐、社区、内容订阅和效率产品的用户",
+    "demand_model": "experience",
+    "queries": {
+      "en": [
+        "personalized recommendations app",
+        "saving bookmarks find again",
+        "community content discovery"
+      ],
+      "zh": [
+        "个性化 推荐 工具",
+        "收藏夹 找不到 内容",
+        "社区 内容 检索"
+      ]
+    },
+    "sources": {
+      "en": [
+        "reddit",
+        "twitter",
+        "threads"
+      ],
+      "zh": [
+        "zhihu",
+        "xiaohongshu",
+        "wechat_search"
+      ]
+    }
+  }
+]

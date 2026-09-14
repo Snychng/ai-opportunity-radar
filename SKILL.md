@@ -5,7 +5,7 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 
 # AI Opportunity Radar
 
-帮助用户选择值得亲自验证的项目。A 是深度候选，B 是收费对标支持的候选，R 是区域迁移假设；研究资格、个人适配、客户验证分别记录。
+帮助用户选择值得亲自验证的项目。默认聚焦电商、游戏、创作、成人学习、生活及传统互联网产品的 AI 改造与迁移，不包含制造、农业。A 是深度候选，B 是收费对标支持的候选，R 是区域迁移假设；尚缺门槛的具体需求保留为探索线索，研究资格、个人适配、客户验证分别记录。
 
 ## 入口
 
@@ -18,7 +18,7 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 首次研究先读 [研究工作流](references/research-workflow.md)，然后执行：
 
 1. `research` 启动，以返回的 `run_id`、`status`、`next_action`、`input_template` 为准；用 `inspect RUN_ID` 查看进度。
-2. 在 `awaiting_benchmarks` 读取 `evidence-packet.json`，核验原文、收费对标、付款与反证，填写本轮 benchmarks。没有合格对标就填 `empty_reason`。
+2. 在 `awaiting_benchmarks` 读取行业覆盖表、`evidence-packet.json` 与完整 `evidence-index.json`，完成各方向的网页核验任务。核验原文、收费对标、付款与反证，填写本轮 benchmarks；早期具体需求可填 `leads`，都没有时填 `empty_reason`。给每个候选或线索写清原有办法、AI 能力、用户收益和增量优势，区分假设与已支持结论。
 3. `resume RUN_ID --benchmarks FILE` 后读 tiered 与 assessment 模板。为 A 提供评分依据，为本轮提供最大未知项、下一步和停止条件。
 4. `resume RUN_ID --assessment FILE` 校验 `report.json` 并提交本地状态。确认 `completed`、报告与回执，再向用户交付结论。已完成研究的修订另开 `research --parent-run-id RUN_ID`。
 
@@ -28,7 +28,8 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 
 - 标价不等于成交；本地付款必须在同条有效证据中成立。主张引用可定位不等于商业语义已验证；同 URL、转载或同一原始主体不增加独立来源。
 - 缺失事实保留未知，新人群与形态仍需验证。`is_demo` 只演示程序，不能作为真实 A 级或市场成果。
-- 默认免费发现与历史复用；需要购买前读 [费用与恢复](references/tikhub-integration.md)。共用 journal 约束累计预算，unknown 不自动重买。
+- 默认免费发现与历史复用；已授权一次性预算时可 `resume --discover --max-cost-usd` 执行跨方向发现，无需先有 BENCH。需要购买前读 [费用与恢复](references/tikhub-integration.md)。共用 journal 约束累计预算，unknown 不自动重买，不自动授权持续支出。
+- 先看普通用户任务、持续使用、创作、学习和分享行为，再判断 AI 增量。不能只搜 AI 工具、开发者社区或只认可企业提效；材料条数不等于真实机会数量。
 - `report.json` 是校验与提交对象，Markdown 是展示；旧 report 命令及底层手动链路保持兼容。
 - 先说明值得验证什么、最大未知项及停止条件，给出完整清单和路径。用户要全部点子时包含 overflow 与报价变体，不只给 Top 5。
 
@@ -37,6 +38,7 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 | 当前任务 | 参考 |
 |---|---|
 | 新研究、恢复、离线示例 | [研究工作流](references/research-workflow.md)、[快速开始](references/quick-start.md) |
+| 六方向范围、探索线索、AI 增量、预算发现 | [普通用户机会发现](references/cross-industry-discovery.md) |
 | 网页导入、来源诊断、检索意图 | [来源目录](references/source-catalog.md)、[查询模式](references/query-patterns.md) |
 | 对标、主张、A/B/R、评分 | [数据契约](references/data-contracts.md)、[机会政策](references/opportunity-policy.md)、[评分](references/scoring.md) |
 | 历史检索、证据包、离线评估 | [证据库与评估](references/evidence-library.md) |

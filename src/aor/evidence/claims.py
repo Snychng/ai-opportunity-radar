@@ -29,6 +29,7 @@ _META = (
     "subject_id", "origin_id", "parent_item_id", "parent_comment_id", "author", "language",
     "fact", "supporting_fact", "supports", "quote",
     "retracted", "status", "is_demo",
+    "industry_ids", "evidence_role", "relevance_status", "window_status",
 )
 
 
@@ -285,7 +286,8 @@ def build_evidence_packet(evidence: Iterable[Mapping[str, Any]], *,
     if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars <= 0:
         raise ValueError("max_chars 必须是正整数")
     cutoff = _instant(as_of, end_of_day=True)
-    records = list(evidence)
+    from aor.evidence.selection import diversified_evidence
+    records = list(diversified_evidence(evidence))
     catalog = _catalog(records)
     historical_records = []
     counts = {"evidence_future": 0, "evidence_missing_observation": 0, "claims_future": 0,
@@ -331,6 +333,7 @@ def build_evidence_packet(evidence: Iterable[Mapping[str, Any]], *,
                   "semantic_validation": "not_performed", "truncated": any(omitted.values()) or any(
                       record["omitted_text_chars"] for record in selected.values()),
                   "limits": {"max_items": max_items, "max_chars": max_chars}, "serialized_chars": 0}
+        packet["selection_policy"] = "industry_source_role_diversity_v1"
         while True:
             length = len(json.dumps(packet, ensure_ascii=False, separators=(",", ":")))
             if length == packet["serialized_chars"]:

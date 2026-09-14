@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import aor_bootstrap  # noqa: F401
-from aor.workflow.research import inspect_run, resume_research, run_paid_batch, start_research
+from aor.workflow.research import inspect_run, resume_research, run_paid_batch, run_discovery, start_research
 from build_query_plan import parse_date, read_scope, resolve_focus
 from contracts import beijing_today
 from manage_state import DEFAULT_HOME
@@ -35,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--assessment", type=Path)
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--paid-plan", type=Path, help="本轮明确缺口或评论补证计划")
+    parser.add_argument("--discover", action="store_true", help="执行有明确预算的跨行业发现，跳过实时价格缺失来源")
+    parser.add_argument("--max-discovery-requests", type=int, default=12, help="本次发现批次请求上限，默认 12")
     parser.add_argument("--max-cost-usd", type=float, help="本轮累计付费请求原价上限")
     parser.add_argument("--batch-id", default="default")
     parser.add_argument("--resume-batch", action="store_true")
@@ -47,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
         inputs = {"evidence_files": args.evidence, "benchmarks_file": args.benchmarks,
                   "assessment_file": args.assessment, "profile_file": args.profile}
         intent = json.loads(args.intent_plan_file.read_text(encoding="utf-8")) if args.intent_plan_file else None
+        if args.discover and (args.action != "resume" or not args.run_id or args.max_cost_usd is None or args.paid_plan):
+            raise ValueError("付费发现需要 resume RUN_ID --discover --max-cost-usd，不能同时指定 paid-plan")
+        if args.discover and (args.offline or args.no_collect):
+            raise ValueError("离线或不采集模式不能执行付费发现")
         if args.paid_plan and (args.action != "resume" or not args.run_id or args.max_cost_usd is None):
             raise ValueError("付费补证需要 resume RUN_ID --paid-plan FILE --max-cost-usd 明确上限")
         if args.paid_plan and (args.offline or args.no_collect):
@@ -63,7 +69,10 @@ def main(argv: list[str] | None = None) -> int:
         elif not args.run_id:
             raise ValueError(f"{args.action} 必须指定 RUN_ID")
         elif args.action == "resume":
-            if args.paid_plan:
+            if args.discover:
+                result = run_discovery(args.home, args.run_id, max_cost_usd=args.max_cost_usd,
+                                       batch_id=args.batch_id, max_requests=args.max_discovery_requests)
+            elif args.paid_plan:
                 result = run_paid_batch(args.home, args.run_id, args.paid_plan, max_cost_usd=args.max_cost_usd,
                                         batch_id=args.batch_id, resume=args.resume_batch, max_attempts=args.max_attempts,
                                         resolve_unknown=tuple(args.resolve_unknown), retry_failed=tuple(args.retry_failed))
