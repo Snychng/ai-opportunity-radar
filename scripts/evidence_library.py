@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     delta.add_argument("--as-of", required=True)
     delta.add_argument("--run-id")
     commands.add_parser("rebuild", help="完全从 JSONL 重建 SQLite")
+    migration = commands.add_parser("migrate-identities", help="派生独立帖子／评论身份的新库，保留原库和历史引用映射")
+    migration.add_argument("--destination", type=Path, required=True, help="不同且尚不存在的目标目录")
     args = parser.parse_args(argv)
     library = EvidenceLibrary(args.root)
     try:
@@ -78,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
                                      experiments=experiments, max_items=args.limit, max_chars=args.max_chars)
         elif args.command == "delta":
             result = library.delta(since=args.since, as_of=args.as_of, run_id=args.run_id)
+        elif args.command == "migrate-identities":
+            result = library.migrate_identities(args.destination)
         else:
             result = library.rebuild()
         serialized = json.dumps(result, ensure_ascii=False, indent=2) + "\n"

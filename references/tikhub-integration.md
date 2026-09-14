@@ -250,3 +250,5 @@ aor resume "$RUN_ID" --home "$RADAR_HOME" --paid-plan "$PAID_PLAN" \
 ```
 
 编排固定使用 `runs/RUN_ID/paid-journal.sqlite3`，保存每次执行与规范化结果，再返回 awaiting_benchmarks，要求 Agent 用新增事实修订对标和主张。它拒绝通用 search_discovery 草稿、离线运行和已开始提交的运行。编排支持 `--max-attempts`、可重复 `--resolve-unknown` 和 `--retry-failed`，语义同上；恢复批次使用 `--resume-batch`。其余参数以 `--help` 为准。
+
+跨方向 `--discover` 同样使用 `--resume-batch` 恢复既有 `batch-id`，严格复用已保存的查询和替补计划，不按剩余预算重新选源。未知和失败请求仍须显式 `--resolve-unknown`／`--retry-failed`，恢复参数不会被忽略。新批次才重新读取实时价格安排来源；发送前始终由累计账本守住最坏费用上限。

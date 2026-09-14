@@ -1,18 +1,19 @@
 # 高信号查询模式
 
-最后更新：2026-09-10。
+最后更新：2026-09-14。
 
 ## 1. 查询优先级
 
-按证据价值排序：
+先按用户任务发现，再按当前研究缺口选证据。默认 6 方向、36 子赛道、72 条中英文任务种子，详见 [六方向目录](cross-industry-discovery.md)。常见证据目标：
 
 1. 直接商业：付款、订单、收入、订阅、定价、合同、招聘、外包。
 2. 购买摩擦：取消、退款、切换、太贵、套餐限制、缺少关键集成。
 3. 替代行为：手工、表格、复制粘贴、自由职业者、内部自建、放弃任务。
 4. 地区差异：语言、支付、主渠道、当地平台、法规与工作流。
-5. 泛讨论与愿望：只作发现线索，不能独立进入 OPP。
+5. 消费与创作行为：重复使用、完成作品、学习进展、真实分享、社区参与；有原文和场景时可以支持需求。
+6. 泛讨论与愿望：只作发现线索，不能独立进入 OPP。
 
-每条查询只负责一个意图。组合“具体人群 + 任务/触发 + 商业行为”，避免 `AI startup ideas` 之类宽查询。
+每条查询只负责一个意图。发现阶段组合“具体人群 + 任务/触发”，再按缺口补持续行为、收费、免费替代或反证；不要求所有用户同时谈 AI 或付款。避免 `AI startup ideas` 之类宽查询。
 
 ## 2. 付费对标查询
 
@@ -110,10 +111,19 @@ site:reddit.com [product] paying too much
 
 ## 7. 结构化 intent_plan
 
-使用 `aor research --intent-plan-file FILE` 或 `aor plan --intent-plan-file FILE`。默认计划可用 `plan --include-recent-activity` 增加旧 GitHub Issue 的近期活动查询，发布时间与活动时间分别保留。可运行格式见 [intent-plan-demo.json](../examples/intent-plan-demo.json)；示例为 `{is_demo: true, intent_plan: {...}}` 包装；按 README 先提取 intent_plan，再传给 CLI。intent_plan 顶层严格只接收 intents，单条意图也不接受额外 is_demo 字段。这里只演示离线编译，不执行网页搜索。
+使用 `aor research --intent-plan-file FILE` 或 `aor plan --intent-plan-file FILE`。当显式意图或定向计划已包含 GitHub 请求时，`plan --include-recent-activity` 可增加对应旧 Issue 的近期活动查询；六方向默认计划不含 GitHub，单独加此开关不会创建 GitHub 请求，发布时间与活动时间分别保留。可运行格式见 [intent-plan-demo.json](../examples/intent-plan-demo.json)；示例为 `{is_demo: true, intent_plan: {...}}` 包装；按 README 先提取 intent_plan，再传给 CLI。intent_plan 顶层严格只接收 intents，单条意图也不接受额外 is_demo 字段。这里只演示离线编译，不执行网页搜索。
 
-每项意图必填 `id/question/evidence_type/search_query/ranking_query/source/locale/candidate_gaps`；`locale` 含 country/language，candidate_gaps 可为空。最多 20 项意图，社区合并后最多 12 个请求。evidence_type 允许 official_pricing、product_update、product_review、hiring、outsourcing、payment、workflow_pain、alternative、regional_gap、counter_evidence；这些是寻找目标，不是已取得证据。
+每项意图必填 `id/question/evidence_type/search_query/ranking_query/source/locale/candidate_gaps`；`locale` 含 country/language，candidate_gaps 可为空。最多 20 项意图，社区合并后最多 12 个请求。evidence_type 允许 official_pricing、product_update、product_review、hiring、outsourcing、payment、workflow_pain、alternative、regional_gap、counter_evidence、usage_behavior、creative_output、learning_progress、social_sharing；这些是寻找目标，不是已取得证据。
 
 search_query 发送给指定来源，ranking_query 保留为研究排序上下文，不能假设远端搜索接口会执行它。HN/GitHub 必须提供英语 search_query 与 en locale；只有中文自由主题且无英语 scope 查询时返回 needs_host_queries。请宿主补出符合意图的英语查询，不能将中文主题与 manual 等英文词机械拼接。
 
 显式意图替换本次检索计划，不追加默认付费来源；scope/focus 继续作为研究上下文。编译输出 community、tikhub、web_import 子计划，web_import.required_imports 是宿主人工待办。重复请求按 source/endpoint/method/params 指纹合并，保留所有 intent_refs、provenance 和 request_aliases；多个排序问题不会变成多次付费调用。真实付款和地区事实仍需核验原文。
+
+
+## 6. 轮转、替补与查询质量
+
+默认计划只读取历史覆盖快照中的实际 task×language 尝试次数；未采集任务优先轮转，明确缺口可以优先一次补查，随后继续探索其他任务，避免单主题占满所有批次。目录中的 existing_behavior_to_verify 与 spend_status 明确是待核验研究问题，不将“外包/订阅”等种子词统计为真实支出。
+
+每个主查询可附 fallback_requests，使用现有白名单 search 构建器生成同查询/同语言的其他平台请求。无实时价格或预算不能容纳主请求时，仅从这些已登记替补中筛选；skipped_requests 记录原因，substitutions 记录替补关系，未实际请求不算覆盖。无法替补时明确留缺口，不猜端点或价格。
+
+词面匹配是召回筛选：relevance_status 和 lexical_status 不能替代宿主对对象、任务与引用的核验。weak_match、跨文字系统未知、日期 uncertain、上游非空却未识别的响应各自保留，不能全部归成“无市场”。同查询只有无关材料时应修改任务锚点或换来源；无需通过提高预算重复获取相同噪声。

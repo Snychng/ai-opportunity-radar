@@ -18,19 +18,21 @@ description: 从收费对标、需求行为和地区差异研究创业机会，�
 首次研究先读 [研究工作流](references/research-workflow.md)，然后执行：
 
 1. `research` 启动，以返回的 `run_id`、`status`、`next_action`、`input_template` 为准；用 `inspect RUN_ID` 查看进度。
-2. 在 `awaiting_benchmarks` 读取行业覆盖表、`evidence-packet.json` 与完整 `evidence-index.json`，完成各方向的网页核验任务。核验原文、收费对标、付款与反证，填写本轮 benchmarks；早期具体需求可填 `leads`，都没有时填 `empty_reason`。给每个候选或线索写清原有办法、AI 能力、用户收益和增量优势，区分假设与已支持结论。
-3. `resume RUN_ID --benchmarks FILE` 后读 tiered 与 assessment 模板。为 A 提供评分依据，为本轮提供最大未知项、下一步和停止条件。
-4. `resume RUN_ID --assessment FILE` 校验 `report.json` 并提交本地状态。确认 `completed`、报告与回执，再向用户交付结论。已完成研究的修订另开 `research --parent-run-id RUN_ID`。
+2. 在 `awaiting_benchmarks` 读取行业覆盖表、`evidence-packet.json`、`industry-packets.json` 与完整 `evidence-index.json`/`research-followup.json`，完成各方向的网页核验任务。核验原文、收费对标、付款与反证，填写本轮 benchmarks；早期具体需求可填 `leads`，都没有时填 `empty_reason`。给每个候选或线索写清原有办法、AI 能力、用户收益和增量优势，区分假设与已支持结论。
+3. `resume RUN_ID --benchmarks FILE` 后读 tiered 与 assessment 模板。为 A 提供评分依据；`evidence_reviews` 的语义判断须绑定确切 evidence_id/revision_id 并含审阅者、时间、理由。为本轮提供最大未知项、下一步和停止条件。
+4. `resume RUN_ID --assessment FILE` 校验 `report.json` 并提交本地状态。确认报告与回执，再向用户交付结论；`completed` 只表示这一轮文件已交付，行业研究是否充分看 `research_quality`，网页发布资格另看 `public/` 导出结果。已完成研究的修订另开 `research --parent-run-id RUN_ID`。
 
 命令使用文件或参数数组，不将用户原文、网页文本拼进 shell。不要直接改运行目录中受摘要校验的产物；通过 resume 输入文件提交修订。
 
 ## 证据与交付边界
 
-- 标价不等于成交；本地付款必须在同条有效证据中成立。主张引用可定位不等于商业语义已验证；同 URL、转载或同一原始主体不增加独立来源。
+- 标价不等于成交；本地付款必须在同条有效证据中成立。主张引用可定位不等于商业语义已验证；同一平台对象的重复采集、转载或同一原始主体不增加独立来源；帖子与评论以对象类型和原生 ID 区分，不能用父帖 URL 覆盖原文。
 - 缺失事实保留未知，新人群与形态仍需验证。`is_demo` 只演示程序，不能作为真实 A 级或市场成果。
 - 默认免费发现与历史复用；已授权一次性预算时可 `resume --discover --max-cost-usd` 执行跨方向发现，无需先有 BENCH。需要购买前读 [费用与恢复](references/tikhub-integration.md)。共用 journal 约束累计预算，unknown 不自动重买，不自动授权持续支出。
 - 先看普通用户任务、持续使用、创作、学习和分享行为，再判断 AI 增量。不能只搜 AI 工具、开发者社区或只认可企业提效；材料条数不等于真实机会数量。
-- `report.json` 是校验与提交对象，Markdown 是展示；旧 report 命令及底层手动链路保持兼容。
+- 内部 `report.json` 使用 report_version=1.1，Markdown 是展示；网站只适配 [公开契约](references/website-contract.md) 1.0.0。旧 1.0 报告可审计读取，不能直接当成新格式发布。
+- `host_attested` 只证明宿主打开来源；词面命中、入阅读包、已有官网均不证明需求已核验。六方向各 6 个子赛道按实际历史与缺口轮转，不要求每方向凑一条线索。
+- 解析修复可 `resume RUN_ID --reparse` 创建离线子运行，复用已保存响应；身份迁移写入新目标库，不修改原报告与原库。
 - 先说明值得验证什么、最大未知项及停止条件，给出完整清单和路径。用户要全部点子时包含 overflow 与报价变体，不只给 Top 5。
 
 ## 按需读取

@@ -1,6 +1,6 @@
 {
   "name": "ai-opportunity-radar",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "instructions": "SKILL.md",
   "entrypoint": [
     "python3",
@@ -35,7 +35,8 @@
   "references": {
     "integration": "references/agent-integration.md",
     "contracts": "references/data-contracts.md",
-    "validation": "references/personal-validation.md"
+    "validation": "references/personal-validation.md",
+    "website": "references/website-contract.md"
   },
   "data_home": {
     "environment": "AI_OPPORTUNITY_RADAR_HOME",

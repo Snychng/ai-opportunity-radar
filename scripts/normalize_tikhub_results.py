@@ -10,7 +10,7 @@ import html
 import json
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -21,6 +21,8 @@ import aor_bootstrap  # noqa: F401
 from aor.text import language as _language
 from aor.evidence.quality import assess_quality, aggregate_status, mark_reposts, research_window
 
+
+PARSER_VERSION = "2.1.0"
 
 PHASE_ONE_SOURCES = (
     "tiktok",
@@ -41,12 +43,18 @@ STATUS_PRIORITY = {
     "auth-required": 1,
     "rate-limited": 1,
     "skipped-policy": 1,
+    "unrecognized_response": 1,
+    "upstream_error": 1,
+    "partial_parse": 1,
     "no-results": 2,
     "ok": 3,
 }
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 SPACE_RE = re.compile(r"\s+")
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
+DETAIL_CONTAINERS = ("data", "item", "items", "video", "video_info", "aweme_detail", "aweme_info", "itemInfo",
+                     "itemStruct", "post", "note", "note_list", "note_card", "result", "article", "answer", "tweet",
+                     "legacy", "media")
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -167,6 +175,55 @@ def _normalize_date(value: Any) -> tuple[str | None, str, Any]:
     return None, "low", value
 
 
+def _publication_date_fields(value: Any, observed_at: str | None) -> dict[str, Any]:
+    """相对日期只提供保守区间；采集时间必须来自原始响应，重解析不得改用当前时间。"""
+    published_at, confidence, raw = _normalize_date(value)
+    result = {"published_at": published_at, "published_at_raw": raw, "date_confidence": confidence,
+              "date_basis": "absolute" if published_at else "unknown", "published_at_interval": None}
+    if published_at or not isinstance(value, str) or not observed_at:
+        return result
+    try:
+        observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            return result
+        observed = observed.astimezone(timezone.utc)
+    except ValueError:
+        return result
+    text = value.strip().casefold()
+    text = re.sub(r"^(?:streamed|premiered|updated|posted|published)\s+", "", text)
+    match = re.fullmatch(r"(\d+)\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?|秒|分钟|小时|天|周|个月|月|年)\s*(?:ago|前)", text)
+    if match:
+        count, unit = int(match[1]), match[2]
+        # 月和年的天数因日历而异，宁可扩大区间也不伪造一个发布时间。
+        units = {"second": (1, 1), "minute": (60, 60), "hour": (3600, 3600),
+                 "day": (86400, 86400), "week": (604800, 604800),
+                 "month": (28 * 86400, 31 * 86400), "year": (365 * 86400, 366 * 86400)}
+        aliases = {"秒": "second", "分钟": "minute", "小时": "hour", "天": "day", "周": "week",
+                   "个月": "month", "月": "month", "年": "year"}
+        unit = aliases.get(unit, unit.rstrip('s'))
+        shortest, longest = units[unit]
+        try:
+            earliest = observed - timedelta(seconds=(count + 1) * longest)
+            latest = observed - timedelta(seconds=count * shortest)
+        except (OverflowError, ValueError):
+            return result
+    elif text in {"today", "yesterday", "今天", "昨天", "刚刚", "just now"}:
+        if text in {"刚刚", "just now"}:
+            earliest, latest = observed - timedelta(minutes=1), observed
+        else:
+            day = observed.date() - timedelta(days=int(text in {"yesterday", "昨天"}))
+            # 来源本地时区未知，允许 UTC-12 至 UTC+14 的自然日范围。
+            midnight = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+            earliest = midnight - timedelta(hours=14)
+            latest = min(observed, midnight + timedelta(hours=36))
+    else:
+        return result
+    result.update(date_confidence="estimated", date_basis="relative_to_observation",
+                  published_at_interval={"earliest": earliest.date().isoformat(), "latest": latest.date().isoformat(),
+                                         "semantics": "inclusive_calendar_days", "anchor_observed_at": observed_at})
+    return result
+
+
 def _status_update(statuses: dict[str, str], source: str, new_status: str) -> None:
     current = statuses.get(source)
     if current is None or STATUS_PRIORITY[new_status] > STATUS_PRIORITY[current]:
@@ -216,6 +273,101 @@ def _extract_items(source: str, data: dict[str, Any]) -> list[dict[str, Any]]:
     if source == "wechat_search":
         return [_dict(item) for item in _list(data.get("items")) if isinstance(item, dict)]
     return []
+
+
+def _search_shape(source: str, data: dict[str, Any]) -> tuple[bool, int | None, int]:
+    """只把已知列表容器中的明确空列表视为零结果；未知非空结构必须显式失败。"""
+    paths = {
+        "tiktok": (("search_item_list",),), "instagram": (("data", "items"),),
+        "linkedin": (("data",),), "threads": (("searchResults", "edges"),),
+        "twitter": (("timeline",),), "youtube": (("videos",),),
+        "reddit": (("search", "dynamic", "components", "main", "edges"),),
+        "douyin": (("business_data",),), "xiaohongshu": (("data", "items"),),
+        "bilibili": (("result",), ("data", "result")), "zhihu": (("data",),),
+        "wechat_search": (("items",),),
+    }
+    rows = next((rows for path in paths.get(source, ()) if isinstance(rows := _path(data, *path), list)), None)
+    if rows is None:
+        return False, None, 0
+    raw_count, skipped = 0, 0
+    for row in rows:
+        if source == "reddit" and isinstance(row, dict):
+            if _path(row, "presentation", "type") == "empty_state":
+                skipped += 1
+                continue
+            children = _path(row, "node", "children")
+            if isinstance(children, list) and children:
+                raw_count += len(children)
+                continue
+        if source == "zhihu" and isinstance(row, dict) and row.get("object") is None and "query_list" in row:
+            skipped += 1
+            continue
+        if source == "xiaohongshu" and isinstance(row, dict) and row.get("model_type") == "ads" and "note" not in row:
+            skipped += 1
+            continue
+        raw_count += 1
+    return True, raw_count, skipped
+
+
+def _comment_shape(data: dict[str, Any]) -> tuple[bool, int | None, int]:
+    """统计评论容器中的原始条目，包括无法解析的行，避免部分响应伪装成完整成功。"""
+    collections = {"comments", "comment_list", "root_comments", "replies", "sub_comments", "sub_comment_list"}
+    found, count = False, 0
+
+    def visit(value: Any, depth: int = 0) -> None:
+        nonlocal found, count
+        if depth > 12:
+            return
+        if isinstance(value, list):
+            for child in value:
+                visit(child, depth + 1)
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                if key in collections and isinstance(child, list):
+                    found = True
+                    count += len(child)
+                if key not in {"user", "author", "owner", "reactions", "statistics"}:
+                    visit(child, depth + 1)
+
+    visit(data)
+    return found, count if found else None, 0
+
+
+def _upstream_error(response: Any) -> str | None:
+    """只读取响应信封状态，不将成功 HTTP 下的供应商错误当成空搜索。"""
+    value = response
+    for _ in range(4):
+        if not isinstance(value, dict):
+            return None
+        if value.get("success") is False:
+            return "upstream_success_false"
+        for key in ("code", "status_code", "statusCode"):
+            code = value.get(key)
+            if isinstance(code, (int, float)) and not isinstance(code, bool) and code not in {0, 200}:
+                return "upstream_non_success_code"
+            if isinstance(code, str) and code.strip().isdigit() and int(code) not in {0, 200}:
+                return "upstream_non_success_code"
+        if value.get("error") or value.get("errors"):
+            return "upstream_error_payload"
+        value = value.get("data")
+    return None
+
+
+def _parse_record(result: dict, source: str, *, recognized: bool, raw_count: int | None,
+                  parsed_count: int, skipped: int = 0) -> dict[str, Any]:
+    if parsed_count and (raw_count is None or parsed_count >= raw_count):
+        parse_status, status = "parsed", "ok"
+    elif parsed_count:
+        parse_status = status = "partial_parse"
+    elif recognized and raw_count == 0:
+        parse_status, status = "empty_result", "no-results"
+    else:
+        parse_status = status = "unrecognized_response"
+    return {"id": _clean_text(result.get("id"), limit=300), "source": source, "status": status,
+            "error_code": None if status in {"ok", "no-results"} else parse_status,
+            "parse_status": parse_status, "raw_items": raw_count, "parsed_items": parsed_count,
+            "skipped_noncontent_items": skipped, "parser_version": PARSER_VERSION,
+            "input_response_sha256": canonical_sha256(result.get("response"))}
 
 
 def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -298,7 +450,9 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
         video_id = _clean_text(item.get("video_id"), limit=200)
         return {
             "source_item_id": video_id, "title": item.get("title"), "text": item.get("description"),
-            "author": item.get("author"), "container": item.get("channel_id"), "date": item.get("published_time"),
+            "author": item.get("author"), "container": item.get("channel_id"),
+            "date": _first(item.get("published_at"), item.get("published_time"), item.get("publishedTimeText"),
+                           item.get("published_time_text"), item.get("publishedTime")),
             "language": item.get("language"),
             "url": f"https://www.youtube.com/watch?v={video_id}" if video_id else None,
             "engagement": _engagement(views=item.get("number_of_views")),
@@ -328,7 +482,7 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "source_item_id": note_id, "title": item.get("title"), "text": item.get("desc"),
             "author": _first(_path(item, "user", "nickname"), _path(item, "user", "name"), _path(item, "user", "user_id")),
-            "container": "小红书", "date": _first(item.get("timestamp"), item.get("time"), item.get("update_time")),
+            "container": "小红书", "date": _first(item.get("timestamp"), item.get("time")),
             "language": item.get("language"),
             "url": f"https://www.xiaohongshu.com/explore/{note_id}" if note_id else None,
             "engagement": _engagement(likes=item.get("liked_count"), comments=item.get("comments_count"),
@@ -366,7 +520,7 @@ def _source_fields(source: str, item: dict[str, Any]) -> dict[str, Any]:
             "source_item_id": object_id, "title": _first(item.get("title"), _path(item, "question", "title")),
             "text": _first(item.get("excerpt"), item.get("description"), item.get("content")),
             "author": _first(_path(item, "author", "name"), _path(item, "author", "headline")),
-            "container": _path(item, "question", "title"), "date": _first(item.get("created_time"), item.get("updated_time")),
+            "container": _path(item, "question", "title"), "date": item.get("created_time"),
             "language": item.get("language"), "url": url,
             "engagement": _engagement(likes=item.get("voteup_count"), comments=item.get("comment_count"),
                                       saves=item.get("favorites_count"), views=item.get("visits_count")),
@@ -407,7 +561,7 @@ def _normalize_item(
     normalized_url = _url(fields.get("url"))
     if not any((source_item_id, original_text, normalized_url)):
         return None
-    published_at, date_confidence, published_at_raw = _normalize_date(fields.get("date"))
+    date_fields = _publication_date_fields(fields.get("date"), observed_at)
     author = _clean_text(fields.get("author"), limit=300)
     container = _clean_text(fields.get("container"), limit=500)
     warnings: list[str] = []
@@ -415,7 +569,7 @@ def _normalize_item(
         warnings.append("missing_text")
     if not normalized_url:
         warnings.append("missing_url")
-    if date_confidence in {"low", "unknown"}:
+    if date_fields["date_confidence"] != "high":
         warnings.append("uncertain_date")
     return {
         "id": "",
@@ -432,9 +586,8 @@ def _normalize_item(
         "zh_translation": None,
         "language": _language(original_text, _first(item.get("language"), fields.get("language"))),
         "source_region": _clean_text(_first(item.get("region"), item.get("country")), limit=100) or "unknown",
-        "published_at": published_at,
-        "published_at_raw": published_at_raw,
-        "date_confidence": date_confidence,
+        **date_fields,
+        "parser_version": PARSER_VERSION,
         "observed_at": observed_at,
         "engagement": fields.get("engagement", {}),
         "access_method": "third-party-api",
@@ -535,7 +688,6 @@ def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> 
 
 def _detail_items(source: str, data: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     """沿固定响应容器提取详情，不把任意嵌套字段混成帖子证据。"""
-    containers = ("data", "item", "items", "video", "video_info", "aweme_detail", "aweme_info", "itemInfo", "itemStruct", "post", "note", "note_list", "note_card", "result", "article", "answer", "tweet", "legacy", "media")
     result: list[tuple[dict[str, Any], str]] = []
 
     def visit(value: Any, pointer: str, depth: int) -> None:
@@ -550,12 +702,34 @@ def _detail_items(source: str, data: dict[str, Any]) -> list[tuple[dict[str, Any
             if _clean_text(text):
                 result.append((value, pointer))
                 return
-            for key in containers:
+            for key in DETAIL_CONTAINERS:
                 if key in value:
                     visit(value[key], f"{pointer}/{key}", depth + 1)
 
     visit(data, "", 0)
     return result
+
+
+def _detail_shape(source: str, data: dict[str, Any]) -> tuple[bool, int | None, int]:
+    def visit(value: Any, depth: int = 0) -> tuple[bool, int | None]:
+        if depth > 8:
+            return False, None
+        if isinstance(value, list):
+            counts = [visit(child, depth + 1)[1] for child in value]
+            return True, sum(count if count is not None else 1 for count in counts)
+        if isinstance(value, dict):
+            fields = _source_fields(source, value)
+            text = _first(fields.get("text"), fields.get("title"),
+                          *(value.get(key) for key in ("full_text", "content", "body", "description", "text", "desc", "title")))
+            if _clean_text(text):
+                return True, 1
+            children = [visit(value[key], depth + 1) for key in DETAIL_CONTAINERS if key in value]
+            if children:
+                return any(recognized for recognized, _ in children), sum(count or 0 for _, count in children)
+        return False, None
+
+    recognized, count = visit(data)
+    return recognized, count, 0
 
 
 def _normalize_comment(
@@ -597,8 +771,9 @@ def _normalize_comment(
         row.get("author"),
         row.get("username"),
     )
-    published_at, date_confidence, published_at_raw = _normalize_date(
-        _first(row.get("create_time"), row.get("created_at"), row.get("timestamp"), row.get("published_at"))
+    date_fields = _publication_date_fields(
+        _first(row.get("create_time"), row.get("created_at"), row.get("timestamp"), row.get("published_at"),
+               row.get("time") if source == "xiaohongshu" else None), observed_at
     )
     return {
         "id": f"{source}:comment:{comment_id}",
@@ -619,9 +794,8 @@ def _normalize_comment(
         "original_text": text,
         "zh_translation": None,
         "language": _language(text, row.get("language")),
-        "published_at": published_at,
-        "published_at_raw": published_at_raw,
-        "date_confidence": date_confidence,
+        **date_fields,
+        "parser_version": PARSER_VERSION,
         "observed_at": observed_at,
         "engagement": _engagement(
             likes=_first(row.get("like_count"), row.get("digg_count"), row.get("likes")),
@@ -658,6 +832,11 @@ def _merge_request_links(existing: dict[str, Any], incoming: dict[str, Any]) -> 
             existing[key] = deepcopy(value)
         elif isinstance(value, list) and isinstance(existing.get(key), list):
             existing[key].extend(deepcopy(entry) for entry in value if entry not in existing[key])
+    # 同对象的不同正文不能声明彼此派生来源完全等价；只合并同正文的输入归属。
+    from aor.evidence.identity import evidence_content
+    if canonical_sha256(evidence_content(existing)) == canonical_sha256(evidence_content(incoming)):
+        refs = existing.setdefault("derivation_refs", [])
+        refs.extend(deepcopy(ref) for ref in incoming.get("derivation_refs", []) if ref not in refs)
     query_ids = existing.setdefault('query_ids', [existing['query_id']])
     if incoming['query_id'] not in query_ids:
         query_ids.append(incoming['query_id'])
@@ -709,9 +888,13 @@ def normalize_documents(
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     seen_comments: dict[tuple[str, str, str], dict[str, Any]] = {}
     request_count = 0
+    derive_inputs = []
 
     for document_index, (document, raw_file) in enumerate(zip(documents_list, files, strict=True)):
         observed_at = _clean_text(document.get("generated_at"), limit=100)
+        execution_ref = {"source_execution_sha256": canonical_sha256(document), "source_file": raw_file,
+                         "parser_version": PARSER_VERSION}
+        status_start = len(request_statuses)
         for result_index, result in enumerate(_list(document.get("results"))):
             if not isinstance(result, dict):
                 continue
@@ -728,8 +911,17 @@ def normalize_documents(
                         "source": source,
                         "status": failure_status,
                         "error_code": _clean_text(result.get("error_code"), limit=100),
+                        "parse_status": "upstream_error", "raw_items": None, "parsed_items": 0,
+                        "skipped_noncontent_items": 0, "parser_version": PARSER_VERSION,
                     }
                 )
+                continue
+            upstream_error = _upstream_error(result.get("response"))
+            if upstream_error:
+                request_statuses.append({"id": _clean_text(result.get("id"), limit=300), "source": source,
+                                         "status": "upstream_error", "error_code": upstream_error,
+                                         "parse_status": "upstream_error", "raw_items": None, "parsed_items": 0,
+                                         "skipped_noncontent_items": 0, "parser_version": PARSER_VERSION})
                 continue
             data = _dict(_path(result, "response", "data"))
             if source_stage == "comment_deep_dive":
@@ -741,19 +933,24 @@ def normalize_documents(
                 parent_url = _url(result.get("parent_url"))
                 if kind == "detail":
                     detail_evidence_ids: list[str] = []
-                    for row, pointer in _detail_items(source, data):
+                    detail_rows = _detail_items(source, data)
+                    parsed_details = 0
+                    for row, pointer in detail_rows:
                         detail = _normalize_item(source, row, query_id=query_id, query_group=None, query=None,
                                                  observed_at=observed_at, raw_file=raw_file,
                                                  raw_pointer=f"/results/{result_index}/response/data{pointer}", is_detail=True)
                         if detail is None:
                             continue
+                        parsed_details += 1
                         detail.update(_request_links(result))
+                        detail["derivation_refs"] = [dict(execution_ref)]
                         detail["id"] = selected_item_id
                         detail["origin_id"] = selected_item_id
                         detail["parent_item_id"] = selected_item_id
                         detail["evidence_kind"] = "post_detail"
                         detail["url"] = detail.get("url") or parent_url
                         detail["comment_candidate"] = None
+                        detail_evidence_ids.append(detail["id"])
                         key = (source, selected_item_id)
                         if key in seen:
                             _merge_request_links(seen[key], detail)
@@ -761,12 +958,14 @@ def normalize_documents(
                             continue
                         seen[key] = detail
                         evidence.append(detail)
-                        detail_evidence_ids.append(detail["id"])
-                    detail_status = "ok" if detail_evidence_ids else "no-results"
+                    recognized, raw_count, skipped = _detail_shape(source, data)
+                    record = _parse_record(result, source, recognized=recognized,
+                                           raw_count=raw_count, parsed_count=parsed_details, skipped=skipped)
+                    detail_status = record["status"]
                     detail_results.append({"source": source, "selected_item_id": selected_item_id,
                                            "query_id": query_id, "status": detail_status, "evidence_ids": detail_evidence_ids})
                     _status_update(statuses, source, detail_status)
-                    request_statuses.append({"id": query_id, "source": source, "status": detail_status, "error_code": None})
+                    request_statuses.append(record)
                     continue
                 if kind != "top_level_comments":
                     raise ValueError(f"不支持的评论深挖 kind：{kind}")
@@ -785,7 +984,9 @@ def normalize_documents(
                     )
                     if normalized_comment is None:
                         continue
+                    normalized_count += 1
                     normalized_comment.update(_request_links(result))
+                    normalized_comment["derivation_refs"] = [dict(execution_ref)]
                     marker = (source, selected_item_id, normalized_comment["source_item_id"])
                     if marker in seen_comments:
                         _merge_request_links(seen_comments[marker], normalized_comment)
@@ -793,29 +994,12 @@ def normalize_documents(
                         continue
                     seen_comments[marker] = normalized_comment
                     comments.append(normalized_comment)
-                    normalized_count += 1
-                _status_update(statuses, source, "ok" if normalized_count else "no-results")
-                request_statuses.append(
-                    {
-                        "id": query_id,
-                        "source": source,
-                        "status": "ok" if normalized_count else "no-results",
-                        "error_code": None,
-                    }
-                )
+                recognized, raw_count, skipped = _comment_shape(data)
+                request_statuses.append(_parse_record(result, source, recognized=recognized,
+                                                     raw_count=raw_count, parsed_count=normalized_count, skipped=skipped))
                 continue
             raw_items = _extract_items(source, data)
-            if not raw_items:
-                _status_update(statuses, source, "no-results")
-                request_statuses.append(
-                    {
-                        "id": _clean_text(result.get("id"), limit=300),
-                        "source": source,
-                        "status": "no-results",
-                        "error_code": None,
-                    }
-                )
-                continue
+            recognized, raw_count, skipped = _search_shape(source, data)
             normalized_for_result = 0
             params = _dict(result.get("params"))
             query = _clean_text(_first(params.get("keyword"), params.get("query"), params.get("searchTerms"), params.get("search_query")), limit=500)
@@ -832,7 +1016,9 @@ def normalize_documents(
                 )
                 if normalized is None:
                     continue
+                normalized_for_result += 1
                 normalized.update(_request_links(result))
+                normalized["derivation_refs"] = [dict(execution_ref)]
                 key = _dedupe_key(normalized)
                 if key in seen:
                     _merge_request_links(seen[key], normalized)
@@ -848,16 +1034,12 @@ def normalize_documents(
                     normalized["evidence_gap"] = dict(result["evidence_gap"])
                 normalized["comment_candidate"] = _comment_candidate(normalized)
                 evidence.append(normalized)
-                normalized_for_result += 1
-            _status_update(statuses, source, "ok" if normalized_for_result else "no-results")
-            request_statuses.append(
-                {
-                    "id": _clean_text(result.get("id"), limit=300),
-                    "source": source,
-                    "status": "ok" if normalized_for_result else "no-results",
-                    "error_code": None,
-                }
-            )
+            request_statuses.append(_parse_record(result, source, recognized=recognized, raw_count=raw_count,
+                                                 parsed_count=normalized_for_result, skipped=skipped))
+
+        parse_states = [row.get("parse_status") for row in request_statuses[status_start:]]
+        complete = (bool(parse_states) and all(status in {"parsed", "empty_result"} for status in parse_states)) or not document.get("results")
+        derive_inputs.append({**execution_ref, "status": "complete" if complete else "partial"})
 
     window = window or research_window(as_of)
     for item in [*evidence, *comments]:
@@ -874,8 +1056,14 @@ def normalize_documents(
                 comment["url_kind"] = "parent_post"
     by_source = Counter(item["source"] for item in [*evidence, *comments])
     comment_candidates = [item["comment_candidate"] for item in evidence if item.get("comment_candidate")]
+    from aor.evidence.derivations import build_derive_sets
+    derive_sets = build_derive_sets([*evidence, *comments], derive_inputs)
     return {
         "schema_version": SCHEMA_VERSION,
+        "parser_version": PARSER_VERSION,
+        "derive_sets": derive_sets,
+        "input_fingerprints": [{"source_file": file, "sha256": canonical_sha256(document)}
+                               for file, document in zip(files, documents_list, strict=True)],
         "generated_at": datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         "provider": "tikhub",
         "run_id": run_id,
@@ -886,6 +1074,11 @@ def normalize_documents(
         "source_files": files,
         "stats": {
             "requests_seen": request_count,
+            "raw_items": sum(row["raw_items"] or 0 for row in request_statuses),
+            "parsed_items": sum(row["parsed_items"] for row in request_statuses),
+            "requests_with_unknown_raw_count": sum(row["raw_items"] is None for row in request_statuses),
+            "skipped_noncontent_items": sum(row["skipped_noncontent_items"] for row in request_statuses),
+            "parse_status": dict(Counter(row["parse_status"] for row in request_statuses)),
             "valid_items": len(evidence),
             "valid_comments": len(comments),
             "recent_valid_items": sum(item['recent_evidence_eligible'] for item in evidence),

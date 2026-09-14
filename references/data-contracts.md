@@ -1,6 +1,6 @@
 # V3 数据契约与阶段连接
 
-最后更新：2026-09-10。以下字段与当前脚本实现对应；证据真实性仍需研究者核验。
+最后更新：2026-09-14。以下字段与当前脚本实现对应；证据真实性仍需研究者核验。
 
 ## 1. 共享运行契约
 
@@ -70,7 +70,7 @@ query_plan
 
 A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence` 目录中有效、未撤回、非演示的证据。目标地区、付款者、交易类型和支持事实必须属于同一条记录；不能拼接本地定价页与国外购买记录，也不能用 `local: true` 代替地区证据。支持文本字段接受 `fact`、`supporting_fact`、`quote`、`text`、`supports` 或 `original_text`。
 
-`BENCH` ID 根据产品、来源市场、付款者和价格生成；相同对标重跑保持稳定。
+`BENCH` ID 优先保留显式 ID，否则根据产品、来源市场和付款者生成；价格属于可变化的观察，不参与业务身份。
 
 ## 3. 扩展输入与输出
 
@@ -132,7 +132,8 @@ A 级的付款信号必须通过 `url` 或 `evidence_id` 引用候选 `evidence`
 - `deep_candidates`：A 级，`record_kind=opportunity`
 - `validated_ideas`：B 级收费对标支持的候选，`record_kind=opportunity`；字段名保持兼容，不表示客户已验证
 - `regional_signals`：R 级，`record_kind=signal`
-- `rejected`：附 `rejection_reasons`
+- `research_leads`：尚缺正式门槛的可追溯探索线索，使用稳定 LEAD，与正式 A/B/R 数量分别计数
+- `rejected`：附 `rejection_reasons`，例如无明确 AI 增量或无可用证据
 - `overflow`：超过 B 级 40 条或 R 级 80 条的合格候选；不丢弃，但不进入当日日报主卡片
 
 过滤结果同时原样保留 `benchmarks`，并在 `summary.benchmark_count` 记录数量，供费用产出和完整展示使用。
@@ -209,7 +210,7 @@ OPP.promoted_from -> SIG ID
 ## 8. 兼容与失败策略
 
 - 阶段版本不一致时失败关闭，不静默混用。
-- 缺六项硬门槛时写拒绝原因，不猜测补齐。
+- 缺正式硬门槛时不猜测补齐；启用探索线索保留且存在具体用户任务、原文和 AI 增量假设时可进入 research_leads，不能直接进入 A/B/R。
 - 报告校验失败时不写机会状态。
 - 新报告使用结构化字段与计数校验；旧 Markdown 报告仍按原格式检查完整清单链接及费用产出。
 - 状态文件损坏时明确报错，不自动覆盖。
@@ -220,8 +221,8 @@ OPP.promoted_from -> SIG ID
 
 运行清单另有 `workflow_version=1.0`，包含 status、stages、artifacts、evidence_artifacts、execution_artifacts 与 offline。artifact 以路径和 canonical JSON SHA-256 登记；直接修改会导致摘要不符。
 
-- `benchmarks` 输入沿用本文件对标与扩展结构；使用 research 返回模板。没有合格对标时允许空数组，但必须有非空 `empty_reason`。
-- `assessment` 包含 `scores` 数组、`claims` 数组及 `decision`。每个 A 候选含 overflow 都按稳定 id 提交评分；没有 A 时 scores 可空。编排接收 track、scores、auxiliary_scores、score_basis、validation_plan；评分依据使用 score_basis。
+- `benchmarks` 输入沿用本文件对标与扩展结构；使用 research 返回模板。允许 `{benchmarks: [], leads: [...]}`；仅在 benchmarks 与 leads 都为空时要求非空 `empty_reason`。
+- `assessment` 包含 `scores` 数组、`claims` 数组及 `decision`，可提供 `evidence_reviews` 和按内容 ID 索引的 `publication_reviews`。每个 A 候选含 overflow 都按稳定 id 提交评分；没有 A 时 scores 可空。编排接收 track、scores、auxiliary_scores、score_basis、validation_plan；评分依据使用 score_basis。
 - 输入未带 run_id/as_of 时由本轮补齐；带入其他运行的 benchmarks/assessment 被拒绝。历史材料通过 `--evidence` 导入，不能将未来资料放进过去的研究。
 - `resume --assessment` 完成结构化校验与本地 commit；已提交运行拒绝新输入。`research --parent-run-id` 记录后续关系。
 
@@ -233,6 +234,19 @@ intent_plan 分离 question、search_query、ranking_query；编译后按请求�
 
 ## 11. 报告与付费回执
 
-结构化报告使用 `report_version=1.0`，候选与顶层运行元数据一致，`market_validated=false`。decision 必填四项非空文本；计数含 overflow；有效报告的 commit 回执保存 report_sha256 与 records_sha256。报告还保留 evidence_inventory（证据统计输入）和 run_ledger（整轮费用与尝试状态）；metrics、source_yield 和 Markdown 清单从这些结构化材料重算，不依赖旧 digest_markdown。完整字段见 [报告契约](report-template.md)。
+新内部结构化报告使用 `report_version=1.1`；1.0 只保留历史审计兼容，公开发布需重新校验升级。候选与报告顶层运行元数据一致，`market_validated=false`。decision 必填四项非空文本；计数含 overflow；有效报告的 commit 回执保存 report_sha256 与 records_sha256。报告还保留 evidence_inventory（证据统计输入）和 run_ledger（整轮费用与尝试状态）；metrics、source_yield 和 Markdown 清单从这些结构化材料重算，不依赖旧 digest_markdown。完整字段见 [报告契约](report-template.md)。
 
 付费结果区分本次调用 results/summary、预算保护 execution_budget 和跨批累计 run_ledger。`execution_budget.scope=run` 只在共用持久 journal 时成立；旧无 journal 调用为 batch。unknown 不能自动重买，详细参数与恢复语义见 [TikHub](tikhub-integration.md)。
+
+
+## 12. 网站公开契约与探索状态
+
+发行版本 4.1.0、研究 schema 3.0、内部 report 1.1、行业 catalog/coverage 2.0 与公开 contract 1.0.0 分别版本化，不能混用。网站消费经过白名单、引用和发布校验的公开数据，不直接读取 execution_results、原始评论、缓存链接和本地路径。字段定义、示例与兼容策略见 [网站契约](website-contract.md)。
+
+LEAD 必填 title、target_user、problem_or_desire、wedge、industry_ids、ai_value 和可用 evidence；行业必须属于本轮允许范围。第一次分配 lead_id 后，后续修订必须继续传该 ID，文案与证据变化产生 revision_id，不用新标题替换业务身份。research_status 包含 needs_verification、observed_need、needs_review、archived、disproven、promoted；升级保留 promoted_to，且目标必须是已通过门槛并已入库的 OPP/SIG。
+
+`ai_value.status=hypothesis` 表示待实验的增量假设。`supported` 额外需要原文引用及 reviewer/reviewed_at/rationale，公开导出仍会核验这些引用。四项重复套话不能代替 baseline/capability/user_benefit/incremental_advantage 的具体对比。
+
+coverage 2.0 分开统计 material、词面 related、页面 verified、语义 reviewed、近期用户行为、官方收费对标、替代与反证。`relevance_review` 需 status、reviewer、reviewed_at，并绑定 evidence_id+revision_id，或匹配当前 content_hash 的 content_sha256；过期修订、未来或无效审阅不能算完成。`industry-coverage.tasks` 保留任务/语言的实际尝试与缺口，未执行计划、无实时价格和历史复用不计为本轮成功采集。
+
+`evidence-index` 与 `research-followup.review_queue` 保存未审阅材料；selected 仅表示进入阅读包。industry-packets 提供逐方向有界包。`completed` 是文件交接结束，不能等同于市场覆盖完整或客户需求已验证。

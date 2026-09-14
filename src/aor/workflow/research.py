@@ -163,7 +163,7 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
                    batch_id: str, resume: bool = False, max_attempts: int = 1,
                    resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = ()) -> dict:
     """显式预算入口，整轮补证共用请求日志；不自动决定购买哪些证据。"""
-    from normalize_tikhub_results import normalize_documents
+    from normalize_tikhub_results import PARSER_VERSION, normalize_documents
     from tikhub_query import execute_plan
 
     directory = _run_dir(home, run_id)
@@ -197,6 +197,7 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
         _artifact(directory, manifest, evidence_name, normalized)
         manifest["evidence_artifacts"].append(evidence_name)
         manifest.setdefault("normalized_executions", []).append(invocation)
+        manifest.setdefault("normalized_versions", {})[invocation] = PARSER_VERSION + ":" + manifest["artifacts"][invocation]["sha256"]
         for name in ("expanded", "tiered", "report", "receipt"):
             manifest["artifacts"].pop(name, None)
         _refresh_library(directory, manifest)
@@ -205,7 +206,8 @@ def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: fl
 
 
 def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str = "discovery",
-                  max_requests: int = 12) -> dict:
+                  max_requests: int = 12, resume: bool = False, max_attempts: int = 1,
+                  resolve_unknown: tuple[str, ...] = (), retry_failed: tuple[str, ...] = ()) -> dict:
     """显式一次性预算发现；缺价格来源记录跳过，不阻断其他行业。"""
     from aor.sources.discovery import prepare_discovery_plan
     from tikhub_query import fetch_live_pricing
@@ -217,21 +219,40 @@ def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str
             raise ValueError("离线研究不会执行付费发现")
         if manifest["status"] in {"completed", "committing"}:
             raise ValueError("已提交研究不能增加付费采集；请另建研究运行")
-        ledger = _paid_ledger(directory) or {}
-        plan = prepare_discovery_plan(_load_artifact(manifest, "tikhub-plan"), fetch_live_pricing(),
+        saved_name = "paid-" + canonical_sha256(batch_id)[:12] + "-plan"
+        ready_name = "discovery-ready-" + canonical_sha256(batch_id)[:12]
+        existing = saved_name if saved_name in manifest["artifacts"] else ready_name if ready_name in manifest["artifacts"] else None
+        if existing:
+            if not resume:
+                raise ValueError("发现批次已规划；恢复请使用 --resume-batch，新的研究批次使用新的 batch-id")
+            _load_artifact(manifest, existing)
+            path = Path(manifest["artifacts"][existing]["path"])
+        else:
+            ledger = _paid_ledger(directory) or {}
+            plan = prepare_discovery_plan(_load_artifact(manifest, "tikhub-plan"), fetch_live_pricing(),
                                       max_cost_usd=max_cost_usd, prior_cost_usd=ledger.get("list_attempted_cost_usd_exact", "0"),
                                       max_requests=max_requests)
-        path = _artifact(directory, manifest, "discovery-ready-" + canonical_sha256(batch_id)[:12], plan)
+            path = _artifact(directory, manifest, ready_name, plan)
+            research_plan = _load_artifact(manifest, "plan")
+            planned_paid = research_plan["retrieval_plans"]["tikhub"]
+            planned_paid["skipped_requests"] = plan.get("skipped_requests", [])
+            planned_paid["substitutions"] = plan.get("substitutions", [])
+            for request in plan.get("requests", []):
+                if request["id"] not in {r["id"] for r in planned_paid.get("requests", [])}:
+                    planned_paid.setdefault("requests", []).append(request)
+            _artifact(directory, manifest, "plan", research_plan)
         _save(directory, manifest)
-    return run_paid_batch(home, run_id, path, max_cost_usd=max_cost_usd, batch_id=batch_id)
+    return run_paid_batch(home, run_id, path, max_cost_usd=max_cost_usd, batch_id=batch_id, resume=resume,
+                          max_attempts=max_attempts, resolve_unknown=resolve_unknown, retry_failed=retry_failed)
 
 
 def _normalize_pending(directory: Path, manifest: dict) -> None:
     """已产生费用的执行先登记，解析失败不影响记账；恢复只重跑解析。"""
-    from normalize_tikhub_results import normalize_documents
+    from normalize_tikhub_results import PARSER_VERSION, normalize_documents
 
     for name in manifest["execution_artifacts"]:
-        if name in manifest.get("normalized_executions", []):
+        version_key = PARSER_VERSION + ":" + manifest["artifacts"][name]["sha256"]
+        if manifest.get("normalized_versions", {}).get(name) == version_key:
             continue
         payload = _load_artifact(manifest, name)
         path = manifest["artifacts"][name]["path"]
@@ -241,6 +262,8 @@ def _normalize_pending(directory: Path, manifest: dict) -> None:
         if evidence_name not in manifest["evidence_artifacts"]:
             manifest["evidence_artifacts"].append(evidence_name)
         manifest.setdefault("normalized_executions", []).append(name)
+        manifest["normalized_executions"] = list(dict.fromkeys(manifest["normalized_executions"]))
+        manifest.setdefault("normalized_versions", {})[name] = version_key
         for downstream in ("expanded", "tiered", "report", "receipt"):
             manifest["artifacts"].pop(downstream, None)
         _save(directory, manifest)
@@ -272,7 +295,16 @@ def _finish_report(directory: Path, manifest: dict) -> dict:
     receipt = commit_report(Path(manifest["home"]), report)
     _artifact(directory, manifest, "receipt", receipt)
     manifest["stages"]["commit"] = {"finished_at": _now(), "report_sha256": receipt["report_sha256"]}
-    return _handoff(directory, manifest, "completed", "阅读 summary.md 和完整报告；下一步开展验证实验或创建补证运行。")
+    if report.get("report_version") == "1.1":
+        from aor.reporting.public import write_public_bundle
+        public = write_public_bundle(report, directory / "public")
+        _artifact(directory, manifest, "publication", public)
+    incomplete = bool((report.get("research_quality") or {}).get("coverage_incomplete", True))
+    manifest["research_completion"] = {"workflow_complete": True, "market_research_complete": not incomplete,
+                                        "market_validated": False}
+    return _handoff(directory, manifest, "completed", "研究档案已保存；" +
+                    ("仍有需求、商业证据或审阅缺口，按 research-followup.json 继续补查。" if incomplete else
+                     "阅读 summary.md 和完整报告，按实验计划继续验证。") + "网站读取 public/public.v1.json。")
 
 
 def _collect(directory: Path, manifest: dict, *, collect: bool) -> None:
@@ -303,7 +335,7 @@ def _evidence_payloads(manifest: dict) -> list[dict]:
 def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]:
     """原始材料入可重建索引，再将历史相关证据交给宿主。"""
     from aor.evidence.claims import build_evidence_packet
-    from aor.evidence.identity import canonical_evidence_url
+    from aor.evidence.identity import canonical_evidence_url, evidence_identity_key
     from aor.storage.evidence_library import EvidenceLibrary
 
     library = EvidenceLibrary(Path(manifest["home"]) / "evidence-library")
@@ -312,15 +344,20 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
         rows = [*payload.get("evidence", []), *payload.get("comments", [])]
         historical = payload.get("run_id") and payload["run_id"] != manifest["run_id"]
         if historical:
-            rows = [{"observed_at": payload.get("as_of"), "run_id": payload["run_id"], **row} for row in rows]
+            rows = [{"observed_at": payload.get("as_of"), "run_id": payload["run_id"], **row,
+                     "historical_import": True} for row in rows]
         library.ingest(rows, as_of=manifest["as_of"], run_id=None if historical else manifest["run_id"],
                        raw_ref=manifest["artifacts"][name]["path"])
+        # _load_artifact 已核验产物摘要；集合登记与证据日志分离，后续无新解析的 run 也复用失效状态。
+        library.register_derivations([payload], known_on=manifest["as_of"], run_id=manifest["run_id"],
+                                     source=manifest["artifacts"][name]["path"])
     if "benchmarks" in manifest["artifacts"]:
         benchmarks = _load_artifact(manifest, "benchmarks")
         rows = [item for benchmark in [*benchmarks.get("benchmarks", []), *benchmarks.get("leads", [])]
                 for item in benchmark.get("evidence", [])]
         known_urls = {canonical_evidence_url(item.get("url")) for item in
-                      library.search("", as_of=manifest["as_of"], limit=None, include_retracted=True)}
+                      library.search("", as_of=manifest["as_of"], limit=None, include_retracted=True,
+                                     include_superseded=True)}
         # 对标中的事实摘要是研究判断，不能覆盖已导入的同页原文修订。
         additions = [item for item in rows if not canonical_evidence_url(item.get("url"))
                      or canonical_evidence_url(item.get("url")) not in known_urls]
@@ -329,7 +366,10 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
     plan = _load_artifact(manifest, "plan")
     scope = plan.get("research_scope") or {}
     query = manifest.get("focus") or scope.get("task") or ""
-    context = library.search(query, as_of=manifest["as_of"], run_id=manifest["run_id"], limit=100)
+    context = library.search(query, as_of=manifest["as_of"], run_id=manifest["run_id"], limit=100,
+                             include_retracted=True, include_superseded=True)
+    all_current = library.search("", as_of=manifest["as_of"], run_id=manifest["run_id"], limit=None,
+                                 include_retracted=True, include_superseded=True)
     assessment = _load_artifact(manifest, "assessment") if "assessment" in manifest["artifacts"] else {}
     claims = assessment.get("claims") or []
     referenced_ids = {ref.get("evidence_id") for claim in claims for ref in claim.get("evidence_refs", [])}
@@ -339,55 +379,105 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
     benchmark_urls = {canonical_evidence_url(item.get("url")) for benchmark in
                       (_load_artifact(manifest, "benchmarks").get("benchmarks", []) if "benchmarks" in manifest["artifacts"] else [])
                       for item in benchmark.get("evidence", [])}
+    imported_keys = {evidence_identity_key(row) for payload in _evidence_payloads(manifest)
+                     for row in [*payload.get("evidence", []), *payload.get("comments", [])]}
     seen = {row["evidence_id"] for row in context}
-    for row in library.search("", as_of=manifest["as_of"], run_id=manifest["run_id"], limit=None):
+    for row in all_current:
         identities = {row.get("id"), row["evidence_id"], *row.get("aliases", [])}
         if row["evidence_id"] not in seen and (manifest["run_id"] in row.get("run_ids", [])
-                or identities & referenced_ids or canonical_evidence_url(row.get("url")) in benchmark_urls):
+                or identities & referenced_ids or evidence_identity_key(row) in imported_keys
+                or canonical_evidence_url(row.get("url")) in benchmark_urls):
             context.append(row)
             seen.add(row["evidence_id"])
+    from aor.evidence.derivations import select_active_derivations
+    context, superseded = select_active_derivations(context, library.derivation_payloads(as_of=manifest["as_of"]))
+    _artifact(directory, manifest, "superseded-derivations", {**_metadata(manifest), "evidence": superseded})
+    latest_context = deepcopy(all_current)
+    from aor.reporting.report import evidence_current_state
+    _artifact(directory, manifest, "current-evidence-state", evidence_current_state(latest_context))
+    references = [ref for claim in claims for ref in claim.get("evidence_refs", [])]
+    for judgment in assessment.get("scores", []):
+        for basis in (judgment.get("score_basis") or {}).values():
+            references.extend(basis.get("evidence_refs", []))
+    if "benchmarks" in manifest["artifacts"]:
+        inputs = _load_artifact(manifest, "benchmarks")
+        for item in [*inputs.get("benchmarks", []), *inputs.get("leads", [])]:
+            references.extend(item.get("evidence", []))
+            references.extend((item.get("ai_value") or {}).get("evidence_refs", []))
+    known_revisions = {(r["evidence_id"], r["revision_id"]) for r in [*context, *superseded]}
+    for ref in references:
+        if not ref.get("revision_id"):
+            continue
+        stored = library.resolve(ref, as_of=manifest["as_of"])
+        key = (stored["evidence_id"], stored["revision_id"])
+        if key not in known_revisions:
+            stored["reused_for_run_id"] = manifest["run_id"]
+            stored["historical_reference_only"] = True
+            context.append(stored)
+            known_revisions.add(key)
+    context.extend(superseded)
     experiment_path = Path(manifest["home"]) / "state/experiment-events.jsonl"
     experiments = [json.loads(line) for line in experiment_path.read_text().splitlines() if line.strip()] if experiment_path.exists() else []
-    from aor.evidence.selection import evidence_index
+    from aor.evidence.selection import evidence_index, build_industry_packets
     from aor.sources.industries import industry_ids
     # 行业来自查询链路，历史原文及版本保持原样。
     for row in context:
         row["industry_ids"] = industry_ids(row)
+    reviews = assessment.get("evidence_reviews") or []
+    from aor.evidence.retrieval import resolve_evidence_reference
+    for review in reviews:
+        resolve_evidence_reference(review, context, require_revision=True)
+    if reviews:
+        library.register_reviews(reviews, known_on=manifest["as_of"], run_id=manifest["run_id"],
+                                 source=manifest["artifacts"]["assessment"]["path"])
+        # 由持久日志选择最后有效复核；重放旧 assessment 不能覆盖后来 unrelated 的结论。
+        context = library.apply_reviews(context, as_of=manifest["as_of"])
+        latest_context = library.apply_reviews(latest_context, as_of=manifest["as_of"])
     packet = build_evidence_packet(context, claims=claims, as_of=manifest["as_of"], run_id=manifest["run_id"],
                                    experiments=experiments, max_items=30, max_chars=18000)
+    packet["reviewed_evidence_refs"] = [{k: row[k] for k in ("evidence_id", "revision_id")} for row in context if row.get("relevance_review")]
     _artifact(directory, manifest, "evidence-context", {**_metadata(manifest), "evidence": context})
     _artifact(directory, manifest, "evidence-packet", packet)
     _artifact(directory, manifest, "evidence-index", evidence_index(context, packet))
+    _artifact(directory, manifest, "industry-packets", build_industry_packets(
+        context, as_of=manifest["as_of"], run_id=manifest["run_id"], selected_industries=plan.get("selected_industries", [])))
     from aor.opportunity.exploration import lead_history
     _artifact(directory, manifest, "research-lead-history", {**_metadata(manifest),
-              "leads": lead_history(Path(manifest["home"]), as_of=manifest["as_of"])})
+              "leads": lead_history(Path(manifest["home"]), as_of=manifest["as_of"], evidence=latest_context)})
     from aor.sources.coverage import build_industry_coverage
-    _artifact(directory, manifest, "industry-coverage", build_industry_coverage(plan, [*_evidence_payloads(manifest),
-              *[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]]]))
+    coverage = build_industry_coverage(plan, [*_evidence_payloads(manifest),
+              {**_metadata(manifest), "evidence": context},
+              *[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]]])
+    _artifact(directory, manifest, "industry-coverage", coverage)
+    index = evidence_index(context, packet)
+    _artifact(directory, manifest, "research-followup", {**_metadata(manifest),
+        "industry_tasks": coverage.get("tasks", []), "review_queue": index.get("review_queue", []),
+        "completion_note": "保存报告不代表市场研究完整；按真实材料补齐需求、商业对标、替代与反证，缺失保持未知。"})
     return context, packet
 
 
 def _prepare_tiered(directory: Path, manifest: dict) -> dict:
-    from aor.evidence.identity import canonical_evidence_url
+    from aor.evidence.retrieval import resolve_evidence_reference
     from aor.storage.evidence_library import EvidenceLibrary
 
     benchmarks = _load_artifact(manifest, "benchmarks")
-    context = EvidenceLibrary(Path(manifest["home"]) / "evidence-library").search(
-        "", as_of=manifest["as_of"], limit=None, include_retracted=True)
-    by_url = {canonical_evidence_url(item.get("url")): item for item in context if item.get("url")}
+    library = EvidenceLibrary(Path(manifest["home"]) / "evidence-library")
+    current_states = _load_artifact(manifest, "current-evidence-state") if "current-evidence-state" in manifest["artifacts"] else {}
     for benchmark in [*benchmarks.get("benchmarks", []), *benchmarks.get("leads", [])]:
         for item in benchmark.get("evidence", []):
-            stored = by_url.get(canonical_evidence_url(item.get("url")))
+            stored = library.resolve(item, as_of=manifest["as_of"])
             if stored:
                 # 商业事实和分层输入保留；引用使用证据库实际原文及版本。
                 for key in ("evidence_id", "library_evidence_id", "revision_id", "original_text", "text", "comments", "observed_at", "recorded_on", "aliases",
                             "original_url", "original_publisher", "original_author", "publisher_id", "is_demo", "retracted", "status"):
                     if key in stored:
                         item[key] = deepcopy(stored[key])
-        supports = {canonical_evidence_url(item.get("url")): item for item in benchmark.get("evidence", [])}
+                current = current_states.get(stored["evidence_id"], {})
+                if current.get("retracted") or current.get("status") in {"retracted", "withdrawn", "superseded", "not_current"}:
+                    item["status"] = "retracted" if current.get("retracted") else current["status"]
         for field in ("payment_signals", "demand_signals"):
             for signal in benchmark.get(field, []):
-                source = supports.get(canonical_evidence_url(signal.get("url"))) or {}
+                source = resolve_evidence_reference(signal, benchmark.get("evidence", []))
                 if source.get("revision_id"):
                     signal["evidence_revision_id"] = source["revision_id"]
                 for key in ("retracted", "status", "is_demo"):
@@ -407,7 +497,8 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
     _artifact(directory, manifest, "expanded", expanded)
     tiered = filter_ideas(expanded)
     from aor.opportunity.exploration import normalize_leads
-    explicit_leads = normalize_leads(benchmarks.get("leads", []), run_id=manifest["run_id"], as_of=manifest["as_of"])
+    explicit_leads = normalize_leads(benchmarks.get("leads", []), run_id=manifest["run_id"], as_of=manifest["as_of"],
+                                     allowed_industries=set(plan["selected_industries"]) if plan.get("selected_industries") else None)
     merged_leads = {r["lead_id"]: r for r in [*tiered.get("research_leads", []), *explicit_leads]}
     tiered["research_leads"] = list(merged_leads.values())
     for lead in tiered["research_leads"]:
@@ -423,10 +514,20 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
     return tiered
 
 
-def _apply_assessment(tiered: dict, assessment: dict) -> dict:
+def _apply_assessment(tiered: dict, assessment: dict, context: list[dict] | None = None) -> dict:
     from score_candidates import score_candidate
 
     result = deepcopy(tiered)
+    from aor.reporting.public import review_content_hash
+    reviews = assessment.get("publication_reviews") or {}
+    for row in [*report_records(result), *result.get("research_leads", [])]:
+        if context:
+            from aor.evidence.retrieval import resolve_evidence_reference
+            for ref in row.get("evidence", []):
+                stored = resolve_evidence_reference(ref, context)
+                for key in ("relevance_review", "semantic_relevance_status", "evidence_role"):
+                    if key in stored:
+                        ref[key] = deepcopy(stored[key])
     judgments = {row["id"]: row for row in assessment.get("scores", [])}
     for bucket in (result, result.get("overflow") or {}):
         scored = []
@@ -438,6 +539,38 @@ def _apply_assessment(tiered: dict, assessment: dict) -> dict:
             scored.append(score_candidate({**row, **{key: judgment[key] for key in allowed if key in judgment}}))
         if "deep_candidates" in bucket:
             bucket["deep_candidates"] = sorted(scored, key=lambda row: -row["total_score"])
+    for row in [*report_records(result), *result.get("research_leads", [])]:
+        identifier = row.get("lead_id") or row.get("id")
+        if identifier in reviews:
+            review = reviews[identifier]
+            if review.get("content_sha256") != review_content_hash(row):
+                raise ValueError("发布复核对应的最终内容已变化，需要重新审阅")
+            row["publication_review"] = deepcopy(review)
+    return result
+
+
+def reparse_run(home: Path, run_id: str) -> dict:
+    """在新运行离线重解析已付费原始响应；不重发请求、不改历史费用或报告。"""
+    from normalize_tikhub_results import PARSER_VERSION, normalize_documents
+    source = _read(_run_dir(home, run_id) / "run.json")
+    parent_plan = _load_artifact(source, "plan")
+    child = start_research(home, as_of=date.fromisoformat(source["as_of"]), parent_run_id=run_id, offline=True,
+                           focus=source.get("focus"), scope=parent_plan.get("research_scope"))
+    directory = Path(child["run_path"])
+    files, provenance = [], []
+    for name in source["execution_artifacts"]:
+        payload = _load_artifact(source, name)
+        raw_path = source["artifacts"][name]["path"]
+        normalized = normalize_documents([payload], source_files=[raw_path])
+        normalized["reparsed_from"] = {"run_id": run_id, "artifact": name, "sha256": source["artifacts"][name]["sha256"],
+                                      "parser_version": PARSER_VERSION}
+        path = directory / f"reparsed-{name}.json"
+        atomic_json(path, normalized)
+        files.append(path)
+        provenance.append(normalized["reparsed_from"])
+    result = resume_research(home, child["run_id"], evidence_files=files, collect=False)
+    atomic_json(directory / "reparse-provenance.json", {"parent_run_id": run_id, "parser_version": PARSER_VERSION,
+                                                         "sources": provenance, "new_paid_requests": 0})
     return result
 
 
@@ -501,24 +634,25 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                             template={**_metadata(manifest), "scores": [{"id": row["id"], "track": None,
                                       "scores": {}, "auxiliary_scores": {}, "score_basis": {}}
                                       for row in report_records(tiered) if row["evidence_tier"] == "A"],
-                                      "claims": [], "decision": {"summary": None, "primary_id": None,
+                                      "claims": [], "evidence_reviews": [], "publication_reviews": {}, "decision": {"summary": None, "primary_id": None,
                                       "largest_unknown": None, "next_action": None, "stop_condition": None}})
         if "report" not in manifest["artifacts"]:
             from aor.evidence.claims import validate_claims
 
             assessment = _load_artifact(manifest, "assessment")
             claims = validate_claims(assessment.get("claims") or [], context, as_of=manifest["as_of"])
-            tiered = _apply_assessment(tiered, assessment)
+            tiered = _apply_assessment(tiered, assessment, context)
             _artifact(directory, manifest, "tiered", tiered)
             profile_assessment = None
             if "profile" in manifest["artifacts"]:
                 from manage_validation import assess_candidates
 
                 profile_assessment = assess_candidates(report_records(tiered), _load_artifact(manifest, "profile"))
-            report = build_report(tiered, decision=assessment.get("decision") or {}, evidence=evidence,
+            report = build_report(tiered, decision=assessment.get("decision") or {}, evidence=[*evidence, {**_metadata(manifest), "evidence": context}],
                                   executions=[_load_artifact(manifest, name) for name in manifest["execution_artifacts"]],
                                   profile_assessment=profile_assessment, source_coverage=_coverage(manifest, evidence),
                                   claims=claims, claim_evidence=context, run_ledger=_paid_ledger(directory),
+                                  current_evidence_state=_load_artifact(manifest, "current-evidence-state"),
                                   research_plan=_load_artifact(manifest, "plan"), evidence_packet=packet)
             _artifact(directory, manifest, "report", report)
         return _finish_report(directory, manifest)
@@ -528,6 +662,7 @@ def inspect_run(home: Path, run_id: str) -> dict:
     directory = _run_dir(home, run_id)
     manifest = _read(directory / "run.json")
     return {**_metadata(manifest), "status": manifest["status"], "next_action": manifest.get("next_action"),
+            "research_completion": manifest.get("research_completion"),
             "run_path": str(directory), "input_template": manifest.get("input_template"),
             "artifacts": manifest["artifacts"], "stages": manifest["stages"],
             "summary_path": str(directory / "summary.md") if (directory / "summary.md").exists() else None,

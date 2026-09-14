@@ -22,6 +22,8 @@ COMMANDS = {
     "state": "manage_state.py",
     "digest": "build_result_digest.py",
     "report": "validate_report.py",
+    "export": "export_public.py",
+    "leads": "manage_leads.py",
     "validation": "manage_validation.py",
     "research": "research.py",
     "resume": "research.py",

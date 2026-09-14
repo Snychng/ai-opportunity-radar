@@ -11,7 +11,8 @@ from build_result_digest import build_result_digest
 from contracts import canonical_sha256, validate_record_id, validate_stage_envelope
 from filter_ideas import classify_candidate
 
-REPORT_VERSION = "1.0"
+REPORT_VERSION = "1.1"
+SUPPORTED_REPORT_VERSIONS = {"1.0", REPORT_VERSION}
 BUCKETS = (("deep_candidates", "A"), ("validated_ideas", "B"), ("regional_signals", "R"))
 
 
@@ -21,21 +22,51 @@ def report_records(tiered: dict) -> list[dict]:
     return [row for key, _ in BUCKETS for row in [*tiered.get(key, []), *overflow.get(key, [])]]
 
 
+def evidence_current_state(evidence: list[dict]) -> dict:
+    """与审计引用分开的当前对象状态；不猜测两个未区分版本哪个较新。"""
+    result = {}
+    for row in evidence:
+        if row.get("historical_reference_only"):
+            continue
+        identifier = row.get("evidence_id")
+        if not identifier:
+            continue
+        state = {"current_revision_id": row.get("revision_id"), "retracted": row.get("retracted") is True,
+                 "status": (row.get("derivation_status") if row.get("derivation_status") in {"superseded", "needs_review"}
+                            else row.get("status") or "active")}
+        if identifier in result and (result[identifier]["current_revision_id"] != state["current_revision_id"]
+                                     or result[identifier]["status"] == "ambiguous"):
+            state["status"] = "ambiguous"
+            state["retracted"] = state["retracted"] or result[identifier]["retracted"]
+        result[identifier] = state
+    return result
+
+
 def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None = None,
                  evidence: list[dict] | None = None, profile_assessment: dict | None = None,
                  source_coverage: dict | None = None, claims: list[dict] | None = None,
                  claim_evidence: list[dict] | None = None, run_ledger: dict | None = None,
-                 research_plan: dict | None = None, evidence_packet: dict | None = None) -> dict:
+                 research_plan: dict | None = None, evidence_packet: dict | None = None,
+                 current_evidence_state: dict | None = None) -> dict:
     """只组织已研究的数据，不代填市场事实或评分。"""
     inventory = [{**{key: payload[key] for key in ("schema_version", "run_id", "as_of", "reused_for_run_id") if key in payload},
                   "evidence": [{key: row[key] for key in ("id", "url", "original_url", "source", "industry_ids", "query_metadata",
-                               "intent_refs", "request_ids", "query_id", "relevance_status", "verification", "is_demo", "retracted", "status") if key in row}
+                               "intent_refs", "request_ids", "query_id", "relevance_status", "verification", "is_demo", "retracted", "status",
+                               "evidence_id", "library_evidence_id", "revision_id", "evidence_kind", "source_object_id", "parent_id",
+                               "parent_comment_id", "url_kind", "evidence_role", "published_at", "published_at_raw", "published_at_interval",
+                               "window_status", "language", "semantic_review", "relevance_review", "review_status", "reviewed_at",
+                               "reviewed_by", "subtrack_ids", "task_ids", "task_id", "provenance", "query_scope", "retrieval", "query_group",
+                               "semantic_relevance_status", "date_confidence", "relevance_basis", "date_basis",
+                               "object_identity", "identity_version", "source_item_id", "content_hash", "reused_for_run_id", "run_ids",
+                               "historical_reference_only", "historical_import", "derivation_refs", "derivation_status",
+                               "source_execution_sha256", "derive_set_id", "derivation_reason") if key in row}
                                for row in [*payload.get("evidence", []), *payload.get("comments", [])]],
                   "requests": deepcopy(payload.get("requests", []))} for payload in evidence or []]
     from aor.sources.coverage import build_industry_coverage, research_quality
     coverage_plan = deepcopy(research_plan or {})
     coverage = build_industry_coverage(coverage_plan, [*inventory, *(executions or [])], tiered)
-    selection = {"omitted": deepcopy((evidence_packet or {}).get("omitted", {}))}
+    selection = {"omitted": deepcopy((evidence_packet or {}).get("omitted", {})),
+                 "reviewed_evidence_refs": deepcopy((evidence_packet or {}).get("reviewed_evidence_refs", []))}
     digest = build_result_digest(tiered, executions=executions or [], evidence_payloads=inventory, run_ledger=run_ledger)
     report = {
         **validate_stage_envelope(tiered), "report_version": REPORT_VERSION,
@@ -43,10 +74,12 @@ def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None 
         "tiered": deepcopy(tiered), "decision": deepcopy(decision),
         "metrics": digest["metrics"], "source_yield": digest["source_yield"],
         "source_coverage": source_coverage or {}, "claims": claims or [], "claim_evidence": claim_evidence or [],
+        "current_evidence_state": current_evidence_state if current_evidence_state is not None else evidence_current_state(claim_evidence or []),
         "profile_assessment": profile_assessment, "market_validated": False,
         "execution_results": executions or [], "evidence_inventory": inventory, "run_ledger": run_ledger,
         "coverage_plan": coverage_plan, "industry_coverage": coverage, "evidence_selection": selection,
-        "research_quality": research_quality(coverage, selection, tiered),
+        "research_quality": research_quality(coverage, selection, tiered,
+                evidence=claim_evidence or [row for payload in inventory for row in payload["evidence"]]),
     }
     validation = validate_structured_report(report)
     if not validation["valid"]:
@@ -60,26 +93,64 @@ def validate_structured_report(report: Any) -> dict:
     warnings: list[str] = []
     try:
         envelope = validate_stage_envelope(report)
-        if not envelope.get("run_id") or report.get("report_version") != REPORT_VERSION:
-            raise ValueError("结构化报告必须包含运行元数据及 report_version=1.0")
+        if not envelope.get("run_id") or report.get("report_version") not in SUPPORTED_REPORT_VERSIONS:
+            raise ValueError("结构化报告必须包含运行元数据及受支持的 report_version")
+        legacy = report["report_version"] == "1.0"
+        if legacy:
+            warnings.append("旧版报告仅用于历史审计；公开发布前须通过新研究修订引用与契约")
+        else:
+            states = report.get("current_evidence_state")
+            expected_states = evidence_current_state(report.get("claim_evidence") or [])
+            if not isinstance(states, dict) or any(states.get(key) != value for key, value in expected_states.items()):
+                errors.append("当前证据状态与原文目录不一致")
+            elif any(not isinstance(key, str) or not key or not isinstance(value, dict)
+                     or set(value) != {"current_revision_id", "retracted", "status"}
+                     or not isinstance(value["current_revision_id"], str)
+                     or not value["current_revision_id"].startswith(key + ":")
+                     or not isinstance(value["retracted"], bool)
+                     or value["status"] not in {"active", "retracted", "withdrawn", "superseded", "needs_review",
+                                                "ambiguous", "deleted", "removed", "not_current"}
+                     for key, value in states.items()):
+                errors.append("全库当前证据状态的对象、修订或状态格式无效")
         tiered = report["tiered"]
         if "industry_coverage" in report:
             from aor.sources.coverage import build_industry_coverage, research_quality
             actual_coverage = build_industry_coverage(report.get("coverage_plan") or {},
-                    [*(report.get("evidence_inventory") or []), *(report.get("execution_results") or [])], tiered)
+                    [*(report.get("evidence_inventory") or []), *(report.get("execution_results") or [])], tiered,
+                    version=(report.get("industry_coverage") or {}).get("version", "1.0"))
             if report["industry_coverage"] != actual_coverage:
                 errors.append("行业覆盖与实际请求及证据不一致")
-            if report.get("research_quality") != research_quality(actual_coverage, report.get("evidence_selection") or {}, tiered):
+            quality_options = {}
+            if (report.get("research_quality") or {}).get("review_scope") == "active_context":
+                quality_options["evidence"] = report.get("claim_evidence") or [row for payload in
+                        report.get("evidence_inventory", []) for row in payload.get("evidence", [])]
+            if report.get("research_quality") != research_quality(actual_coverage, report.get("evidence_selection") or {}, tiered, **quality_options):
                 errors.append("研究覆盖结论与结构化输入不一致")
         from aor.opportunity.exploration import exploration_lead
+        plan = report.get("coverage_plan") or {}
+        allowed_industries = set(plan["selected_industries"]) if plan.get("selected_industries") else None
         lead_ids = set()
         for lead in tiered.get("research_leads", []):
-            checked = exploration_lead(lead, lead.get("missing_requirements", []), require_ai=True)
+            checked = exploration_lead(lead, lead.get("missing_requirements", []), require_ai=True,
+                                       strict=not legacy, allowed_industries=allowed_industries)
             if checked is None or checked["lead_id"] != lead.get("lead_id") or lead.get("market_validated") is not False:
                 errors.append("探索线索缺少原文依据、AI 价值假设或合法身份")
             if lead.get("lead_id") in lead_ids:
                 errors.append("探索线索重复")
             lead_ids.add(lead.get("lead_id"))
+            if not legacy and report.get("claim_evidence"):
+                from aor.evidence.retrieval import resolve_evidence_reference
+                for ref in lead.get("evidence", []):
+                    if not ref.get("evidence_id") or not ref.get("revision_id"):
+                        errors.append("线索引用必须固定 evidence_id 和 revision_id")
+                        continue
+                    resolve_evidence_reference(ref, report["claim_evidence"])
+                value = lead.get("ai_value") or {}
+                if value.get("status") == "supported":
+                    from aor.evidence.claims import validate_claims
+                    validate_claims([{"id": "ai-" + lead["lead_id"], "statement": value["incremental_advantage"],
+                                      "verification_status": "supports", "evidence_refs": value["evidence_refs"]}],
+                                    report["claim_evidence"], as_of=report["as_of"])
         if validate_stage_envelope(tiered) != envelope:
             raise ValueError("报告与候选的运行元数据不一致")
         seen: set[str] = set()
@@ -89,6 +160,9 @@ def validate_structured_report(report: Any) -> dict:
             counts[tier] = len(rows)
             for row in rows:
                 identifier = validate_record_id(row.get("id"), kind="signal" if tier == "R" else "opportunity")
+                if not legacy:
+                    from aor.opportunity.exploration import validate_lead_fields
+                    validate_lead_fields(row, allowed_industries=allowed_industries)
                 if identifier in seen:
                     errors.append(f"报告存在重复记录：{identifier}")
                 seen.add(identifier)
@@ -104,7 +178,7 @@ def validate_structured_report(report: Any) -> dict:
         metrics = report.get("metrics") or {}
         expected_digest = build_result_digest(tiered, executions=report.get("execution_results") or [],
                                               evidence_payloads=report.get("evidence_inventory") or [],
-                                              run_ledger=report.get("run_ledger"))
+                                              run_ledger=report.get("run_ledger"), metrics_version=metrics.get("metrics_version", "1.0"))
         # 旧 1.0 报告没有探索线索字段；仅允许缺省的零值新增指标，保留原报告哈希。
         if "research_leads" not in tiered and "industry_coverage" not in report:
             for field in ("research_lead_count", "lead_used_normalized_evidence_count"):
@@ -132,7 +206,7 @@ def validate_structured_report(report: Any) -> dict:
             from aor.evidence.claims import validate_claims
 
             validate_claims(report["claims"], report.get("claim_evidence") or [], as_of=report["as_of"])
-        elif seen:
+        elif seen or lead_ids:
             warnings.append("尚未提供独立商业主张清单，现有证据资格不代表原文语义已经自动核验")
     except (ValueError, TypeError, KeyError) as exc:
         errors.append(str(exc))
@@ -172,7 +246,8 @@ def render_report(report: dict) -> str:
     if not report.get("source_coverage"):
         lines.append("| 已有材料 | 本轮未执行实时采集 |")
     digest = build_result_digest(report["tiered"], executions=report.get("execution_results") or [],
-                                 evidence_payloads=report.get("evidence_inventory") or [], run_ledger=report.get("run_ledger"))
+                                 evidence_payloads=report.get("evidence_inventory") or [], run_ledger=report.get("run_ledger"),
+                                 metrics_version=(report.get("metrics") or {}).get("metrics_version", "1.0"))
     lines.extend(["", digest["markdown"].replace("已验证快速点子", "收费对标支持的候选")
                   .replace("B 级快速点子", "B 级收费对标支持的候选"), ""])
     if report.get("run_ledger"):
@@ -223,7 +298,7 @@ def render_industries(report: dict) -> str:
     lines = ["## 行业全景", "", "| 方向 | 本轮调查 | 请求 | 相关/已核验材料 | 正式候选 | 待验证线索 |", "|---|---|---:|---:|---:|---:|"]
     for row in (report.get("industry_coverage") or {}).get("industries", []):
         name = row["name"].replace("|", "/").replace("\n", " ")
-        lines.append(f"| {name} | {labels[row['status']]} | {row['request_count']} | "
+        lines.append(f"| {name} | {labels.get(row['status'], row['status'])} | {row['request_count']} | "
                      f"{row['related_evidence_count']}/{row['verified_evidence_count']} | {row['qualified_count']} | {row['lead_count']} |")
     lines.extend(["", "相关材料不等于需求成立；未调查和无结果不等于没有市场机会。", ""])
     return "\n".join(lines)

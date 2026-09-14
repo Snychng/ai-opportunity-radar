@@ -9,18 +9,13 @@ from collections.abc import Iterable, Mapping
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
+from aor.evidence.identity import evidence_content
+from aor.evidence.retrieval import resolve_evidence_reference
+
 _LOCAL_TZ = timezone(timedelta(hours=8))
 _STATUSES = {"supports", "partial", "conflicts", "unverified"}
 _DATES = ("published_at", "observed_at", "first_observed_at", "last_observed_at", "date", "recorded_on", "as_of")
 _EXPERIMENT_DATES = (*_DATES, "recorded_at", "performed_at", "completed_at")
-_COLLECTION_FIELDS = {
-    "id", "evidence_id", "revision_id", "version", "state_revision_id", "supersedes", "source", "source_labels",
-    "run_id", "run_ids", "as_of", "observed_at", "first_observed_at", "last_observed_at",
-    "recorded_on", "reused_for_run_id", "raw_file", "raw_ref", "raw_refs", "raw_json_pointer",
-    "query", "query_id", "query_group", "engagement", "access_method", "extraction_warnings",
-    "retrieval", "aliases", "same_source_refs", "independent_source_key", "schema_version",
-    "canonical_url", "content_hash", "library_evidence_id",
-}
 _META = (
     "id", "evidence_id", "revision_id", "url", "canonical_url", "original_url", "source",
     "source_labels", "aliases", "title", "published_at", "observed_at", "date", "date_confidence",
@@ -30,6 +25,9 @@ _META = (
     "fact", "supporting_fact", "supports", "quote",
     "retracted", "status", "is_demo",
     "industry_ids", "evidence_role", "relevance_status", "window_status",
+    "object_identity", "identity_version", "source_item_id", "evidence_kind", "url_kind", "parent_url",
+    "legacy_references", "published_at_interval", "published_at_raw", "semantic_relevance_status", "relevance_basis",
+    "historical_import", "historical_reference_only",
 )
 
 
@@ -89,8 +87,8 @@ def _catalog(evidence: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str | Non
             catalog[marker] = copy.deepcopy(dict(record))
             continue
         existing = catalog[marker]
-        old_content = {key: value for key, value in existing.items() if key not in _COLLECTION_FIELDS}
-        new_content = {key: value for key, value in record.items() if key not in _COLLECTION_FIELDS}
+        old_content = evidence_content(dict(existing))
+        new_content = evidence_content(dict(record))
         if old_content != new_content:
             raise ValueError(f"同一证据修订有冲突原文或业务内容：{marker[0]}")
         for field, scalar in (("aliases", "id"), ("source_labels", "source")):
@@ -103,14 +101,9 @@ def _resolve(ref: Mapping[str, Any], catalog: Mapping[tuple[str, str | None], di
     identity = ref.get("evidence_id")
     if not isinstance(identity, str) or not identity:
         raise ValueError("引用缺少 evidence_id")
-    candidates = [record for marker, record in catalog.items()
-                  if identity == marker[0] or identity == record.get("id") or identity in (record.get("aliases") or [])]
-    if not candidates:
-        raise ValueError(f"未知证据引用：{identity}")
-    matching = [record for record in candidates if record.get("revision_id") == ref.get("revision_id")]
-    if len(matching) != 1:
-        raise ValueError(f"证据修订不一致或引用不唯一：{identity}")
-    return matching[0]
+    # 文本位置交给 _locate 给出精确错误；此处只做不可降级的身份和修订解析。
+    binding = {key: value for key, value in ref.items() if key not in {"quote", "field", "start", "end"}}
+    return resolve_evidence_reference(binding, catalog.values(), require_revision=True)
 
 
 def _text_at(record: Mapping[str, Any], field: str) -> tuple[str, list[Mapping[str, Any]]]:
@@ -257,7 +250,8 @@ def _compact(record: Mapping[str, Any], refs: list[dict[str, Any]], run_id: str 
     item["missing_fields"] = [key for key in ("url", "source", "published_at") if not record.get(key)]
     if not any(text.strip() for text in original_texts.values()):
         item["missing_fields"].append("original_text/text")
-    return item
+    from aor.evidence.selection import compact_packet_metadata
+    return compact_packet_metadata(item)
 
 
 def _experiment_visible(item: Mapping[str, Any], cutoff: datetime) -> str | None:
@@ -290,10 +284,11 @@ def build_evidence_packet(evidence: Iterable[Mapping[str, Any]], *,
     records = list(diversified_evidence(evidence))
     catalog = _catalog(records)
     historical_records = []
-    counts = {"evidence_future": 0, "evidence_missing_observation": 0, "claims_future": 0,
+    counts = {"evidence_superseded": 0, "evidence_future": 0, "evidence_missing_observation": 0, "claims_future": 0,
               "claims_unavailable_evidence": 0, "experiments_future": 0, "experiments_missing_date": 0}
     for record in records:
-        reason = _visibility(record, cutoff) or ("future" if _future_in_tree(record, cutoff) else None)
+        reason = ("superseded" if record.get("derivation_status") == "superseded" or record.get("status") == "superseded"
+                  else _visibility(record, cutoff) or ("future" if _future_in_tree(record, cutoff) else None))
         if reason:
             counts[f"evidence_{reason}"] += 1
         else:

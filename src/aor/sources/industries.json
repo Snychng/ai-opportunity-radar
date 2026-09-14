@@ -6,14 +6,20 @@
     "demand_model": "efficiency",
     "queries": {
       "en": [
-        "product photos editing",
-        "shopify inventory spreadsheet",
-        "customer returns workflow"
+        "product photo editing outsourcing revisions",
+        "shopify customer support returns manual",
+        "shopify inventory spreadsheet daily reporting",
+        "ecommerce ad creative testing freelancer",
+        "cross border product listing translation mistakes",
+        "small store customer retention email tools"
       ],
       "zh": [
-        "商品图 批量 返工",
-        "多店铺 库存 表格",
-        "电商 售后 工具"
+        "商品图 修图 外包 返工",
+        "电商 客服 售后 人工 查订单",
+        "多店铺 库存 表格 运营 日报",
+        "电商 投放 素材 测试 外包",
+        "跨境 商品描述 翻译 尺码 退货",
+        "小店 会员 复购 私域 运营 工具"
       ]
     },
     "sources": {
@@ -27,7 +33,172 @@
         "douyin",
         "zhihu"
       ]
-    }
+    },
+    "catalog_version": "2.0",
+    "subtracks": [
+      {
+        "id": "product_media",
+        "name": "商品素材与上架",
+        "audience": "独立商家与商品运营",
+        "job_to_be_done": "商品拍摄、批量修图、多语言详情与多平台上架",
+        "existing_behavior_to_verify": "修图外包、设计订阅和反复返工",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "product photo editing outsourcing revisions"
+          ],
+          "zh": [
+            "商品图 修图 外包 返工"
+          ]
+        },
+        "manual_sources": [
+          "shopify_app_store",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "customer_service",
+        "name": "客服与售后",
+        "audience": "客服和小店经营者",
+        "job_to_be_done": "归纳售前问题、订单异常与退换货原因",
+        "existing_behavior_to_verify": "客服人力、工单软件和手动查订单",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "shopify customer support returns manual"
+          ],
+          "zh": [
+            "电商 客服 售后 人工 查订单"
+          ]
+        },
+        "manual_sources": [
+          "shopify_app_store",
+          "capterra"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "store_operations",
+        "name": "店铺经营分析",
+        "audience": "店铺运营与多店经营者",
+        "job_to_be_done": "整理库存、评价、销售异常与每日经营反馈",
+        "existing_behavior_to_verify": "库存软件、表格及人工日报",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "shopify inventory spreadsheet daily reporting"
+          ],
+          "zh": [
+            "多店铺 库存 表格 运营 日报"
+          ]
+        },
+        "manual_sources": [
+          "shopify_app_store",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "growth_creative",
+        "name": "投放与内容增长",
+        "audience": "品牌运营和投放人员",
+        "job_to_be_done": "比较广告素材、复用测评内容并总结失败原因",
+        "existing_behavior_to_verify": "广告试错成本、素材外包和内容排期工具",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "ecommerce ad creative testing freelancer"
+          ],
+          "zh": [
+            "电商 投放 素材 测试 外包"
+          ]
+        },
+        "manual_sources": [
+          "shopify_app_store",
+          "trustpilot"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "crossborder_listing",
+        "name": "跨境商品本地化",
+        "audience": "跨境卖家与小品牌",
+        "job_to_be_done": "按市场习惯改写商品描述、问答与尺码说明",
+        "existing_behavior_to_verify": "翻译外包、市场调研和售后沟通",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "cross border product listing translation mistakes"
+          ],
+          "zh": [
+            "跨境 商品描述 翻译 尺码 退货"
+          ]
+        },
+        "manual_sources": [
+          "etsy",
+          "shopify_app_store"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "customer_retention",
+        "name": "复购与私域运营",
+        "audience": "会员运营与社群商家",
+        "job_to_be_done": "整理客户反馈、规划补货提醒和会员内容",
+        "existing_behavior_to_verify": "邮件营销软件、会员工具和社群运营人力",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "small store customer retention email tools"
+          ],
+          "zh": [
+            "小店 会员 复购 私域 运营 工具"
+          ]
+        },
+        "manual_sources": [
+          "shopify_app_store",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      }
+    ]
   },
   {
     "id": "gaming",
@@ -36,14 +207,20 @@
     "demand_model": "experience",
     "queries": {
       "en": [
-        "finding gaming teammates",
-        "custom game characters",
-        "game guide subscription"
+        "finding gaming teammates schedule adults",
+        "game coaching replay review subscription",
+        "custom game character commission cost",
+        "gaming community moderation events tools",
+        "finding co op games recommendations backlog",
+        "game translation subtitles accessibility tools"
       ],
       "zh": [
-        "游戏 找队友",
-        "游戏 角色 定制",
-        "玩家 攻略 付费"
+        "上班族 游戏 找队友 时间",
+        "玩家 攻略 复盘 教练 付费",
+        "游戏 角色 地图 定制 委托",
+        "游戏 社群 公会 活动 管理",
+        "双人游戏 推荐 游戏库 买了不玩",
+        "游戏 翻译 字幕 看不懂 规则"
       ]
     },
     "sources": {
@@ -57,7 +234,172 @@
         "douyin",
         "xiaohongshu"
       ]
-    }
+    },
+    "catalog_version": "2.0",
+    "subtracks": [
+      {
+        "id": "teammate_matching",
+        "name": "组队与社区协调",
+        "audience": "普通玩家和社群组织者",
+        "job_to_be_done": "协调时间、水平和沟通偏好并维持固定队伍",
+        "existing_behavior_to_verify": "人工发帖、群聊协调及陪玩支出",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "finding gaming teammates schedule adults"
+          ],
+          "zh": [
+            "上班族 游戏 找队友 时间"
+          ]
+        },
+        "manual_sources": [
+          "steam",
+          "appstore"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "player_guidance",
+        "name": "攻略与个性化练习",
+        "audience": "休闲玩家与进阶玩家",
+        "job_to_be_done": "针对卡关、复盘与版本变化找到可操作建议",
+        "existing_behavior_to_verify": "攻略订阅、教练和反复查视频",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "game coaching replay review subscription"
+          ],
+          "zh": [
+            "玩家 攻略 复盘 教练 付费"
+          ]
+        },
+        "manual_sources": [
+          "steam",
+          "youtube"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "ugc_creation",
+        "name": "游戏内容与虚拟资产",
+        "audience": "玩家创作者和模组爱好者",
+        "job_to_be_done": "制作角色、地图、剧情与社区素材",
+        "existing_behavior_to_verify": "素材购买、委托定制和创作耗时",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "custom game character commission cost"
+          ],
+          "zh": [
+            "游戏 角色 地图 定制 委托"
+          ]
+        },
+        "manual_sources": [
+          "steam",
+          "etsy"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "community_moderation",
+        "name": "玩家社区运营",
+        "audience": "公会管理员和活动组织者",
+        "job_to_be_done": "主持活动、归纳反馈、处理新人问题",
+        "existing_behavior_to_verify": "管理机器人订阅与志愿者时间",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "gaming community moderation events tools"
+          ],
+          "zh": [
+            "游戏 社群 公会 活动 管理"
+          ]
+        },
+        "manual_sources": [
+          "steam",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "game_discovery",
+        "name": "游戏发现与决策",
+        "audience": "个人玩家和多人游戏家庭",
+        "job_to_be_done": "根据同伴偏好与设备条件挑选游戏",
+        "existing_behavior_to_verify": "评测搜索、愿望单整理和买错闲置",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "finding co op games recommendations backlog"
+          ],
+          "zh": [
+            "双人游戏 推荐 游戏库 买了不玩"
+          ]
+        },
+        "manual_sources": [
+          "steam",
+          "appstore"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "accessible_play",
+        "name": "游戏理解与辅助体验",
+        "audience": "跨语言玩家和轻度玩家",
+        "job_to_be_done": "理解字幕、规则、复杂UI与任务信息",
+        "existing_behavior_to_verify": "翻译工具、辅助软件和手动查阅",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "game translation subtitles accessibility tools"
+          ],
+          "zh": [
+            "游戏 翻译 字幕 看不懂 规则"
+          ]
+        },
+        "manual_sources": [
+          "steam",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      }
+    ]
   },
   {
     "id": "content_creation",
@@ -66,14 +408,20 @@
     "demand_model": "creation",
     "queries": {
       "en": [
-        "video subtitle editing",
-        "podcast editing service",
-        "photo culling workflow"
+        "video editing freelancer subtitle revisions",
+        "podcast editing service cost workflow",
+        "photographer photo culling client proofing",
+        "writer interview transcription research workflow",
+        "creator repurpose content social scheduling",
+        "creative freelancer client feedback revisions"
       ],
       "zh": [
-        "视频 字幕 返工",
-        "播客 剪辑 外包",
-        "摄影 选片 工具"
+        "短视频 剪辑 外包 字幕 返工",
+        "播客 剪辑 外包 后期 费用",
+        "摄影 选片 修图 客户 交付",
+        "写作 采访 转写 资料 核查",
+        "创作者 多平台 内容 改编 排期",
+        "创作 自由职业 客户 反馈 版本 返工"
       ]
     },
     "sources": {
@@ -87,7 +435,172 @@
         "xiaohongshu",
         "wechat_search"
       ]
-    }
+    },
+    "catalog_version": "2.0",
+    "subtracks": [
+      {
+        "id": "video_editing",
+        "name": "视频剪辑与交付",
+        "audience": "短视频和长视频创作者",
+        "job_to_be_done": "剪素材、对字幕、适配比例并处理客户修改",
+        "existing_behavior_to_verify": "按条剪辑外包与字幕订阅",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "video editing freelancer subtitle revisions"
+          ],
+          "zh": [
+            "短视频 剪辑 外包 字幕 返工"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "trustpilot"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "audio_production",
+        "name": "播客与音频制作",
+        "audience": "播客主播和声音创作者",
+        "job_to_be_done": "去口癖、整理时间轴、混音与跨语种传播",
+        "existing_behavior_to_verify": "音频后期服务和剪辑订阅",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "podcast editing service cost workflow"
+          ],
+          "zh": [
+            "播客 剪辑 外包 后期 费用"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "photo_workflow",
+        "name": "摄影选片与修图",
+        "audience": "摄影师和摄影爱好者",
+        "job_to_be_done": "筛片、按风格修图、交付客户选片",
+        "existing_behavior_to_verify": "修图外包、图库工具与重复选片",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "photographer photo culling client proofing"
+          ],
+          "zh": [
+            "摄影 选片 修图 客户 交付"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "appstore"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "writing_research",
+        "name": "图文与写作研究",
+        "audience": "作者和自媒体运营",
+        "job_to_be_done": "资料整理、采访转写、选题与事实核查",
+        "existing_behavior_to_verify": "转写服务、素材订阅与人工查证",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "writer interview transcription research workflow"
+          ],
+          "zh": [
+            "写作 采访 转写 资料 核查"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "appstore"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "multi_channel",
+        "name": "多平台内容运营",
+        "audience": "独立创作者与内容团队",
+        "job_to_be_done": "把长内容改编为多平台格式并复盘反馈",
+        "existing_behavior_to_verify": "运营人力、排期工具和反复改稿",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "creator repurpose content social scheduling"
+          ],
+          "zh": [
+            "创作者 多平台 内容 改编 排期"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "capterra"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "client_collaboration",
+        "name": "创作协作与商业交付",
+        "audience": "自由职业者和小型工作室",
+        "job_to_be_done": "澄清需求、整理反馈、管理版本与授权资料",
+        "existing_behavior_to_verify": "客户返工成本和协作工具订阅",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "creative freelancer client feedback revisions"
+          ],
+          "zh": [
+            "创作 自由职业 客户 反馈 版本 返工"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "trustpilot"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      }
+    ]
   },
   {
     "id": "learning",
@@ -96,14 +609,20 @@
     "demand_model": "learning",
     "queries": {
       "en": [
-        "language conversation practice",
-        "course study progress",
-        "learning feedback subscription"
+        "language conversation tutor feedback cost",
+        "adult career course assignment feedback",
+        "adult study spaced repetition exam mistakes",
+        "reading research papers note taking sources",
+        "adult course instructor grading feedback",
+        "adult learning accountability study subscription"
       ],
       "zh": [
-        "外语 口语 陪练",
-        "成人学习 复习",
-        "课程 作业 反馈"
+        "成人 外语 口语 陪练 付费",
+        "转行 成人 课程 作业 反馈",
+        "成人 自学 错题 复习 计划",
+        "专业 阅读 资料 笔记 出处",
+        "成人 培训 讲师 助教 作业 批改",
+        "上班 自学 督学 学习 打卡 付费"
       ]
     },
     "sources": {
@@ -117,7 +636,172 @@
         "xiaohongshu",
         "zhihu"
       ]
-    }
+    },
+    "catalog_version": "2.0",
+    "subtracks": [
+      {
+        "id": "language_practice",
+        "name": "语言口语练习",
+        "audience": "成人语言学习者",
+        "job_to_be_done": "维持练习、纠正表达并观察真实进步",
+        "existing_behavior_to_verify": "口语陪练、课程订阅和真人批改",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "language conversation tutor feedback cost"
+          ],
+          "zh": [
+            "成人 外语 口语 陪练 付费"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "professional_skills",
+        "name": "职业技能与迁移",
+        "audience": "希望转岗的成人学习者",
+        "job_to_be_done": "把课程知识用到运营、设计等具体任务",
+        "existing_behavior_to_verify": "培训课程、辅导和作业批改",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "adult career course assignment feedback"
+          ],
+          "zh": [
+            "转行 成人 课程 作业 反馈"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "trustpilot"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "study_review",
+        "name": "复习与知识巩固",
+        "audience": "自学者和资格考试学习者",
+        "job_to_be_done": "整理错题、安排复习并检验是否掌握",
+        "existing_behavior_to_verify": "题库订阅、笔记软件和重复抄写",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "adult study spaced repetition exam mistakes"
+          ],
+          "zh": [
+            "成人 自学 错题 复习 计划"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "reading_comprehension",
+        "name": "阅读理解与研究",
+        "audience": "成人阅读者和行业从业者",
+        "job_to_be_done": "读专业资料、关联知识并保留出处",
+        "existing_behavior_to_verify": "电子书、阅读工具和查资料时间",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "reading research papers note taking sources"
+          ],
+          "zh": [
+            "专业 阅读 资料 笔记 出处"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "teaching_feedback",
+        "name": "讲师备课与反馈",
+        "audience": "成人培训讲师与课程创作者",
+        "job_to_be_done": "准备练习、发现共性误区并给个体反馈",
+        "existing_behavior_to_verify": "助教批改、课程平台和备课时间",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "adult course instructor grading feedback"
+          ],
+          "zh": [
+            "成人 培训 讲师 助教 作业 批改"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "capterra"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "learning_habits",
+        "name": "学习习惯与陪伴",
+        "audience": "工作后自学的成人",
+        "job_to_be_done": "制定可执行计划、保持节奏并识别无效学习",
+        "existing_behavior_to_verify": "学习社群、督学与持续订阅",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "adult learning accountability study subscription"
+          ],
+          "zh": [
+            "上班 自学 督学 学习 打卡 付费"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      }
+    ]
   },
   {
     "id": "personal_life",
@@ -126,14 +810,20 @@
     "demand_model": "experience",
     "queries": {
       "en": [
-        "family photo organization",
-        "home inventory app",
-        "personal wardrobe planning"
+        "family photo organization duplicate subscription",
+        "home inventory warranty moving spreadsheet",
+        "wardrobe app outfit planning subscription",
+        "family trip planning itinerary changes app",
+        "personal calendar tasks reminders overwhelmed",
+        "hobby project planning recipe ingredients app"
       ],
       "zh": [
-        "家庭照片 整理",
-        "家居 物品 管理",
-        "穿搭 衣橱 整理"
+        "家庭照片 整理 重复 云相册",
+        "家庭 物品 清单 保修 搬家",
+        "衣橱 穿搭 搭配 软件 闲置",
+        "家庭 旅行 行程 规划 临时 调整",
+        "个人 日程 待办 提醒 整理",
+        "兴趣 手工 烹饪 材料 计划 工具"
       ]
     },
     "sources": {
@@ -147,7 +837,172 @@
         "douyin",
         "zhihu"
       ]
-    }
+    },
+    "catalog_version": "2.0",
+    "subtracks": [
+      {
+        "id": "photo_memories",
+        "name": "家庭照片与回忆",
+        "audience": "家庭与个人消费者",
+        "job_to_be_done": "整理重复照片、找到往事并生成可分享记录",
+        "existing_behavior_to_verify": "云存储、相册订阅和人工整理",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "family photo organization duplicate subscription"
+          ],
+          "zh": [
+            "家庭照片 整理 重复 云相册"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "home_inventory",
+        "name": "家庭物品与事务",
+        "audience": "家庭管理者和租住用户",
+        "job_to_be_done": "记录物品、保修、搬家与家庭待办",
+        "existing_behavior_to_verify": "清单工具、整理服务和重复购买",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "home inventory warranty moving spreadsheet"
+          ],
+          "zh": [
+            "家庭 物品 清单 保修 搬家"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "wardrobe_planning",
+        "name": "衣橱与穿搭",
+        "audience": "普通消费者和穿搭爱好者",
+        "job_to_be_done": "记录衣物、搭配场景并减少闲置",
+        "existing_behavior_to_verify": "穿搭服务、衣橱应用与试错消费",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "wardrobe app outfit planning subscription"
+          ],
+          "zh": [
+            "衣橱 穿搭 搭配 软件 闲置"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "travel_planning",
+        "name": "旅行与休闲安排",
+        "audience": "个人出游者和家庭",
+        "job_to_be_done": "协同偏好、比对行程并处理临时调整",
+        "existing_behavior_to_verify": "攻略搜索、行程工具和定制规划服务",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "family trip planning itinerary changes app"
+          ],
+          "zh": [
+            "家庭 旅行 行程 规划 临时 调整"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "trustpilot"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "personal_routines",
+        "name": "日常计划与提醒",
+        "audience": "忙碌的个人和家庭",
+        "job_to_be_done": "把消息、日程与生活任务整理成可执行安排",
+        "existing_behavior_to_verify": "日历订阅、清单工具与人工记忆",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "personal calendar tasks reminders overwhelmed"
+          ],
+          "zh": [
+            "个人 日程 待办 提醒 整理"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "hobbies_creativity",
+        "name": "兴趣与日常创意",
+        "audience": "手工、烹饪和兴趣爱好者",
+        "job_to_be_done": "根据手边材料和个人偏好规划小项目",
+        "existing_behavior_to_verify": "兴趣课程、模板订阅和反复搜索",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "hobby project planning recipe ingredients app"
+          ],
+          "zh": [
+            "兴趣 手工 烹饪 材料 计划 工具"
+          ]
+        },
+        "manual_sources": [
+          "etsy",
+          "appstore"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      }
+    ]
   },
   {
     "id": "internet_products",
@@ -156,14 +1011,20 @@
     "demand_model": "experience",
     "queries": {
       "en": [
-        "personalized recommendations app",
-        "saving bookmarks find again",
-        "community content discovery"
+        "bookmark manager cannot find saved article",
+        "recommendation app repetitive irrelevant content",
+        "community manager onboarding feedback tools",
+        "newsletter subscription information overload",
+        "finding freelancer service comparing quotes",
+        "operations team meeting follow up manual"
       ],
       "zh": [
-        "个性化 推荐 工具",
-        "收藏夹 找不到 内容",
-        "社区 内容 检索"
+        "收藏夹 找不到 内容 检索",
+        "个性化 推荐 重复 无关 内容",
+        "社区 运营 新人 引导 用户 反馈",
+        "资讯 订阅 信息 过载 整理",
+        "找服务 自由职业 报价 需求 沟通",
+        "运营 团队 会议 待办 跟进 人工"
       ]
     },
     "sources": {
@@ -177,6 +1038,171 @@
         "xiaohongshu",
         "wechat_search"
       ]
-    }
+    },
+    "catalog_version": "2.0",
+    "subtracks": [
+      {
+        "id": "personal_search",
+        "name": "收藏与个人检索",
+        "audience": "内容消费者和知识工作者",
+        "job_to_be_done": "找回收藏、历史阅读与跨应用资料",
+        "existing_behavior_to_verify": "书签订阅、笔记软件和重复搜索",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "bookmark manager cannot find saved article"
+          ],
+          "zh": [
+            "收藏夹 找不到 内容 检索"
+          ]
+        },
+        "manual_sources": [
+          "chrome_web_store",
+          "appstore"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "recommendations",
+        "name": "个性化推荐",
+        "audience": "使用内容和商品推荐的普通用户",
+        "job_to_be_done": "说明真实偏好并控制重复或无关推荐",
+        "existing_behavior_to_verify": "人工筛选、内容订阅和会员",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "recommendation app repetitive irrelevant content"
+          ],
+          "zh": [
+            "个性化 推荐 重复 无关 内容"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "googleplay"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "community_operations",
+        "name": "社群与用户运营",
+        "audience": "社区运营、版主和用户组织者",
+        "job_to_be_done": "新人引导、问题归纳、内容分发与流失反馈",
+        "existing_behavior_to_verify": "社群运营人力、管理工具和用户访谈",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "community manager onboarding feedback tools"
+          ],
+          "zh": [
+            "社区 运营 新人 引导 用户 反馈"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "capterra"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "subscription_discovery",
+        "name": "订阅与信息整理",
+        "audience": "资讯订阅者和内容爱好者",
+        "job_to_be_done": "控制信息负担、追踪关注主题并回溯来源",
+        "existing_behavior_to_verify": "付费邮件、资讯会员和阅读软件",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "newsletter subscription information overload"
+          ],
+          "zh": [
+            "资讯 订阅 信息 过载 整理"
+          ]
+        },
+        "manual_sources": [
+          "appstore",
+          "chrome_web_store"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "service_matching",
+        "name": "服务发现与匹配",
+        "audience": "寻找自由职业和本地服务的用户",
+        "job_to_be_done": "表达需求、比较案例与减少沟通误差",
+        "existing_behavior_to_verify": "撮合佣金、人工询价和反复沟通",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "finding freelancer service comparing quotes"
+          ],
+          "zh": [
+            "找服务 自由职业 报价 需求 沟通"
+          ]
+        },
+        "manual_sources": [
+          "trustpilot",
+          "g2"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      },
+      {
+        "id": "team_productivity",
+        "name": "非技术团队协作",
+        "audience": "运营、销售和项目协作人员",
+        "job_to_be_done": "从会议和聊天提取待办并追踪执行结果",
+        "existing_behavior_to_verify": "会议转写、协作订阅和人工追问",
+        "spend_status": "research_question_not_established",
+        "ai_value_question": "相对现有工具或人工方法，AI 能否减少操作、提高结果质量或提供此前难以获得的体验？",
+        "queries": {
+          "en": [
+            "operations team meeting follow up manual"
+          ],
+          "zh": [
+            "运营 团队 会议 待办 跟进 人工"
+          ]
+        },
+        "manual_sources": [
+          "g2",
+          "capterra"
+        ],
+        "evidence_targets": [
+          "usage_behavior",
+          "official_pricing",
+          "alternative",
+          "counter_evidence"
+        ]
+      }
+    ]
   }
 ]

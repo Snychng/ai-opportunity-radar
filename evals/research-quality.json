@@ -1,5 +1,5 @@
 {
-  "fixture_version": "1.0",
+  "fixture_version": "2.0",
   "as_of": "2026-07-14",
   "quality_cases": [
     {"id":"zh-substring", "query":"发票对账", "item":{"original_text":"商家发票对账需要逐行核对", "published_at":"2026-07-13"}, "expected":{"relevance_status":"relevant","window_status":"in_window","recent_evidence_eligible":true}},
@@ -11,7 +11,11 @@
     {"id":"old-background", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2020-01-01"}, "expected":{"relevance_status":"relevant","window_status":"out_of_window","recent_evidence_eligible":false}},
     {"id":"future", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2026-07-15"}, "expected":{"window_status":"out_of_window","recent_evidence_eligible":false}},
     {"id":"unknown-date", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"yesterday"}, "expected":{"window_status":"unknown","recent_evidence_eligible":false}},
-    {"id":"utc-boundary", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2026-06-15T01:00:00+08:00"}, "expected":{"window_status":"out_of_window","recent_evidence_eligible":false}}
+    {"id":"utc-boundary", "query":"invoice", "item":{"original_text":"Invoice workaround", "published_at":"2026-06-15T01:00:00+08:00"}, "expected":{"window_status":"out_of_window","recent_evidence_eligible":false}},
+    {"id": "common-again-noise", "query": "manual workflow entering customer data again", "item": {"original_text": "My friend did this again", "published_at": "2026-07-14"}, "expected": {"relevance_status": "unrelated", "semantic_relevance_status": "not_reviewed", "recent_evidence_eligible": false}},
+    {"id": "teammates-domain-only", "query": "gaming teammates reliable evening schedule", "item": {"original_text": "My baseball teammates won the game", "published_at": "2026-07-14"}, "expected": {"relevance_status": "unknown", "lexical_status": "weak_match", "recent_evidence_eligible": false}},
+    {"id": "task-match-is-not-semantic-review", "query": "gaming teammates reliable evening schedule", "item": {"original_text": "Finding reliable gaming teammates for our evening schedule", "published_at": "2026-07-14"}, "expected": {"relevance_status": "relevant", "semantic_relevance_status": "not_reviewed", "recent_semantically_verified": false}},
+    {"id": "relative-date-crosses-window", "query": "invoice", "item": {"original_text": "Invoice workaround", "published_at": null, "published_at_interval": {"earliest": "2026-06-14", "latest": "2026-06-21"}}, "expected": {"window_status": "uncertain", "recent_evidence_eligible": false}}
   ],
   "community": {
     "hn_hits": [

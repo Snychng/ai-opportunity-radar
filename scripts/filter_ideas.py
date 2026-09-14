@@ -49,7 +49,7 @@ def _present(value: Any) -> bool:
 
 
 def _active(item: dict[str, Any]) -> bool:
-    return item.get("retracted") is not True and item.get("status") != "retracted"
+    return item.get("retracted") is not True and item.get("status") not in {"retracted", "withdrawn", "superseded", "not_current"}
 
 
 def _linked_fact(item: Any) -> bool:

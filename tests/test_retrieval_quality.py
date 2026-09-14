@@ -13,9 +13,71 @@ from community_query import CommunityPlanError, build_community_plan, execute_pl
 from evaluate_research import evaluate
 from normalize_tikhub_results import normalize_documents
 from tests.test_normalize_tikhub_results import _document, _result
+from aor.evidence.quality import assess_quality, window_status
 
 
 class ResearchQualityTests(unittest.TestCase):
+    def test_generic_words_and_single_domain_match_require_review(self):
+        cases = [
+            ('manual workflow entering customer data again', 'My friend did this again', 'unrelated'),
+            ('gaming teammates reliable evening schedule', 'My baseball teammates won the game', 'unknown'),
+            ('gaming teammates reliable evening schedule', 'Medical discussion about gaming', 'unknown'),
+            ('gaming teammates reliable evening schedule', 'Finding reliable gaming teammates for our evening schedule', 'relevant'),
+        ]
+        for query, text, expected in cases:
+            with self.subTest(query=query, text=text):
+                quality = assess_quality({'original_text': text, 'published_at': '2026-07-14'},
+                                         query=query, as_of='2026-07-14')
+                self.assertEqual(quality['relevance_status'], expected)
+                self.assertEqual(quality['semantic_relevance_status'], 'not_reviewed')
+                self.assertFalse(quality['recent_semantically_verified'])
+                self.assertTrue(quality['requires_semantic_review'])
+
+    def test_explicit_semantic_review_is_separate_from_lexical_result(self):
+        item = {'original_text': 'Invoice reconciliation workflow', 'published_at': '2026-07-14',
+                'evidence_id': 'EVID-fixture', 'revision_id': 'REV-fixture',
+                'relevance_review': {'status': 'unrelated', 'reviewer': 'fixture-reviewer',
+                                     'reviewed_at': '2026-07-14T10:00:00Z',
+                                     'evidence_id': 'EVID-fixture', 'revision_id': 'REV-fixture'}}
+        result = assess_quality(item, query='invoice reconciliation', as_of='2026-07-14')
+        self.assertEqual(result['lexical_status'], 'matched')
+        self.assertEqual(result['relevance_status'], 'unrelated')
+        self.assertEqual(result['relevance_basis'], 'semantic_review')
+        self.assertFalse(result['recent_evidence_eligible'])
+        item['relevance_review'].pop('reviewer')
+        self.assertEqual(assess_quality(item, query='invoice reconciliation', as_of='2026-07-14')
+                         ['semantic_relevance_status'], 'not_reviewed')
+        item['relevance_review']['reviewer'] = 'fixture-reviewer'
+        for invalid_date in ('not a date', '2026-07-15'):
+            item['relevance_review']['reviewed_at'] = invalid_date
+            self.assertEqual(assess_quality(item, query='invoice reconciliation', as_of='2026-07-14')
+                             ['semantic_relevance_status'], 'not_reviewed')
+
+    def test_semantic_review_must_bind_current_identity_and_revision_or_content(self):
+        item = {'evidence_id': 'EVID-fixture', 'revision_id': 'REV-current', 'content_hash': 'content-current',
+                'original_text': 'Invoice reconciliation workflow', 'published_at': '2026-07-14'}
+        review = {'status': 'relevant', 'reviewer': 'fixture-reviewer', 'reviewed_at': '2026-07-14'}
+        for binding in ({}, {'evidence_id': 'EVID-fixture', 'revision_id': 'REV-old'},
+                        {'evidence_id': 'EVID-other', 'revision_id': 'REV-current'}, {'content_sha256': 'content-old'}):
+            item['relevance_review'] = {**review, **binding}
+            result = assess_quality(item, query='invoice reconciliation', as_of='2026-07-14')
+            self.assertEqual(result['semantic_relevance_status'], 'not_reviewed')
+            self.assertFalse(result['recent_semantically_verified'])
+        for binding in ({'evidence_id': 'EVID-fixture', 'revision_id': 'REV-current'}, {'content_sha256': 'content-current'}):
+            item['relevance_review'] = {**review, **binding}
+            result = assess_quality(item, query='invoice reconciliation', as_of='2026-07-14')
+            self.assertEqual(result['semantic_relevance_status'], 'relevant')
+            self.assertTrue(result['recent_semantically_verified'])
+
+    def test_intervals_do_not_hide_unknown_or_future_dates(self):
+        for start, end, expected in [('2026-06-14', '2026-06-21', 'uncertain'),
+                                     ('2026-07-10', '2026-07-15', 'uncertain'),
+                                     ('2026-07-15', '2026-07-16', 'out_of_window'),
+                                     ('2026-06-15', '2026-07-14', 'in_window'),
+                                     ('2026-07-14', '2026-06-15', 'unknown')]:
+            self.assertEqual(window_status(None, as_of='2026-07-14',
+                                           interval={'earliest': start, 'latest': end}), expected)
+
     def plan(self, **kwargs):
         return build_community_plan(as_of='2026-07-14', run_id='RUN-20260714-ABCDEF1234',
                                     focus_name='fixture', custom_focus='invoice', **kwargs)

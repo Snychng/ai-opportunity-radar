@@ -4,10 +4,37 @@ from copy import deepcopy
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 
 from contracts import canonical_sha256, normalize_identity
+
+LEAD_VERSION = "2.0"
+LEAD_ID = re.compile(r"LEAD-[A-F0-9]{12,32}")
+LEAD_STATES = {"needs_verification", "observed_need", "archived", "disproven", "promoted", "needs_review"}
+
+
+def validate_lead_fields(candidate: dict, *, allowed_industries: set[str] | None = None) -> None:
+    """校验展示必需字段和明确范围；不推断行业或补写商业事实。"""
+    from aor.sources.industries import load_industries
+
+    for field in ("title", "target_user", "problem_or_desire", "wedge"):
+        if not isinstance(candidate.get(field), str) or not candidate[field].strip():
+            raise ValueError(f"探索线索缺少 {field}")
+    ids = candidate.get("industry_ids")
+    known = allowed_industries if allowed_industries is not None else {r["id"] for r in load_industries()}
+    if not isinstance(ids, list) or not ids or any(not isinstance(v, str) for v in ids) or not set(ids) <= known:
+        raise ValueError("探索线索行业不在当前允许目录中")
+    if len(ids) != len(set(ids)):
+        raise ValueError("探索线索行业不能重复")
+    if candidate.get("lead_id") and not LEAD_ID.fullmatch(str(candidate["lead_id"])):
+        raise ValueError("探索线索 lead_id 格式错误")
+
+
+def lead_revision(row: dict) -> str:
+    ignored = {"run_id", "as_of", "revision", "lead_version", "revision_id", "previous_revision_id", "publication_review"}
+    return canonical_sha256({k: v for k, v in row.items() if k not in ignored})[:16]
 
 
 def meaningful_ai_value(value) -> bool:
@@ -15,12 +42,22 @@ def meaningful_ai_value(value) -> bool:
     if not isinstance(value, dict) or value.get("status") not in {"hypothesis", "supported"}:
         return False
     fields = ("baseline", "capability", "user_benefit", "incremental_advantage")
-    placeholders = {"", "未知", "待验证", "ai", "ai赋能", "加聊天框", "提升效率", "unknown", "tbd"}
-    return all(isinstance(value.get(k), str) and len(value[k].strip()) >= 6
-               and normalize_identity(value[k]) not in placeholders for k in fields)
+    placeholders = {"", "未知", "待验证", "ai", "ai赋能", "加聊天框", "提升效率", "unknown", "tbd", "这是需要验证的事情"}
+    descriptions = [normalize_identity(value.get(k)) for k in fields]
+    if (len(set(descriptions)) < len(fields) or not all(isinstance(value.get(k), str) and len(value[k].strip()) >= 6
+            and descriptions[i] not in placeholders for i, k in enumerate(fields))):
+        return False
+    if value["status"] == "supported":
+        review = value.get("review") or {}
+        refs = value.get("evidence_refs")
+        return bool(review.get("reviewer") and review.get("reviewed_at") and review.get("rationale")
+                    and isinstance(refs, list) and refs and all(isinstance(r, dict) and r.get("evidence_id")
+                    and r.get("revision_id") and r.get("quote") for r in refs))
+    return True
 
 
-def exploration_lead(candidate: dict, reasons: list[str], *, require_ai: bool = False) -> dict | None:
+def exploration_lead(candidate: dict, reasons: list[str], *, require_ai: bool = False,
+                     strict: bool = False, allowed_industries: set[str] | None = None) -> dict | None:
     from filter_ideas import _linked_fact, _present
 
     evidence = [deepcopy(row) for row in candidate.get("evidence", []) if _linked_fact(row)]
@@ -31,33 +68,53 @@ def exploration_lead(candidate: dict, reasons: list[str], *, require_ai: bool = 
         return None
     if require_ai and not meaningful_ai_value(candidate.get("ai_value")):
         return None
-    identity = {key: candidate.get(key) for key in ("target_user", "problem_or_desire", "wedge", "target_region")}
+    if strict:
+        validate_lead_fields(candidate, allowed_industries=allowed_industries)
+    identity = {key: normalize_identity(candidate.get(key)) for key in ("target_user", "problem_or_desire", "wedge", "target_region")}
+    identifier = candidate.get("lead_id") or "LEAD-" + canonical_sha256(identity)[:12].upper()
+    if not LEAD_ID.fullmatch(str(identifier)):
+        raise ValueError("探索线索 lead_id 格式错误")
     row = deepcopy(candidate)
     row.pop("id", None)
     row.pop("evidence_tier", None)
-    row.update(lead_id="LEAD-" + canonical_sha256(identity)[:12].upper(), evidence=evidence,
-               research_status="needs_verification", missing_requirements=list(reasons), market_validated=False,
+    state = candidate.get("research_status", "needs_verification")
+    if state not in LEAD_STATES:
+        raise ValueError("未知的探索线索状态")
+    if strict and state == "observed_need":
+        from aor.sources.coverage import BEHAVIOR_ROLES, _review_status
+        if not any(_review_status(e, str(candidate.get("as_of") or "0001-01-01")) == "relevant"
+                   and e.get("evidence_role") in BEHAVIOR_ROLES for e in evidence):
+            raise ValueError("观察到需求必须引用已复核的用户行为")
+    if strict and state == "promoted" and not re.fullmatch(r"(?:OPP|SIG)-[A-Za-z0-9-]+", str(candidate.get("promoted_to", ""))):
+        raise ValueError("已升级线索缺少正式记录关联")
+    row.update(lead_id=identifier, lead_version=LEAD_VERSION, evidence=evidence,
+               research_status=state, missing_requirements=list(reasons), market_validated=False,
                next_question=candidate.get("next_question") or "核验缺失条件：" + "、".join(reasons),
                promotion_condition="补齐正式候选门槛与对应证据后重新过滤；不凭热度自动升级")
+    row["revision_id"] = identifier + ":" + lead_revision(row)
     return row
 
 
-def normalize_leads(values, *, run_id: str, as_of: str) -> list[dict]:
+def normalize_leads(values, *, run_id: str, as_of: str, allowed_industries: set[str] | None = None) -> list[dict]:
     if not isinstance(values, list) or len(values) > 200:
         raise ValueError("leads 必须是最多 200 条的探索线索数组")
     result = {}
     for value in values:
         if not isinstance(value, dict):
             raise ValueError("探索线索必须是对象")
-        row = exploration_lead(value, value.get("missing_requirements") or ["待核验收费市场与用户行为"], require_ai=True)
+        value = {**value, "run_id": run_id, "as_of": as_of}
+        row = exploration_lead(value, value.get("missing_requirements") or ["待核验收费市场与用户行为"],
+                               require_ai=True, strict=True, allowed_industries=allowed_industries)
         if row is None:
             raise ValueError("探索线索需要目标用户、具体需求、链接原文事实以及明确的 AI 增量价值假设")
         row.update(run_id=run_id, as_of=as_of)
+        if row["lead_id"] in result and result[row["lead_id"]] != row:
+            raise ValueError("同一批探索线索 ID 对应不同内容")
         result[row["lead_id"]] = row
     return list(result.values())
 
 
-def lead_history(home: Path, *, as_of: str) -> list[dict]:
+def lead_history(home: Path, *, as_of: str, evidence: list[dict] | None = None) -> list[dict]:
     """恢复截止研究日的最新观察；历史线索不冒充本轮发现或已验证市场。"""
     path = Path(home) / "state/research-leads.jsonl"
     latest = {}
@@ -70,7 +127,48 @@ def lead_history(home: Path, *, as_of: str) -> list[dict]:
         previous = latest.get(row["lead_id"])
         if previous is None or row["as_of"] >= previous["as_of"]:
             latest[row["lead_id"]] = row
-    return sorted(latest.values(), key=lambda row: (row["as_of"], row["lead_id"]), reverse=True)
+    rows = list(latest.values())
+    if evidence is not None:
+        from aor.evidence.retrieval import resolve_evidence_reference
+        for row in rows:
+            for ref in row.get("evidence", []):
+                try:
+                    stored = resolve_evidence_reference(ref, evidence)
+                    if stored.get("retracted") or stored.get("status") in {"retracted", "withdrawn"}:
+                        raise ValueError("引用已撤回")
+                except ValueError:
+                    row["research_status"] = "needs_review"
+                    row["review_reason"] = "原始引用已变化、撤回或无法唯一解析；历史观察保留，需重新核验"
+                    break
+    return sorted(rows, key=lambda row: (row["as_of"], row["lead_id"]), reverse=True)
+
+
+def transition_lead(home: Path, lead_id: str, *, status: str, reason: str, run_id: str,
+                    as_of: str, promoted_record: dict | None = None) -> dict:
+    """追加生命周期修订；升级要求已存在且仍合格的正式记录。"""
+    from contracts import validate_run_as_of
+    validate_run_as_of(run_id, as_of)
+    if status not in LEAD_STATES or not isinstance(reason, str) or not reason.strip():
+        raise ValueError("线索状态变更需要有效状态与理由")
+    row = next((r for r in lead_history(home, as_of=as_of) if r["lead_id"] == lead_id), None)
+    if row is None:
+        raise ValueError("找不到要修订的探索线索")
+    if status == "promoted":
+        from filter_ideas import classify_candidate
+        if not promoted_record or not promoted_record.get("id") or classify_candidate(promoted_record)[0] not in {"A", "B", "R"}:
+            raise ValueError("升级必须关联已通过正式门槛的记录")
+        row["promoted_to"] = promoted_record["id"]
+    elif status == "observed_need":
+        from aor.sources.coverage import BEHAVIOR_ROLES, _review_status
+        if not any(_review_status(e, as_of) == "relevant"
+                   and e.get("evidence_role") in BEHAVIOR_ROLES
+                   for e in row.get("evidence", [])):
+            raise ValueError("观察到需求需要已复核的用户行为原文")
+    row.update(research_status=status, transition_reason=reason, as_of=as_of, run_id=run_id,
+               previous_revision_id=row.get("revision_id"))
+    row["revision_id"] = lead_id + ":" + lead_revision(row)
+    record_leads(home, [row], run_id=run_id)
+    return row
 
 
 def record_leads(home: Path, leads: list[dict], *, run_id: str) -> None:
