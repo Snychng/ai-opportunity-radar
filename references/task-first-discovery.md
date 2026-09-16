@@ -4,7 +4,7 @@
 
 ## 1. 五种发现入口
 
-默认目录保留六方向、36 子赛道，并为每方向增加五类独立任务种子。历史 2.0 计划按原目录验证，新计划使用目录 3.0。
+默认目录保留六方向、36 子赛道，并为每方向增加五类独立任务种子。新旧入口交错轮转，每行业共 11 项；有历史缺口时仍优先补查。历史 2.0 计划按原目录验证，新计划使用目录 3.0。
 
 | 入口 | 要找的事实 | 示例问题 |
 |---|---|---|
@@ -78,4 +78,4 @@ solution_hypotheses 最多 10 项，每项只包含 delivery_form/statement/stat
 
 主 evidence-packet 在既定条数、字符预算内兼顾任务族、行业、来源和证据角色；未知任务族保留未知，不从词面编造。industry-packets 保留各方向阅读入口。review-packets.json 为主包以外的可读修订生成补读批次，research-followup.json 的 reading_batches 指出下一批、遗漏引用与原因。
 
-补读和主包都是摘录，全文按 evidence_id/revision_id 到 evidence-context.json 读取。超预算、未来、撤回或其他不符合选取条件的材料会保留未分配原因。生成批次、入包、打开全文均不自动增加 semantic reviewed 计数；正式审阅仍须提供绑定当前修订的 reviewer、reviewed_at、status、rationale。覆盖 2.1 保留 scope_defined/scope_gaps/task_gaps；范围未定义或任务仍未执行时不能仅因行业清单为空宣布覆盖完整。
+补读和主包都是摘录，全文按 evidence_id/revision_id 到 evidence-context.json 读取。超预算、未来、撤回或其他不符合选取条件的材料会保留未分配原因。生成批次、入包、打开全文均不自动增加 semantic reviewed 计数；正式审阅仍须提供绑定当前修订的 reviewer、reviewed_at、status、rationale。覆盖 2.1 保留 scope_defined/scope_gaps/task_gaps；范围未定义或任务仍未执行时不能仅因行业清单为空宣布覆盖完整。catalog_task_count/unplanned_task_count 分别统计新旧目录入口总数与未安排数；子赛道和新发现入口各自保留分项计数，只有匹配目录任务 ID 的计划能减少对应缺口，独立 TASK 观察不充当目录覆盖。

@@ -162,6 +162,33 @@ class DiscoveryReviewCoverageTests(unittest.TestCase):
         new["version"] = "2.1"
         self.assertTrue(research_quality(new, {}, {}, evidence=[])["coverage_incomplete"])
 
+    def test_catalog_gaps_match_exact_task_ids_and_include_manual_plans(self):
+        custom = plan(with_tasks=False)
+        custom["industry_catalog"][0].update(subtracks=[{"id": "old-a"}, {"id": "old-b"}],
+                                             discovery_entries=[{"id": "new-a"}, {"id": "new-b"}])
+        custom["retrieval_plans"] = {"web": {"requests": [
+            {"id": "query-1", "source": "web", "task_id": "personal_life.new-a", "language": "en",
+             "industry_ids": ["personal_life"]},
+            {"id": "query-2", "source": "web", "task_id": "TASK-independent", "language": "en",
+             "industry_ids": ["personal_life"]}], "required_imports": [
+            {"id": "manual-1", "source": "web", "task_id": "personal_life.old-a", "language": "zh",
+             "industry_ids": ["personal_life"]}]}}
+        current = build_industry_coverage(custom, [])["industries"][0]
+        self.assertEqual(current["catalog_subtrack_count"], 2)
+        self.assertEqual(current["catalog_discovery_entry_count"], 2)
+        self.assertEqual(current["catalog_task_count"], 4)
+        self.assertEqual(current["unplanned_subtrack_count"], 1)
+        self.assertEqual(current["unplanned_discovery_entry_count"], 1)
+        self.assertEqual(current["unplanned_task_count"], 2)
+        self.assertEqual(current["scheduled_task_count"], 3)
+        self.assertEqual(current["planned_request_count"], 2)
+        self.assertEqual(current["planned_languages"], ["en", "zh"])
+        old = build_industry_coverage(custom, [], version="2.0")["industries"][0]
+        self.assertEqual(old["unplanned_subtrack_count"], 0)
+        self.assertEqual(old["scheduled_task_count"], 2)
+        self.assertEqual(old["planned_languages"], ["en"])
+        self.assertNotIn("catalog_task_count", old)
+
 
 if __name__ == "__main__":
     unittest.main()

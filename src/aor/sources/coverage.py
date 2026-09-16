@@ -386,9 +386,21 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
         if row["failures"] and row["materials"]:
             status = "partial"
         languages = sorted({t["language"] for t in related_tasks if t["request_count"]})
-        planned_languages = sorted({t["language"] for t in related_tasks if t["planned_request_count"]})
-        scheduled_tasks = {t["task_id"] for t in related_tasks if t["planned_request_count"]}
+        scheduled_rows = [t for t in related_tasks if (t.get("scheduled") if version == "2.1" else t["planned_request_count"])]
+        planned_languages = sorted({t["language"] for t in scheduled_rows})
+        scheduled_tasks = {t["task_id"] for t in scheduled_rows}
         attempted_tasks = {t["task_id"] for t in related_tasks if t["request_count"]}
+        catalog_counts = {"unplanned_subtrack_count": max(0, row["catalog_subtrack_count"] - len(scheduled_tasks))}
+        if version == "2.1":
+            # 只有对应目录身份的计划才能减少目录缺口；独立 TASK-* 不是已覆盖的子赛道。
+            definition = next(item for item in catalog if item["id"] == identifier)
+            subtracks = {f"{identifier}.{item['id']}" for item in definition.get("subtracks", [])}
+            entries = {f"{identifier}.{item['id']}" for item in definition.get("discovery_entries", [])}
+            catalog_counts = {"catalog_discovery_entry_count": len(entries),
+                              "catalog_task_count": len(subtracks | entries),
+                              "unplanned_subtrack_count": len(subtracks - scheduled_tasks),
+                              "unplanned_discovery_entry_count": len(entries - scheduled_tasks),
+                              "unplanned_task_count": len((subtracks | entries) - scheduled_tasks)}
         source_names = sorted({key[0] for key in own_planned} | {key[0] for key in row["attempts"]} | row["sources"])
         source_coverage = [{"source": source, "planned_request_count": sum(key[0] == source for key in own_planned),
                             "request_count": sum(key[0] == source for key in row["attempts"]),
@@ -401,7 +413,7 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
                        "planned_languages": planned_languages, "attempted_languages": languages,
                        "pending_languages": sorted(set(planned_languages) - set(languages)), "source_coverage": source_coverage,
                        "scheduled_task_count": len(scheduled_tasks), "attempted_task_count": len(attempted_tasks),
-                       "unplanned_subtrack_count": max(0, row["catalog_subtrack_count"] - len(scheduled_tasks)),
+                       **catalog_counts,
                        "review_gaps": gaps, "scheduled_research_complete": row["scheduled"] and not gaps})
     coverage = {"version": version, "as_of": plan.get("as_of"), "run_id": plan.get("run_id"),
             "industries": output, "tasks": task_output, "unclassified_evidence_count": len(unmapped),

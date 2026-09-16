@@ -126,10 +126,18 @@ def _history(home: Path, run_id: str) -> dict:
     return {"tasks": tasks, "snapshots_consulted": consulted, "ignored_snapshots": ignored}
 
 
-def _task_for(row: dict, language: str, as_of: date, history: dict, *, offset: int = 0) -> tuple[dict, dict]:
-    tasks = row.get("discovery_entries") or row.get("subtracks") or [{"id": "general", "name": row["name"], "audience": row["audience"],
+def catalog_tasks(row: dict) -> list[dict]:
+    """交错保留新增发现入口和原有子赛道；旧目录的任务集合与顺序不变。"""
+    entries, subtracks = row.get("discovery_entries", []), row.get("subtracks", [])
+    tasks = [group[index] for index in range(max(len(entries), len(subtracks)))
+             for group in (entries, subtracks) if index < len(group)]
+    return tasks or [{"id": "general", "name": row["name"], "audience": row["audience"],
         "queries": row["queries"], "job_to_be_done": row["demand_model"],
         "existing_behavior_to_verify": "核验已有使用与支出行为", "manual_sources": ["web"]}]
+
+
+def _task_for(row: dict, language: str, as_of: date, history: dict, *, offset: int = 0) -> tuple[dict, dict]:
+    tasks = catalog_tasks(row)
     rotation = (as_of.toordinal() + offset) % len(tasks)
     def rank(pair):
         index, task = pair

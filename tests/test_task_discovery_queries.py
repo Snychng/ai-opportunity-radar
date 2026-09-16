@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import aor_bootstrap  # noqa: F401
-from aor.sources.industries import DISCOVERY_LENSES, build_industry_discovery, load_industries
+from aor.sources.industries import DISCOVERY_LENSES, build_industry_discovery, catalog_tasks, load_industries, _task_for
 from aor.sources.planning import compile_intents, validate_intent_plan
 from aor.sources.task_discovery import build_task_followups, task_followup_intents, MAX_TASKS
 from build_query_plan import build_plan
@@ -124,12 +124,14 @@ class TaskDiscoveryQueryTests(unittest.TestCase):
         self.assertEqual(rows, before)
         self.assertTrue(any(row["reason"] == "family_budget" for row in plan["skipped"]))
 
-    def test_default_catalog_rotates_independent_tasks_through_all_lenses_under_same_budget(self):
+    def test_default_catalog_rotates_all_legacy_and_new_tasks_under_same_budget(self):
         catalog = load_industries()
         self.assertEqual(sum(len(row["discovery_entries"]) for row in catalog), 30)
+        self.assertEqual(sum(len(row["subtracks"]) for row in catalog), 36)
+        self.assertEqual(sum(len(catalog_tasks(row)) for row in catalog), 66)
         with tempfile.TemporaryDirectory() as temp:
-            observed = {}
-            for offset in range(5):
+            observed, task_ids = {}, {}
+            for offset in range(11):
                 day = date.fromisoformat(DAY) + timedelta(days=offset)
                 result = build_industry_discovery(as_of=day, run_id=f"RUN-{day:%Y%m%d}-1234567890", home=Path(temp), preferences={},
                                                  planned_sources=["reddit", "xiaohongshu"])
@@ -138,9 +140,26 @@ class TaskDiscoveryQueryTests(unittest.TestCase):
                 self.assertEqual(len(result["retrieval_plans"]["web_import"]["required_imports"]), 6)
                 for task in paid["research_tasks"]:
                     observed.setdefault(task["industry_ids"][0], set()).add(task["discovery_lens"])
+                    task_ids.setdefault((task["industry_ids"][0], task["language"]), set()).add(task["task_id"])
                     self.assertEqual(task["hypothesis_status"], "retrieval_seed_not_observed_demand")
                     self.assertIn("non_adoption_reason", task["required_checks"])
-            self.assertTrue(all(lenses == set(DISCOVERY_LENSES) for lenses in observed.values()))
+            self.assertTrue(all(lenses == {*DISCOVERY_LENSES, "legacy_seed"} for lenses in observed.values()))
+            for row in catalog:
+                expected = {f"{row['id']}.{task['id']}" for task in [*row['subtracks'], *row['discovery_entries']]}
+                for language in ("en", "zh"):
+                    self.assertEqual(task_ids[(row["id"], language)], expected)
+
+    def test_legacy_catalog_keeps_original_rotation_and_order(self):
+        for original in load_industries():
+            row = deepcopy(original)
+            row.pop("discovery_entries")
+            row["catalog_version"] = "2.0"
+            self.assertEqual(catalog_tasks(row), row["subtracks"])
+            for offset in range(len(row["subtracks"])):
+                day = date.fromisoformat(DAY) + timedelta(days=offset)
+                task, state = _task_for(row, "en", day, {})
+                self.assertEqual(task, row["subtracks"][day.toordinal() % len(row["subtracks"])])
+                self.assertEqual(state, {})
 
     def test_explicit_followup_industries_populate_only_claimed_scope(self):
         with tempfile.TemporaryDirectory() as temp:
