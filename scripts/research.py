@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 
 import aor_bootstrap  # noqa: F401
-from aor.workflow.research import inspect_run, resume_research, reparse_run, run_paid_batch, run_discovery, start_research
+from aor.workflow.research import (inspect_run, resume_research, reparse_run, run_paid_batch, run_discovery,
+                                   run_comment_collection, start_research)
 from build_query_plan import parse_date, read_scope, resolve_focus
 from contracts import beijing_today
 from manage_state import DEFAULT_HOME
@@ -24,11 +25,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--focus-file", type=Path)
     parser.add_argument("--scope-file", type=Path)
     parser.add_argument("--intent-plan-file", type=Path)
+    parser.add_argument("--products-file", type=Path, help="产品、别名及任务，生成三平台体验/持续使用/切换搜索")
+    parser.add_argument("--comments-file", type=Path, help="选择帖子及分页 policy，以明确预算采集评论和子回复")
     parser.add_argument("--parent-run-id")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-collect", action="store_true", help="本次恢复仅处理已有材料")
     parser.add_argument("--reparse", action="store_true", help="创建离线子运行，重解析已付费响应；不改原报告或再次请求")
-    parser.add_argument("--include-comments", action="store_true", help="新研究中对少量相关主题采集顶层评论")
+    parser.add_argument("--include-comments", action=argparse.BooleanOptionalAction, default=True, help="默认采集免费社区评论；付费三平台用 --comments-file")
     parser.add_argument("--include-recent-activity", action="store_true", help="新研究额外检索旧 Issue 的近期活动")
     parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=3, help="新研究免费检索并发数，1–4")
     parser.add_argument("--evidence", type=Path, action="append", default=[])
@@ -51,6 +54,16 @@ def main(argv: list[str] | None = None) -> int:
         inputs = {"evidence_files": args.evidence, "benchmarks_file": args.benchmarks,
                   "assessment_file": args.assessment, "profile_file": args.profile}
         intent = json.loads(args.intent_plan_file.read_text(encoding="utf-8")) if args.intent_plan_file else None
+        if args.products_file:
+            if args.action != "research" or intent:
+                raise ValueError("products-file 仅用于新研究，不能同时指定 intent-plan-file")
+            from aor.sources.products import product_intents
+            intent = product_intents(json.loads(args.products_file.read_text(encoding="utf-8")))
+        if args.comments_file and (args.action != "resume" or not args.run_id or args.max_cost_usd is None
+                                  or args.discover or args.paid_plan or args.reparse or args.offline or args.no_collect
+                                  or args.recurring_budget or args.max_attempts != 1 or args.resolve_unknown or args.retry_failed
+                                  or args.benchmarks or args.assessment or args.profile or args.evidence or intent):
+            raise ValueError("评论分页使用 resume RUN_ID --comments-file FILE --max-cost-usd；失败/未知页面不自动重买")
         if args.recurring_budget and not (args.discover or args.paid_plan):
             raise ValueError("recurring-budget 仅适用于显式付费发现或补证")
         if args.reparse and (args.action != "resume" or not args.run_id or args.discover or args.paid_plan
@@ -76,7 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         elif not args.run_id:
             raise ValueError(f"{args.action} 必须指定 RUN_ID")
         elif args.action == "resume":
-            if args.reparse:
+            if args.comments_file:
+                result = run_comment_collection(args.home, args.run_id, args.comments_file,
+                            max_cost_usd=args.max_cost_usd, batch_id=args.batch_id, resume=args.resume_batch)
+            elif args.reparse:
                 result = reparse_run(args.home, args.run_id)
             elif args.discover:
                 result = run_discovery(args.home, args.run_id, max_cost_usd=args.max_cost_usd,

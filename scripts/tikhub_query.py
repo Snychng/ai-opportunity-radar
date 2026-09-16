@@ -235,11 +235,14 @@ COMMENT_PROFILES: dict[str, dict[str, Any]] = {
         _deep_profile(source="threads", kind="detail", endpoint="/api/v1/threads/web/fetch_post_detail_v2", required_all=("post_id",)),
         _deep_profile(source="threads", kind="top_level_comments", endpoint="/api/v1/threads/web/fetch_post_comments", required_all=("post_id",)),
         _deep_profile(source="twitter", kind="detail", endpoint="/api/v1/twitter/web/fetch_tweet_detail", required_all=("tweet_id",)),
-        _deep_profile(source="twitter", kind="top_level_comments", endpoint="/api/v1/twitter/web/fetch_post_comments", required_all=("tweet_id",)),
+        _deep_profile(source="twitter", kind="top_level_comments", endpoint="/api/v1/twitter/web/fetch_post_comments", required_all=("tweet_id",), optional=("cursor",)),
+        _deep_profile(source="twitter", kind="top_level_comments", endpoint="/api/v1/twitter/web/fetch_latest_post_comments", required_all=("tweet_id",), optional=("cursor",)),
         _deep_profile(source="youtube", kind="detail", endpoint="/api/v1/youtube/web_v2/get_video_info_v2", required_all=("video_id",)),
         _deep_profile(source="youtube", kind="top_level_comments", endpoint="/api/v1/youtube/web_v2/get_video_comments", required_all=("video_id",)),
         _deep_profile(source="douyin", kind="detail", endpoint="/api/v1/douyin/web/fetch_one_video_v2", required_all=("aweme_id",)),
-        _deep_profile(source="douyin", kind="top_level_comments", endpoint="/api/v1/douyin/web/fetch_video_comments", required_all=("aweme_id",)),
+        _deep_profile(source="douyin", kind="top_level_comments", endpoint="/api/v1/douyin/web/fetch_video_comments", required_all=("aweme_id",), optional=("cursor", "count")),
+        _deep_profile(source="douyin", kind="comment_replies", endpoint="/api/v1/douyin/web/fetch_video_comment_replies", required_all=("item_id", "comment_id"), optional=("cursor", "count")),
+        _deep_profile(source="xiaohongshu", kind="comment_replies", endpoint="/api/v1/xiaohongshu/app_v2/get_note_sub_comments", required_all=("comment_id",), required_any=(("note_id", "share_text"),), optional=("cursor", "index")),
         _deep_profile(
             source="xiaohongshu",
             kind="detail",
@@ -257,6 +260,7 @@ COMMENT_PROFILES: dict[str, dict[str, Any]] = {
             kind="top_level_comments",
             endpoint="/api/v1/xiaohongshu/app_v2/get_note_comments",
             required_any=(("note_id", "share_text"),),
+            optional=("cursor", "index", "pageArea", "sort_strategy"),
         ),
         _deep_profile(source="bilibili", kind="detail", endpoint="/api/v1/bilibili/web/fetch_one_video", required_all=("bv_id",)),
         _deep_profile(source="bilibili", kind="top_level_comments", endpoint="/api/v1/bilibili/web/fetch_video_comments", required_all=("bv_id",)),
@@ -295,8 +299,8 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
         raise PlanError(str(exc)) from exc
     if not isinstance(query_groups, list) or not query_groups:
         raise PlanError("query_groups 必须是非空数组")
-    if len(query_groups) > 20:
-        raise PlanError("单个计划最多包含 20 个关键词组")
+    if len(query_groups) > MAX_REQUESTS:
+        raise PlanError(f"单个计划最多包含 {MAX_REQUESTS} 个关键词组")
 
     requests: list[dict[str, Any]] = []
     for group_index, group in enumerate(query_groups, start=1):
@@ -639,7 +643,24 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
     if stage == "comment_deep_dive":
         if plan.get("parent_search_run_id") != plan.get("run_id"):
             raise PlanError("评论深挖计划缺少合法 parent_search_run_id")
-        if len(requests) > 10 or len(requests) % 2 != 0:
+        if plan.get("collection_version") == "2.0":
+            from aor.sources.comments import validate_policy, SOURCES
+            policy = validate_policy(plan.get("collection_policy"))
+            if len(requests) > policy["max_requests"] or any(not isinstance(r, dict) or r.get("source") not in SOURCES for r in requests):
+                raise PlanError("评论分页计划来源或请求容量不合法")
+            for request in requests:
+                meta = request.get("collection") or {}
+                if (not isinstance(meta, dict) or not isinstance(request.get("selected_item_id"), str)
+                        or not request["selected_item_id"].strip() or not isinstance(meta.get("product"), str)
+                        or not meta["product"].strip() or type(meta.get("page")) is not int
+                        or not 1 <= meta["page"] <= (policy["max_reply_pages"] if request.get("kind") == "comment_replies" else policy["max_pages"])):
+                    raise PlanError("评论分页请求缺少产品、帖子或合法页码")
+                if request.get("kind") == "comment_replies" and (not isinstance(request.get("params"), dict)
+                        or not meta.get("parent_comment_id") or str(meta["parent_comment_id"]) != str(request["params"].get("comment_id"))):
+                    raise PlanError("子回复父级必须与请求的 comment_id 一致")
+        elif plan.get("collection_version") is not None:
+            raise PlanError("不支持的 collection_version")
+        elif len(requests) > 10 or len(requests) % 2 != 0:
             raise PlanError("评论深挖计划应为 1 到 5 个帖子各两次请求")
     if stage == "evidence_gap_verification":
         cost_policy = plan.get("cost_policy")

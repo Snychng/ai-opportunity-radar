@@ -34,7 +34,7 @@ research → evidence-packet / industry-packets / review_queue → Agent 核验�
 
 ### 社区采集选项
 
-`research --include-comments` 可选启用评论，`--include-recent-activity` 可选启用旧帖近期活动查询；默认均关闭；`--concurrency` 控制新研究免费检索并发数，允许 1–4，默认 3，只影响免费检索，付费执行仍串行。这些选项在创建研究时设置，恢复沿用运行中的采集配置。旧帖活动日期不能冒充新发帖日期。先取历史上下文再采集，既有资料不代表本轮在线覆盖，也不使程序默认跳过实时检索；本轮 source 状态不采纳历史复用载荷。离线运行保留本地流程，不执行这些可选网络查询。
+新研究默认采集免费社区评论，`research --no-include-comments` 可关闭；`--include-recent-activity` 可选启用旧帖近期活动查询，默认关闭；`--concurrency` 控制新研究免费检索并发数，允许 1–4，默认 3，只影响免费检索，付费执行仍串行。这些选项在创建研究时设置，恢复沿用运行中的采集配置。旧帖活动日期不能冒充新发帖日期。先取历史上下文再采集，既有资料不代表本轮在线覆盖，也不使程序默认跳过实时检索；本轮 source 状态不采纳历史复用载荷。离线运行保留本地流程，不执行这些可选网络查询。
 
 ### 兼容手动流程
 
@@ -53,7 +53,7 @@ research → evidence-packet / industry-packets / review_queue → Agent 核验�
 
 先检查同日及近 30 日原始文件和历史状态，再运行免费来源。默认按用户选定的六个方向规划，详见 [普通用户机会发现](cross-industry-discovery.md)。用户明确授权发现目标和一次性预算后，可 `resume --discover --max-cost-usd` 购买行业发现材料，不要求先有 BENCH；未授权预算时继续免费与网页核验。
 
-TikHub 必须先实时估价，再显式预算执行。发现请求关联方向、查询及发现目标；定向补证关联候选 ID、缺失门槛和预期升级层级。搜索和评论分阶段估价；评论只深挖 1–5 个高价值帖子，不为凑数量批量抓取。发现预算按用户本次授权，不再强制 20% 分配；所有批次共用同轮 journal 上限。定向搜索补证每来源每批最多 3 请求是脚本硬限制；跨两个来源合计 4 请求合法。每批结束后由 Agent 评估相关性、新线索、BENCH、合格候选或关键证据，无产出时停止原查询并说明原因；执行器不能自动判断商业价值。
+TikHub 必须先实时估价，再显式预算执行。发现请求关联方向、查询及发现目标；定向补证关联候选 ID、缺失门槛和预期升级层级。搜索和评论分阶段估价；评论优先研究使用 `resume --comments-file`，每批最多选择 30 个相关帖子并有界分页，详见[评论优先发现](comment-first-discovery.md)；旧 `tikhub build-comments` 的 1–5 帖首页模式仍兼容。发现预算按用户本次授权，不再强制 20% 分配；所有批次共用同轮 journal 上限。定向搜索补证每来源每批最多 3 请求是脚本硬限制；跨两个来源合计 4 请求合法。每批结束后由 Agent 评估相关性、新线索、BENCH、合格候选或关键证据，无产出时停止原查询并说明原因；执行器不能自动判断商业价值。
 
 ## 3. 证据规范化
 
@@ -155,3 +155,5 @@ AOR_OFFLINE=1 aor resume "$PARENT_RUN_ID" --reparse --home "$RADAR_HOME"
 此命令创建离线子运行，保留父运行关联和原始响应，使用当前解析器重新规范化；不覆盖原报告、不重购响应、不将父运行费用算成新支出。以返回的子 run_id 继续提交更正后的对标、线索和 assessment。重解析不会自动批准旧线索原文引用，仍需准确绑定恢复后的对象与修订。
 
 证据身份迁移使用 `library migrate-identities --destination` 写入全新目标库，见 [证据库](evidence-library.md)。部署、更新实际安装版本与网站发布是各自的交付步骤，不能从本地 completed 自动推断已生效。
+
+用户评论可通过 benchmarks 输入中的可选 `observations` 独立提交，不必先有 BENCH 或 LEAD。输出 `tiered.user_discovery` 与 `state/user-discovery/RUN_ID.json`，原文与需求簇不计入正式 A/B 数量；完整格式见[评论优先发现](comment-first-discovery.md)。

@@ -104,7 +104,7 @@ def _input_envelope(value: dict, manifest: dict, *, reused: bool = False) -> dic
 
 def start_research(home: Path, *, as_of: date, focus: str | None = None, scope: dict | None = None,
                    intent_plan: dict | None = None, offline: bool = False,
-                   include_comments: bool = False, include_recent_activity: bool = False, concurrency: int = 3,
+                   include_comments: bool = True, include_recent_activity: bool = False, concurrency: int = 3,
                    parent_run_id: str | None = None, evidence_files: list[Path] | None = None,
                    benchmarks_file: Path | None = None, assessment_file: Path | None = None,
                    profile_file: Path | None = None) -> dict:
@@ -266,6 +266,59 @@ def run_discovery(home: Path, run_id: str, *, max_cost_usd: float, batch_id: str
                           recurring=recurring)
 
 
+def run_comment_collection(home: Path, run_id: str, input_file: Path, *, max_cost_usd: float,
+                           batch_id: str = "comments", resume: bool = False) -> dict:
+    """分页批次共享既有预算与恢复日志，不重新请求未知/失败的页面。"""
+    from aor.sources.comments import start_collection, collection_plan, advance_collection
+    directory = _run_dir(home, run_id)
+    state_name = "comment-collection-" + canonical_sha256(batch_id)[:12]
+    input_value = _read(input_file)
+    # 独立锁防止两位宿主同时驱动同一分页队列；每次更新运行清单仍使用运行锁。
+    with (directory / (state_name + ".lock")).open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("该评论采集正在执行") from exc
+        with _run_lock(directory):
+            manifest = _read(directory / "run.json")
+            if manifest["offline"] or os.environ.get("AOR_OFFLINE", "").lower() in {"1", "true", "yes"}:
+                raise ValueError("离线研究不会执行评论采集")
+            if manifest["status"] in {"completed", "committing"}:
+                raise ValueError("已提交研究不能增加评论采集")
+            if state_name in manifest["artifacts"]:
+                state = _load_artifact(manifest, state_name)
+                if not resume or state["input_sha256"] != canonical_sha256(input_value):
+                    raise ValueError("已有评论批次需用相同输入与 --resume-batch；新计划使用新的 batch-id")
+            else:
+                state = start_collection(input_value, run_id=run_id, as_of=manifest["as_of"])
+                state.update(input_sha256=canonical_sha256(input_value), round=0)
+                _artifact(directory, manifest, state_name, state)
+        while state["pending"]:
+            round_id = batch_id + "-page-" + str(state["round"])
+            plan_name = state_name + "-page-" + str(state["round"])
+            with _run_lock(directory):
+                manifest = _read(directory / "run.json")
+                plan = collection_plan(run_id, manifest["as_of"], state["pending"][:100], state["policy"])
+                if plan_name in manifest["artifacts"]:
+                    if _load_artifact(manifest, plan_name) != plan:
+                        raise ValueError("已保存的评论分页计划不一致")
+                    path = Path(manifest["artifacts"][plan_name]["path"])
+                else:
+                    path = _artifact(directory, manifest, plan_name, plan)
+                paid_prefix = "paid-" + canonical_sha256(round_id)[:12]
+                batch_exists = paid_prefix + "-plan" in manifest["artifacts"]
+            run_paid_batch(home, run_id, path, max_cost_usd=max_cost_usd, batch_id=round_id, resume=batch_exists)
+            with _run_lock(directory):
+                manifest = _read(directory / "run.json")
+                name = next(n for n in reversed(manifest["execution_artifacts"]) if n.startswith(paid_prefix + "-"))
+                state = advance_collection(state, _load_artifact(manifest, name))
+                state["round"] += 1
+                _artifact(directory, manifest, state_name, state)
+        result = inspect_run(home, run_id)
+        result["comment_collection"] = {"path": str(directory / (state_name + ".json")), **state.get("summary", {})}
+        return result
+
+
 def _normalize_pending(directory: Path, manifest: dict) -> None:
     """已产生费用的执行先登记，解析失败不影响记账；恢复只重跑解析。"""
     from normalize_tikhub_results import PARSER_VERSION, normalize_documents
@@ -424,6 +477,15 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
         for item in [*inputs.get("benchmarks", []), *inputs.get("leads", [])]:
             references.extend(item.get("evidence", []))
             references.extend((item.get("ai_value") or {}).get("evidence_refs", []))
+        observations = inputs.get("observations", [])
+        if not isinstance(observations, list) or len(observations) > 2000:
+            raise ValueError("observations 必须是最多 2000 条的数组")
+        for observation in observations:
+            if not isinstance(observation, dict) or not isinstance(observation.get("evidence_refs"), list):
+                raise ValueError("用户观察必须是对象并包含 evidence_refs 数组")
+            if any(not isinstance(ref, dict) for ref in observation["evidence_refs"]):
+                raise ValueError("用户观察引用必须为对象")
+            references.extend(observation["evidence_refs"])
     known_revisions = {(r["evidence_id"], r["revision_id"]) for r in [*context, *superseded]}
     for ref in references:
         if not ref.get("revision_id"):
@@ -504,7 +566,7 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
                     if key in source:
                         signal[key] = source[key]
     if not benchmarks.get("benchmarks"):
-        if not str(benchmarks.get("empty_reason") or "").strip() and not benchmarks.get("leads"):
+        if not str(benchmarks.get("empty_reason") or "").strip() and not benchmarks.get("leads") and not benchmarks.get("observations"):
             raise ValueError("没有合格对标时请填写 empty_reason；无需编造候选")
         expanded = {**_metadata(manifest), "benchmarks": [], "candidates": [], "summary": {"raw": 0},
                     "warnings": [benchmarks.get("empty_reason") or "本轮只保留待验证线索，尚未建立收费对标"]}
@@ -524,6 +586,9 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
     for lead in tiered["research_leads"]:
         lead.update(run_id=manifest["run_id"], as_of=manifest["as_of"])
     tiered["summary"]["research_leads"] = len(merged_leads)
+    from aor.opportunity.needs import build_user_discovery
+    tiered["user_discovery"] = build_user_discovery(benchmarks.get("observations", []),
+        _load_artifact(manifest, "evidence-context")["evidence"], as_of=manifest["as_of"], run_id=manifest["run_id"])
     for key, tier in BUCKETS:
         for bucket in (tiered, tiered.get("overflow") or {}):
             rows = bucket.get(key) or []
@@ -645,8 +710,9 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
             return _handoff(directory, manifest, "awaiting_benchmarks",
                             query_notice + "按 industry-coverage.json 检查未覆盖方向，执行 web_import-plan.json 的网页核验；"
                             "阅读 evidence-packet.json 与完整 evidence-index.json。B 补需求行为，R 补迁移理由，A 补直接付款。"
-                            "每个方向写清 AI 相比原方案的增量价值；收费对标不足但有真实线索时填写 leads。付费发现用 resume --discover --max-cost-usd。",
-                            template={**_metadata(manifest), "benchmarks": [], "leads": [], "dimensions": {}, "empty_reason": None})
+                            "先在 observations 记录产品、用户、任务、需求与原话引用，不要求收费或 AI 方案；"
+                            "已有 AI 假设时填 leads。按产品搜索可用 research --products-file；评论分页用 resume --comments-file --max-cost-usd。",
+                            template={**_metadata(manifest), "benchmarks": [], "leads": [], "observations": [], "dimensions": {}, "empty_reason": None})
         tiered = _load_artifact(manifest, "tiered") if "tiered" in manifest["artifacts"] else _prepare_tiered(directory, manifest)
         if "assessment" not in manifest["artifacts"]:
             return _handoff(directory, manifest, "awaiting_assessment",

@@ -184,3 +184,7 @@ TikHub 价格目录还包含 Telegram、微博、快手、Lemon8、微信视频�
 - 各国本地封闭论坛
 
 每次运行都重新诊断，不把本文件当成实时可用性清单。
+
+## 4.3 三平台评论能力
+
+来源目录声明小红书/抖音的 comment_pagination、comment_replies，以及 X 的 comment_pagination、latest_comments。它们是适配器能力，不是实时健康证明；实际预算内的分页流程见[评论优先发现](comment-first-discovery.md)。X 仅处理返回的对话节点及 Bottom 游标，不承诺展开全部 Thread 游标、折叠或受限回复。

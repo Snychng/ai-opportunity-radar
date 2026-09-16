@@ -283,6 +283,9 @@ def export_public(report: dict, *, as_of: str | None = None, review_period_days:
                            "omitted_evidence_count": (report.get("research_quality") or {}).get("omitted_evidence_count", 0),
                            "withheld_item_count": len(withheld), "market_validated": False}, "extensions": {}}
     quality = report.get("research_quality") or {}
+    if report["tiered"].get("user_discovery"):
+        from aor.opportunity.needs import public_discovery_counts
+        dataset["extensions"]["user_discovery"] = public_discovery_counts(report["tiered"]["user_discovery"])
     if quality.get("review_scope") == "active_context":
         dataset["quality"]["review_summary"] = {"source_run_id": report["run_id"],
             "evidence_count": quality["overall_evidence_count"], "reviewed_count": quality["reviewed_evidence_count"],

@@ -81,6 +81,8 @@ def build_report(tiered: dict, *, decision: dict, executions: list[dict] | None 
         "research_quality": research_quality(coverage, selection, tiered,
                 evidence=claim_evidence or [row for payload in inventory for row in payload["evidence"]]),
     }
+    from aor.sources.comments import collection_coverage
+    report["comment_collection_coverage"] = collection_coverage(executions or [])
     validation = validate_structured_report(report)
     if not validation["valid"]:
         raise ValueError("；".join(validation["errors"]))
@@ -113,6 +115,20 @@ def validate_structured_report(report: Any) -> dict:
                      for key, value in states.items()):
                 errors.append("全库当前证据状态的对象、修订或状态格式无效")
         tiered = report["tiered"]
+        if "comment_collection_coverage" in report:
+            from aor.sources.comments import collection_coverage
+            if report["comment_collection_coverage"] != collection_coverage(report.get("execution_results") or []):
+                errors.append("评论采集统计与实际响应不一致")
+        if "user_discovery" in tiered:
+            from aor.opportunity.needs import validate_user_discovery
+            validate_user_discovery(tiered["user_discovery"], report.get("claim_evidence") or [],
+                                    as_of=report["as_of"], run_id=report["run_id"])
+            from aor.opportunity.exploration import current_reference_issue
+            for observation in tiered["user_discovery"]["observations"]:
+                for ref in observation["evidence_refs"]:
+                    issue = current_reference_issue(ref["evidence_id"], ref["revision_id"], report.get("current_evidence_state") or {})
+                    if issue:
+                        errors.append("用户观察引用失效：" + issue)
         if "industry_coverage" in report:
             from aor.sources.coverage import build_industry_coverage, research_quality
             actual_coverage = build_industry_coverage(report.get("coverage_plan") or {},
@@ -227,6 +243,16 @@ def render_summary(report: dict, *, full_path: str | None = None) -> str:
                   f"研究分层：A {metrics['deep_candidate_count']} / B {metrics['quick_idea_count']} / "
                   f"R {metrics['regional_signal_count']}。A/B/R 不代表客户验证已完成。", ""])
     lines.extend([f"待验证线索：{metrics.get('research_lead_count', 0)} 条；与正式候选分开展示。", ""])
+    discovery = report["tiered"].get("user_discovery")
+    if discovery:
+        counts = discovery["summary"]
+        lines.extend([f"用户观察：{counts['observation_count']} 条；需求簇：{counts['demand_cluster_count']} 个。"
+                      "原话分类尚不等于购买或身份已被独立证实。", ""])
+        for cluster in discovery["demand_clusters"][:10]:
+            lines.append(f"- {_safe_text(cluster['product'])} · {_safe_text(cluster['need'])}（待验证需求）")
+        lines.append("")
+        if len(discovery["demand_clusters"]) > 10:
+            lines.extend(["更多需求簇见完整报告和 user_discovery 数据。", ""])
     quality = report.get("research_quality") or {}
     if quality.get("coverage_incomplete"):
         lines.extend([f"覆盖缺口：{len(quality['industries_needing_review'])} 个方向尚需核验用户原文；不能据此判断没有机会。", ""])
@@ -245,11 +271,36 @@ def render_report(report: dict) -> str:
         lines.append(f"| {source} | {str(outcome).replace('|', '/')} |")
     if not report.get("source_coverage"):
         lines.append("| 已有材料 | 本轮未执行实时采集 |")
+    comments = report.get("comment_collection_coverage") or {}
+    if comments.get("requests"):
+        lines.extend(["", "## 评论采集覆盖", "", "以下只统计本轮实际响应，不能视为全量评论或独立用户数。", "",
+                      "| 平台 | 已保存请求 | 成功 HTTP 评论页 | 去重评论 |", "|---|---:|---:|---:|"])
+        for source, counts in sorted(comments["sources"].items()):
+            lines.append(f"| {source} | {counts['requests']} | {counts['comment_pages']} | {counts['unique_comments']} |")
     digest = build_result_digest(report["tiered"], executions=report.get("execution_results") or [],
                                  evidence_payloads=report.get("evidence_inventory") or [], run_ledger=report.get("run_ledger"),
                                  metrics_version=(report.get("metrics") or {}).get("metrics_version", "1.0"))
     lines.extend(["", digest["markdown"].replace("已验证快速点子", "收费对标支持的候选")
                   .replace("B 级快速点子", "B 级收费对标支持的候选"), ""])
+    discovery = report["tiered"].get("user_discovery") or {}
+    if discovery.get("observations"):
+        from aor.evidence.retrieval import resolve_evidence_reference
+        from aor.reporting.public import public_url
+        lines.extend(["## 用户原话与需求发现", "", "以下标签为宿主分类，不自动证明评论者身份或真实成交。", ""])
+        for observation in discovery["observations"]:
+            lines.append(f"### {observation['observation_id']} · {_safe_text(observation['product'])}")
+            lines.append(f"{_safe_text(observation['target_user'])} / {_safe_text(observation['task'])}：{_safe_text(observation['need'])}")
+            lines.append(f"类型：{observation['feedback_type']}；倾向：{observation['sentiment']}；需求簇：{observation['cluster_id']}")
+            for ref in observation["evidence_refs"]:
+                lines.append(f"- 原话：{_safe_text(ref['quote'])}（{ref['evidence_id']} / {ref['revision_id']}）")
+                row = resolve_evidence_reference(ref, report["claim_evidence"], require_revision=True)
+                try:
+                    url = public_url(row.get("url") or row.get("canonical_url") or "")
+                except ValueError:
+                    url = None
+                if url:
+                    lines.append(f"  - [来源]({url})")
+            lines.append("")
     if report.get("run_ledger"):
         ledger = report["run_ledger"]
         lines.extend(["## 本轮付费账本", "", f"实际发起 {ledger['attempts']} 次 HTTP 尝试；"
@@ -317,6 +368,15 @@ def commit_report(home: Path, report: dict) -> dict:
     from aor.opportunity.exploration import record_leads
     if report["tiered"].get("research_leads"):
         record_leads(home, report["tiered"]["research_leads"], run_id=report["run_id"])
+    if "user_discovery" in report["tiered"]:
+        from aor_runtime import atomic_json
+        import json
+        path = Path(home) / "state" / "user-discovery" / (report["run_id"] + ".json")
+        discovery = report["tiered"]["user_discovery"]
+        if path.exists() and json.loads(path.read_text()) != discovery:
+            raise ValueError("已提交的用户观察保持不可变，请新建研究运行")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_json(path, discovery)
     results = {}
     for kind, prefix in (("opportunity", "OPP-"), ("signal", "SIG-")):
         rows = [{**row, "report_sha256": report_hash} for row in records if row["id"].startswith(prefix)]

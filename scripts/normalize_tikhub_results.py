@@ -22,7 +22,7 @@ from aor.text import language as _language
 from aor.evidence.quality import assess_quality, aggregate_status, mark_reposts, research_window
 
 
-PARSER_VERSION = "2.1.0"
+PARSER_VERSION = "2.2.0"
 
 PHASE_ONE_SOURCES = (
     "tiktok",
@@ -645,14 +645,14 @@ def _comment_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _comment_text(row: dict[str, Any]) -> str | None:
-    value = _first(*(row.get(key) for key in ("text", "content", "comment_text", "comment", "body", "message", "desc")))
+    value = _first(*(row.get(key) for key in ("text", "full_text", "content", "comment_text", "comment", "body", "message", "desc")))
     if isinstance(value, dict):
         value = _first(value.get("text"), value.get("content"), value.get("message"))
     return _clean_text(value, limit=8 * 1024 * 1024)
 
 
 def _comment_id(row: dict[str, Any], parent: str | None = None, post: str | None = None) -> str:
-    return _clean_text(_first(*(row.get(key) for key in ("comment_id", "cid", "reply_id", "id", "pk"))), limit=300) or canonical_sha256({"post": post, "parent": parent, "text": _comment_text(row)})[:20]
+    return _clean_text(_first(*(row.get(key) for key in ("comment_id", "cid", "reply_id", "id", "id_str", "rest_id", "pk"))), limit=300) or canonical_sha256({"post": post, "parent": parent, "text": _comment_text(row)})[:20]
 
 
 def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> list[dict[str, Any]]:
@@ -660,17 +660,17 @@ def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> 
     result: list[dict[str, Any]] = []
 
     def visit(value: Any, parent: str | None, pointer: str, depth: int) -> None:
-        if depth > 12:
+        if depth > 24:
             return
         if isinstance(value, list):
             for index, child in enumerate(value):
                 visit(child, parent, f"{pointer}/{index}", depth + 1)
         elif isinstance(value, dict):
-            is_comment = _comment_text(value) and any(key in value for key in ("comment_id", "cid", "reply_id", "id", "pk", "author", "user", "create_time", "created_at"))
+            is_comment = _comment_text(value) and any(key in value for key in ("comment_id", "cid", "reply_id", "id", "id_str", "rest_id", "pk", "author", "user", "create_time", "created_at"))
             next_parent = parent
             if is_comment:
                 row = dict(value)
-                explicit_parent = _clean_text(_first(value.get("parent_comment_id"), value.get("reply_to_comment_id"), value.get("reply_to_id"), value.get("parentId")), limit=300)
+                explicit_parent = _clean_text(_first(value.get("parent_comment_id"), value.get("reply_to_comment_id"), value.get("reply_to_id"), value.get("parentId"), value.get("in_reply_to_status_id_str"), value.get("inReplyToId")), limit=300)
                 if not explicit_parent and str(value.get("parent_id") or "").startswith("t1_"):
                     explicit_parent = str(value["parent_id"])[3:]
                 row["_parent_comment_id"] = explicit_parent or parent
@@ -678,7 +678,8 @@ def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> 
                 result.append(row)
                 next_parent = _comment_id(row, row["_parent_comment_id"], selected_item_id)
             for key, child in value.items():
-                if key not in {"author", "user", "owner", "reactions", "statistics", "content", "comment"}:
+                if key not in {"author", "user", "owner", "reactions", "statistics", "quoted_status_result",
+                               "retweeted_status_result", "quoted_status", "retweeted_status"}:
                     escaped_key = str(key).replace("~", "~0").replace("/", "~1")
                     visit(child, next_parent, f"{pointer}/{escaped_key}", depth + 1)
 
@@ -745,6 +746,7 @@ def _normalize_comment(
 ) -> dict[str, Any] | None:
     text_value = _first(
         row.get("text"),
+        row.get("full_text"),
         row.get("content"),
         row.get("comment_text"),
         row.get("comment"),
@@ -783,8 +785,8 @@ def _normalize_comment(
         "parent_comment_id": row.get("_parent_comment_id"),
         "origin_id": selected_item_id,
         "query_id": query_id,
-        "url": _url(_first(row.get("url"), row.get("permalink"))) or parent_url,
-        "url_kind": "comment" if _url(_first(row.get("url"), row.get("permalink"))) else ("parent_post" if parent_url else "unavailable"),
+        "url": _url(_first(row.get("url"), row.get("permalink"))) or (f"https://x.com/i/status/{comment_id}" if source == "twitter" and comment_id.isdigit() else parent_url),
+        "url_kind": "comment" if _url(_first(row.get("url"), row.get("permalink"))) or source == "twitter" and comment_id.isdigit() else ("parent_post" if parent_url else "unavailable"),
         "parent_url": parent_url,
         "raw_file": raw_file,
         "raw_json_pointer": raw_pointer,
@@ -820,7 +822,7 @@ def _failure_status(result: dict[str, Any]) -> str:
 def _request_links(result: dict[str, Any]) -> dict[str, Any]:
     """同一个 HTTP 响应可服务多个意图，保留执行器已归并的关联。"""
     from aor.sources.industries import industry_ids
-    return {**{key: deepcopy(result[key]) for key in ('request_ids', 'intent_refs', 'query_metadata') if key in result},
+    return {**{key: deepcopy(result[key]) for key in ('request_ids', 'intent_refs', 'query_metadata', 'collection') if key in result},
             'industry_ids': industry_ids(result)}
 
 
@@ -967,11 +969,18 @@ def normalize_documents(
                     _status_update(statuses, source, detail_status)
                     request_statuses.append(record)
                     continue
-                if kind != "top_level_comments":
+                if kind not in {"top_level_comments", "comment_replies"}:
                     raise ValueError(f"不支持的评论深挖 kind：{kind}")
                 raw_comments = _extract_comment_items(data, selected_item_id)
+                root_count = 0
+                if source == "twitter":
+                    filtered = [row for row in raw_comments if _comment_id(row) != selected_item_id.split(":")[-1]]
+                    root_count = len(raw_comments) - len(filtered)
+                    raw_comments = filtered
                 normalized_count = 0
                 for raw_comment in raw_comments:
+                    if kind == "comment_replies" and not raw_comment.get("_parent_comment_id"):
+                        raw_comment["_parent_comment_id"] = (result.get("collection") or {}).get("parent_comment_id") or (result.get("params") or {}).get("comment_id")
                     normalized_comment = _normalize_comment(
                         source,
                         raw_comment,
@@ -995,6 +1004,10 @@ def normalize_documents(
                     seen_comments[marker] = normalized_comment
                     comments.append(normalized_comment)
                 recognized, raw_count, skipped = _comment_shape(data)
+                if source == "twitter" and recognized and raw_count is not None:
+                    raw_count = max(0, raw_count - root_count)
+                if source == "twitter" and not recognized and raw_comments:
+                    recognized, raw_count = True, len(raw_comments)
                 request_statuses.append(_parse_record(result, source, recognized=recognized,
                                                      raw_count=raw_count, parsed_count=normalized_count, skipped=skipped))
                 continue

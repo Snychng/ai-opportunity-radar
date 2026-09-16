@@ -1,0 +1,20 @@
+{
+  "products": [
+    {
+      "name": "ExampleVideo",
+      "aliases": [
+        "示例视频"
+      ],
+      "task": "制作商品短视频",
+      "industry_ids": [
+        "content_creation",
+        "ecommerce"
+      ],
+      "sources": [
+        "xiaohongshu",
+        "douyin",
+        "twitter"
+      ]
+    }
+  ]
+}

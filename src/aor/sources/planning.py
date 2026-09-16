@@ -31,8 +31,8 @@ def validate_intent_plan(plan: Any) -> dict[str, Any]:
 
     if not isinstance(plan, dict) or set(plan) != {"intents"}:
         raise ValueError("intent_plan 必须只包含 intents 数组")
-    if not isinstance(plan["intents"], list) or not 1 <= len(plan["intents"]) <= 20:
-        raise ValueError("intents 必须包含 1 到 20 个结构化意图")
+    if not isinstance(plan["intents"], list) or not 1 <= len(plan["intents"]) <= 100:
+        raise ValueError("intents 必须包含 1 到 100 个结构化意图")
     fields = {"id", "question", "evidence_type", "search_query", "ranking_query", "source", "locale", "candidate_gaps"}
     sources = {row["source"] for row in source_catalog()}
     seen = set()

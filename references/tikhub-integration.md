@@ -87,7 +87,7 @@ python3 "$SKILL_DIR/scripts/tikhub_query.py" build-gaps \
 
 生成的每个请求都携带候选 ID、缺失门槛、目标地区和预期升级结果。估价与执行必须使用 `tikhub-gap-plan.json`，不能把“再找更多点子”写成缺口。
 
-评论不在搜索阶段批量获取。先筛选 1–5 个高价值帖子，再生成单独的评论深挖计划并重新估价。
+搜索与评论分阶段估价。新产品研究通过 `resume --comments-file` 对最多 30 个相关帖子做有界分页和子回复采集，每页复用当前请求账本与预算预检，参见[评论优先发现](comment-first-discovery.md)。以下 `build-comments` 是兼容保留的 1–5 帖首页模式。
 
 ## 评论深挖计划
 

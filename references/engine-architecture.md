@@ -1,6 +1,6 @@
 # 研究引擎维护者架构
 
-最后更新：2026-09-14。入口为 `scripts/radar.py`；核心包为 `src/aor/`。本文描述文件交接、职责与恢复边界，不将离线测试当作商业验证或实时覆盖证明。
+最后更新：2026-09-16。入口为 `scripts/radar.py`；核心包为 `src/aor/`。本文描述文件交接、职责与恢复边界，不将离线测试当作商业验证或实时覆盖证明。
 
 ## 依赖与职责
 
@@ -118,3 +118,7 @@ DATA_HOME/
 对象身份 2.0 将帖子与评论拆开，以 native identity 关联采集副本和库快照；新语义审阅绑定对应修订。旧库只通过 `library migrate-identities --destination` 派生迁移，源 JSONL 不覆盖。`resume --reparse` 复用父运行已存响应创建离线子运行，不重购、不断言新来源健康，父运行费用独立保留。
 
 内部 report、公开 contract、目录/覆盖、LEAD 和发行包各自版本化。发行 4.1.0 不表示服务器任务或已安装 skill 自动更新；真实安装和发布需独立检查。网站只读取 [公开契约](website-contract.md)，不绑定内部 execution_results、raw_refs 或原始评论结构。
+
+## 评论优先发现（4.3）
+
+`sources/products.py` 编译均衡的产品搜索意图；`sources/comments.py` 根据已保存响应推进分页/子回复并推导覆盖计数；`workflow.research.run_comment_collection` 持久化状态和逐轮计划，独立队列锁防并发推进，每轮仍经 `run_paid_batch` 的实时价格、账户和共享预算预检。`opportunity/needs.py` 核验用户观察原文并归组需求簇；report 构建/验证共用统计函数，私有观察按 run_id 幂等提交，public 只导出统计。解释语义和确认产品关联仍由宿主负责。

@@ -287,3 +287,7 @@ Markdown 不支持 `--commit`；新正式提交使用 report.json。旧手动 `s
 全量审阅诊断使用 `research_quality.review_scope=active_context`：`unreviewed_evidence_count` 包含历史复用中仍待审阅的有效对象，并列出 current/historical 分项。行业 coverage 仍统计本轮来源覆盖，不把旧材料伪装成新采集；两者不是同一个计数口径。
 
 `current_evidence_state` 可包含整个证据库截至研究日的状态，正文目录只保留本轮相关材料。校验要求本轮对象逐一匹配且所有状态格式合法；全站聚合因此能收到未进入本轮阅读包的旧引用失效信息。
+
+## 评论优先报告（4.3）
+
+用户观察和需求簇来自 `tiered.user_discovery`，只代表绑定原文的宿主分类，不要求已有收费对标；摘要列出计数与前 10 个需求簇，完整报告保留所有观察及固定修订引文。`comment_collection_coverage` 从本轮实际保存的评论执行响应重新计算，分别显示平台、请求记录、成功 HTTP 评论页、去重评论，`exhaustive=false`；HTTP 成功不代表成功解析或全量覆盖，失败详情看 request_statuses 与评论状态文件。两项均不增加 A/B 计数。

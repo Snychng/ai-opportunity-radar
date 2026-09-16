@@ -250,3 +250,7 @@ LEAD 必填 title、target_user、problem_or_desire、wedge、industry_ids、ai_
 coverage 2.0 分开统计 material、词面 related、页面 verified、语义 reviewed、近期用户行为、官方收费对标、替代与反证。`relevance_review` 需 status、reviewer、reviewed_at，并绑定 evidence_id+revision_id，或匹配当前 content_hash 的 content_sha256；过期修订、未来或无效审阅不能算完成。`industry-coverage.tasks` 保留任务/语言的实际尝试与缺口，未执行计划、无实时价格和历史复用不计为本轮成功采集。
 
 `evidence-index` 与 `research-followup.review_queue` 保存未审阅材料；selected 仅表示进入阅读包。industry-packets 提供逐方向有界包。`completed` 是文件交接结束，不能等同于市场覆盖完整或客户需求已验证。
+
+## 4.3 用户观察与需求簇
+
+benchmarks 输入可只包含 `observations`，每轮最多 2000 条。字段、标签与引用格式见[评论优先发现](comment-first-discovery.md)。程序核验原文和固定修订、日期、当前撤回状态，按规范化的 product/target_user/task/need 生成稳定 OBS/NEED 标识；相同引用和需求去重，冲突分类拒绝提交。`tiered.user_discovery` 保存完整观察与需求簇，原有 A/B/R/LEAD 数据和 report_version=1.1 保持兼容。`classification_status=host_classified`、`authenticity=not_independently_verified`、`market_validated=false` 不允许通过输入提升。
