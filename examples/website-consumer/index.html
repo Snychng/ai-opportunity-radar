@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI 机会图谱 · 数据接入预览</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header><a class="brand" href="./">AOR <span>AI 机会图谱</span></a><span class="preview">数据接入预览</span></header>
+  <main>
+    <div class="intro"><p class="eyebrow">从你的经验，找到下一步</p><h1>AI 正在改变的日常工作</h1><p>浏览电商、游戏、创作、学习、生活与互联网产品的需求和机会。每条线索都保留依据、未知项和验证方向。</p></div>
+    <section class="overview" aria-label="研究进展" id="overview"></section>
+    <div class="workspace"><aside><h2>探索方向</h2><nav id="industries" aria-label="行业筛选"></nav><p class="scope">当前研究范围为六个方向。空白方向表示内容仍待补充。</p></aside>
+    <section class="catalog" aria-label="机会目录"><div class="filters"><label>搜索任务或人群<input id="search" type="search" placeholder="例如：剪辑、商品图、客户运营"></label><label>展示状态<select id="status"><option value="published">当前线索</option><option value="all">全部（含已归档）</option></select></label></div><p id="coverage-note" class="scope"></p><p id="results-status" role="status"></p><div id="items"></div></section></div>
+    <p class="footnote">探索线索表示值得进一步核验的方向；已有收费产品与用户任务，不代表新项目已获得客户验证。</p>
+  </main>
+  <dialog id="detail" aria-labelledby="detail-title"><button id="close" class="close" aria-label="关闭详情">关闭 ×</button><div id="detail-content"></div></dialog>
+</body>
+</html>

@@ -16,10 +16,12 @@ EVIDENCE_ROLES = (
     "official_pricing", "product_update", "product_review", "hiring",
     "outsourcing", "payment", "workflow_pain", "alternative", "regional_gap",
     "counter_evidence",
+    "usage_behavior", "creative_output", "learning_progress", "social_sharing",
 )
 MANUAL_PLATFORMS = (
     "web", "producthunt", "indiehackers", "appstore", "googleplay",
     "chrome_web_store", "g2", "capterra", "trustpilot", "v2ex",
+    "steam", "shopify_app_store", "etsy",
 )
 
 
@@ -33,7 +35,9 @@ def source_catalog() -> list[dict[str, Any]]:
             "source": platform,
             "platform": platform,
             "provider": "host-verified-web" if manual else ("community-public" if community else "tikhub"),
-            "capabilities": ["import"] if manual else ["search", "detail", "top_level_comments"],
+            "capabilities": ["import"] if manual else ["search", "detail", "top_level_comments"] +
+                            (["comment_pagination", "comment_replies"] if platform in {"xiaohongshu", "douyin"}
+                             else ["comment_pagination", "latest_comments"] if platform == "twitter" else []),
             "cost": "no_network_import" if manual else ("free_public_api" if community else "paid_live_quote_required"),
             "preferred_languages": ["en"] if community else (["zh"] if platform in CHINESE_SOURCES else ["multilingual"]),
             "regions": ["global"],

@@ -150,6 +150,9 @@ def _benchmark_variants(benchmark: dict[str, Any], dimensions: dict[str, Any]):
             "market_scope": {"country": region["country"], "region": region["region"],
                              "language": region["language"], "primary_channel": acquisition_channel},
             "hypotheses": {},
+            "industry_ids": deepcopy(benchmark.get("industry_ids", [])),
+            "demand_model": benchmark.get("demand_model"),
+            "ai_value": deepcopy(benchmark.get("ai_value", {})),
         }
         for field, baseline in defaults.items():
             if normalize_identity(candidate[field]) != normalize_identity(baseline):

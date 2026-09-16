@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from normalize_tikhub_results import normalize_documents  # noqa: E402
+from normalize_tikhub_results import PARSER_VERSION, normalize_documents  # noqa: E402
 from tikhub_query import build_comment_plan  # noqa: E402
 
 
@@ -47,6 +47,169 @@ def _document(
 
 
 class NormalizeTikHubResultsTests(unittest.TestCase):
+    def test_unknown_nonempty_and_partial_responses_are_visible(self):
+        results = [
+            _result('youtube', {'new_results_container': [{'id': 'changed', 'title': 'Changed provider shape'}]}, query_id='unknown'),
+            _result('youtube', {'videos': []}, query_id='empty'),
+            _result('youtube', {'videos': [{'video_id': 'valid', 'title': 'Valid content'}, {}, 'broken row']}, query_id='partial'),
+            _result('youtube', {'code': 500, 'message': 'upstream failed', 'videos': []}, query_id='upstream'),
+        ]
+        normalized = normalize_documents([_document(results)])
+        rows = {row['id']: row for row in normalized['request_statuses']}
+        self.assertEqual(rows['unknown']['parse_status'], 'unrecognized_response')
+        self.assertIsNone(rows['unknown']['raw_items'])
+        self.assertEqual(rows['empty']['parse_status'], 'empty_result')
+        self.assertEqual(rows['empty']['raw_items'], 0)
+        self.assertEqual(rows['partial']['parse_status'], 'partial_parse')
+        self.assertEqual((rows['partial']['raw_items'], rows['partial']['parsed_items']), (3, 1))
+        self.assertEqual(rows['upstream']['parse_status'], 'upstream_error')
+        self.assertEqual(normalized['stats']['source_status']['youtube'], 'partial')
+        self.assertEqual(normalized['stats']['parsed_items'], 1)
+        self.assertEqual(normalized['stats']['requests_with_unknown_raw_count'], 2)
+
+    def test_known_suggestion_and_empty_state_rows_are_not_parse_failures(self):
+        normalized = normalize_documents([_document([
+            _result('reddit', {'search': {'dynamic': {'components': {'main': {'edges': [
+                {'presentation': {'type': 'empty_state'}}]}}}}}),
+            _result('zhihu', {'data': [{'object': None, 'query_list': ['suggestion']}]}),
+            _result('xiaohongshu', {'data': {'items': [{'model_type': 'ads', 'ads': {}}]}}),
+        ])])
+        self.assertEqual(normalized['stats']['skipped_noncontent_items'], 3)
+        self.assertEqual(normalized['stats']['parse_status'], {'empty_result': 3})
+
+    def test_live_shaped_xiaohongshu_comment_time_is_preserved(self):
+        result = _result('xiaohongshu', {'data': {'comments': [{'id': 'comment-fixture',
+                        'content': '每周剪辑一期', 'time': 1784000000}]}})
+        result.update(kind='top_level_comments', selected_item_id='xiaohongshu:note-fixture',
+                      parent_url='https://www.xiaohongshu.com/explore/note-fixture')
+        normalized = normalize_documents([_document([result], stage='comment_deep_dive')])
+        self.assertEqual(normalized['comments'][0]['date_confidence'], 'high')
+        self.assertEqual(normalized['comments'][0]['window_status'], 'in_window')
+
+    def test_comment_empty_unknown_and_partial_are_distinct(self):
+        results = []
+        for query_id, data in [('empty', {'comments': []}), ('unknown', {'changed': [{'message': 'unrecognized'}]}),
+                               ('partial', {'comments': [{'comment_id': 'c1', 'text': 'Concrete task'}, {}]})]:
+            result = _result('youtube', data, query_id=query_id)
+            result.update(kind='top_level_comments', selected_item_id='youtube:parent',
+                          parent_url='https://www.youtube.com/watch?v=parent')
+            results.append(result)
+        normalized = normalize_documents([_document(results, stage='comment_deep_dive')])
+        self.assertEqual([r['parse_status'] for r in normalized['request_statuses']],
+                         ['empty_result', 'unrecognized_response', 'partial_parse'])
+        self.assertEqual(normalized['request_statuses'][-1]['raw_items'], 2)
+
+    def test_detail_partial_and_explicit_empty_container_are_distinct(self):
+        results = []
+        for query_id, data in [('empty', {'data': {'note_list': []}}), ('unknown', {'changed': {'new_payload': 'value'}}),
+                              ('partial', {'data': {'note_list': [{'id': 'valid', 'title': 'Concrete task'}, {}]}})]:
+            result = _result('xiaohongshu', data, query_id=query_id)
+            result.update(kind='detail', selected_item_id='xiaohongshu:parent',
+                          parent_url='https://www.xiaohongshu.com/explore/parent')
+            results.append(result)
+        normalized = normalize_documents([_document(results, stage='comment_deep_dive')])
+        self.assertEqual([r['parse_status'] for r in normalized['request_statuses']],
+                         ['empty_result', 'unrecognized_response', 'partial_parse'])
+        self.assertEqual(normalized['request_statuses'][-1]['raw_items'], 2)
+
+    def test_versioned_reparse_preserves_date_anchor_and_input_fingerprint(self):
+        doc = _document([_result('youtube', {'videos': [
+            {'video_id': 'relative', 'title': 'Task guide', 'published_time': '1 month ago'},
+            {'video_id': 'chinese', 'title': '任务记录', 'published_time': '2周前'},
+            {'video_id': 'unsupported', 'title': '任务记录', 'published_time': 'some time back'},
+        ]})])
+        first, second = normalize_documents([doc]), normalize_documents([doc])
+        self.assertEqual(first['parser_version'], PARSER_VERSION)
+        self.assertEqual(first['input_fingerprints'], second['input_fingerprints'])
+        self.assertEqual(first['evidence'], second['evidence'])
+        rows = {r['source_item_id']: r for r in first['evidence']}
+        self.assertIsNone(rows['relative']['published_at'])
+        self.assertEqual(rows['relative']['window_status'], 'uncertain')
+        self.assertEqual(rows['chinese']['window_status'], 'in_window')
+        self.assertEqual(rows['unsupported']['window_status'], 'unknown')
+        self.assertEqual(rows['relative']['published_at_interval']['anchor_observed_at'], doc['generated_at'])
+
+    def test_missing_or_naive_observation_does_not_guess_relative_dates(self):
+        result = _result('youtube', {'videos': [{'video_id': 'v', 'title': 'Task', 'published_time': '2 days ago'}]})
+        for generated_at in [None, '2026-07-14T10:00:00']:
+            row = normalize_documents([_document([result], generated_at=generated_at)])['evidence'][0]
+            self.assertIsNone(row['published_at'])
+            self.assertIsNone(row['published_at_interval'])
+            self.assertEqual(row['window_status'], 'unknown')
+
+    def test_updated_date_does_not_replace_unknown_publication_date(self):
+        normalized = normalize_documents([_document([
+            _result('zhihu', {'data': [{'object': {'id': 'a1', 'type': 'answer', 'title': 'Old question',
+                                                   'updated_time': 1784000000}}]}),
+            _result('xiaohongshu', {'data': {'items': [{'note': {'id': 'n1', 'title': 'Old note',
+                                                                 'update_time': 1784000000}}]}}),
+        ])])
+        self.assertTrue(all(r['published_at'] is None for r in normalized['evidence']))
+        self.assertEqual(normalized['stats']['window_status'], {'unknown': 2})
+
+    def test_xiaohongshu_nested_note_list_preserves_detail_and_publication_time(self):
+        result = _result("xiaohongshu", {"code": 0, "data": [{"note_list": [{
+            "id": "detail-note", "title": "长期找剪辑", "desc": "每周发布一期访谈，需要长期配合完成剪辑。",
+            "time": 1784000000,
+        }], "comment_list": []}]})
+        result.update(kind="detail", selected_item_id="xiaohongshu:detail-note",
+                      parent_url="https://www.xiaohongshu.com/explore/detail-note")
+        document = _document([result], stage="comment_deep_dive")
+        document["parent_search_run_id"] = RUN_ID
+        normalized = normalize_documents([document])
+        self.assertEqual(len(normalized["evidence"]), 1)
+        self.assertIn("每周发布一期", normalized["evidence"][0]["original_text"])
+        self.assertEqual(normalized["evidence"][0]["date_confidence"], "high")
+
+    def test_nested_reddit_and_bilibili_results_are_not_silently_dropped(self):
+        results = [
+            _result("reddit", {"search": {"dynamic": {"components": {"main": {"edges": [{"node": {
+                "children": [{"post": {"id": "t3_nested", "postTitle": "Finding reliable gaming teammates",
+                    "content": {"markdown": "We play every weekend and need teammates who keep the same schedule."},
+                    "url": "https://www.reddit.com/r/gaming/comments/nested/",
+                    "createdAt": "2026-07-13T12:01:00.000000+0000", "subreddit": {"name": "gaming"}}}]
+            }}]}}}}}),
+            _result("bilibili", {"code": 0, "data": {"result": [{"bvid": "BVnested", "title": "游戏角色定制过程",
+                                                         "description": "记录角色设计过程", "pubdate": 1784000000}]}}),
+        ]
+        normalized = normalize_documents([_document(results)])
+        self.assertEqual(len(normalized["evidence"]), 2)
+        reddit = next(r for r in normalized["evidence"] if r["source"] == "reddit")
+        self.assertIn("every weekend", reddit["original_text"])
+        self.assertEqual(reddit["title"], "Finding reliable gaming teammates")
+        self.assertEqual(reddit["date_confidence"], "high")
+
+    def test_compact_timezone_offsets_keep_exact_publication_time(self):
+        from normalize_tikhub_results import _normalize_date
+        for offset, expected in (("+0000", "Z"), ("+0530", "+05:30"), ("-0400", "-04:00")):
+            raw = "2026-07-13T12:01:00.000000" + offset
+            rendered, confidence, original = _normalize_date(raw)
+            self.assertEqual(rendered, "2026-07-13T12:01:00" + expected)
+            self.assertEqual(confidence, "high")
+            self.assertEqual(original, raw)
+        self.assertEqual(_normalize_date("2026-02-31T12:01:00+0000")[1], "low")
+
+    def test_relative_publication_date_does_not_break_evidence_ingestion(self):
+        from aor.storage.evidence_library import EvidenceLibrary
+        result = _result("youtube", {"videos": [{
+            "video_id": "relative1", "title": "Language practice experience",
+            "description": "I practice conversations every week",
+            "published_time": "2 weeks ago",
+        }]})
+        normalized = normalize_documents([_document([result])])
+        row = normalized["evidence"][0]
+        self.assertIsNone(row["published_at"])
+        self.assertEqual(row["published_at_raw"], "2 weeks ago")
+        self.assertEqual(row["date_confidence"], "estimated")
+        self.assertEqual(row["published_at_interval"]["earliest"], "2026-06-23")
+        self.assertEqual(row["published_at_interval"]["latest"], "2026-06-30")
+        self.assertEqual(row["date_basis"], "relative_to_observation")
+        self.assertEqual(row["window_status"], "in_window")
+        with tempfile.TemporaryDirectory() as home:
+            library = EvidenceLibrary(Path(home))
+            library.ingest([row], as_of="2026-07-14", run_id=RUN_ID)
+            self.assertEqual(len(library.search("", as_of="2026-07-14")), 1)
+
     def test_normalizes_all_phase_one_source_shapes(self) -> None:
         results = [
             _result("tiktok", {"search_item_list": [{"aweme_info": {
@@ -132,7 +295,7 @@ class NormalizeTikHubResultsTests(unittest.TestCase):
         self.assertEqual(by_source["wechat_search"]["engagement"], {})
         self.assertNotIn("<", by_source["zhihu"]["original_text"])
         self.assertNotIn("<", by_source["bilibili"]["title"])
-        self.assertEqual(by_source["youtube"]["date_confidence"], "low")
+        self.assertEqual(by_source["youtube"]["date_confidence"], "estimated")
         self.assertEqual(by_source["douyin"]["language"], "zh")
         candidates = {item["source"]: item for item in normalized["comment_candidates"]}
         self.assertEqual(candidates["xiaohongshu"]["content_type"], "image_note")
@@ -169,10 +332,13 @@ class NormalizeTikHubResultsTests(unittest.TestCase):
         self.assertEqual(normalized["stats"]["duplicates_removed"], 1)
         self.assertEqual(normalized["stats"]["source_status"]["threads"], "no-results")
         self.assertEqual(normalized["stats"]["source_status"]["bilibili"], "error")
-        self.assertIn(
-            {"id": "bad", "source": "bilibili", "status": "error", "error_code": "request_error"},
-            normalized["request_statuses"],
-        )
+        failure = next(row for row in normalized["request_statuses"] if row["id"] == "bad")
+        self.assertEqual(failure["error_code"], "request_error")
+        self.assertEqual(failure["parse_status"], "upstream_error")
+        self.assertIsNone(failure["raw_items"])
+        duplicate = normalized["request_statuses"][-1]
+        self.assertEqual(duplicate["status"], "ok")
+        self.assertEqual(duplicate["parsed_items"], 1)
         self.assertEqual(normalized["source_files"], ["a.json", "b.json"])
 
     def test_gap_stage_preserves_candidate_context(self) -> None:

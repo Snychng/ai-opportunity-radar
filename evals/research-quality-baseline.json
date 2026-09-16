@@ -124,6 +124,60 @@
     },
     {
       "actual": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "unrelated",
+        "semantic_relevance_status": "not_reviewed"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "relevance_status": "unrelated",
+        "semantic_relevance_status": "not_reviewed"
+      },
+      "id": "common-again-noise",
+      "passed": true
+    },
+    {
+      "actual": {
+        "lexical_status": "weak_match",
+        "recent_evidence_eligible": false,
+        "relevance_status": "unknown"
+      },
+      "expected": {
+        "lexical_status": "weak_match",
+        "recent_evidence_eligible": false,
+        "relevance_status": "unknown"
+      },
+      "id": "teammates-domain-only",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_semantically_verified": false,
+        "relevance_status": "relevant",
+        "semantic_relevance_status": "not_reviewed"
+      },
+      "expected": {
+        "recent_semantically_verified": false,
+        "relevance_status": "relevant",
+        "semantic_relevance_status": "not_reviewed"
+      },
+      "id": "task-match-is-not-semantic-review",
+      "passed": true
+    },
+    {
+      "actual": {
+        "recent_evidence_eligible": false,
+        "window_status": "uncertain"
+      },
+      "expected": {
+        "recent_evidence_eligible": false,
+        "window_status": "uncertain"
+      },
+      "id": "relative-date-crosses-window",
+      "passed": true
+    },
+    {
+      "actual": {
         "stats.duplicates_removed": 1,
         "stats.fetched": 6,
         "stats.parsed": 5,
@@ -223,12 +277,12 @@
       "passed": true
     }
   ],
-  "cases_passed": 16,
-  "cases_total": 16,
+  "cases_passed": 20,
+  "cases_total": 20,
   "eval_version": "1.0",
-  "fixture_sha256": "6bcfa53d4337e81f5d7d83ffb0bf0fb6b9de75eae75e333554e4f08d8d119348",
-  "fixture_version": "1.0",
+  "fixture_sha256": "d4d33dbad0687fed276dee6a2c27df739b8b8240b312c477466c02d322070475",
+  "fixture_version": "2.0",
   "network_called": false,
   "passed": true,
-  "quality_version": "1.0"
+  "quality_version": "2.0"
 }

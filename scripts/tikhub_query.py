@@ -24,6 +24,7 @@ import aor_bootstrap  # noqa: F401
 from aor.paid_execution import execute_requests, select_attempts
 from aor.request_identity import deduplicate_requests, request_fingerprint
 from aor.storage.request_journal import JournalError, RequestJournal
+from aor.storage.budget import BudgetError, BudgetStore, budget_path, budget_report
 from contracts import SCHEMA_VERSION, ContractError, validate_run_as_of
 
 
@@ -186,8 +187,8 @@ RADAR_ENDPOINTS: dict[str, dict[str, Any]] = {
         "query",
         {
             "search_type": "post",
-            "sort": "NEW",
-            "time_range": "WEEK",
+            "sort": "RELEVANCE",
+            "time_range": "month",
             "safe_search": "unset",
             "allow_nsfw": "0",
             "after": "",
@@ -234,11 +235,14 @@ COMMENT_PROFILES: dict[str, dict[str, Any]] = {
         _deep_profile(source="threads", kind="detail", endpoint="/api/v1/threads/web/fetch_post_detail_v2", required_all=("post_id",)),
         _deep_profile(source="threads", kind="top_level_comments", endpoint="/api/v1/threads/web/fetch_post_comments", required_all=("post_id",)),
         _deep_profile(source="twitter", kind="detail", endpoint="/api/v1/twitter/web/fetch_tweet_detail", required_all=("tweet_id",)),
-        _deep_profile(source="twitter", kind="top_level_comments", endpoint="/api/v1/twitter/web/fetch_post_comments", required_all=("tweet_id",)),
+        _deep_profile(source="twitter", kind="top_level_comments", endpoint="/api/v1/twitter/web/fetch_post_comments", required_all=("tweet_id",), optional=("cursor",)),
+        _deep_profile(source="twitter", kind="top_level_comments", endpoint="/api/v1/twitter/web/fetch_latest_post_comments", required_all=("tweet_id",), optional=("cursor",)),
         _deep_profile(source="youtube", kind="detail", endpoint="/api/v1/youtube/web_v2/get_video_info_v2", required_all=("video_id",)),
         _deep_profile(source="youtube", kind="top_level_comments", endpoint="/api/v1/youtube/web_v2/get_video_comments", required_all=("video_id",)),
         _deep_profile(source="douyin", kind="detail", endpoint="/api/v1/douyin/web/fetch_one_video_v2", required_all=("aweme_id",)),
-        _deep_profile(source="douyin", kind="top_level_comments", endpoint="/api/v1/douyin/web/fetch_video_comments", required_all=("aweme_id",)),
+        _deep_profile(source="douyin", kind="top_level_comments", endpoint="/api/v1/douyin/web/fetch_video_comments", required_all=("aweme_id",), optional=("cursor", "count")),
+        _deep_profile(source="douyin", kind="comment_replies", endpoint="/api/v1/douyin/web/fetch_video_comment_replies", required_all=("item_id", "comment_id"), optional=("cursor", "count")),
+        _deep_profile(source="xiaohongshu", kind="comment_replies", endpoint="/api/v1/xiaohongshu/app_v2/get_note_sub_comments", required_all=("comment_id",), required_any=(("note_id", "share_text"),), optional=("cursor", "index")),
         _deep_profile(
             source="xiaohongshu",
             kind="detail",
@@ -256,6 +260,7 @@ COMMENT_PROFILES: dict[str, dict[str, Any]] = {
             kind="top_level_comments",
             endpoint="/api/v1/xiaohongshu/app_v2/get_note_comments",
             required_any=(("note_id", "share_text"),),
+            optional=("cursor", "index", "pageArea", "sort_strategy"),
         ),
         _deep_profile(source="bilibili", kind="detail", endpoint="/api/v1/bilibili/web/fetch_one_video", required_all=("bv_id",)),
         _deep_profile(source="bilibili", kind="top_level_comments", endpoint="/api/v1/bilibili/web/fetch_video_comments", required_all=("bv_id",)),
@@ -294,8 +299,8 @@ def build_search_plan(*, as_of: str, run_id: str, query_groups: list[dict[str, A
         raise PlanError(str(exc)) from exc
     if not isinstance(query_groups, list) or not query_groups:
         raise PlanError("query_groups 必须是非空数组")
-    if len(query_groups) > 20:
-        raise PlanError("单个计划最多包含 20 个关键词组")
+    if len(query_groups) > MAX_REQUESTS:
+        raise PlanError(f"单个计划最多包含 {MAX_REQUESTS} 个关键词组")
 
     requests: list[dict[str, Any]] = []
     for group_index, group in enumerate(query_groups, start=1):
@@ -638,7 +643,24 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
     if stage == "comment_deep_dive":
         if plan.get("parent_search_run_id") != plan.get("run_id"):
             raise PlanError("评论深挖计划缺少合法 parent_search_run_id")
-        if len(requests) > 10 or len(requests) % 2 != 0:
+        if plan.get("collection_version") == "2.0":
+            from aor.sources.comments import validate_policy, SOURCES
+            policy = validate_policy(plan.get("collection_policy"))
+            if len(requests) > policy["max_requests"] or any(not isinstance(r, dict) or r.get("source") not in SOURCES for r in requests):
+                raise PlanError("评论分页计划来源或请求容量不合法")
+            for request in requests:
+                meta = request.get("collection") or {}
+                if (not isinstance(meta, dict) or not isinstance(request.get("selected_item_id"), str)
+                        or not request["selected_item_id"].strip() or not isinstance(meta.get("product"), str)
+                        or not meta["product"].strip() or type(meta.get("page")) is not int
+                        or not 1 <= meta["page"] <= (policy["max_reply_pages"] if request.get("kind") == "comment_replies" else policy["max_pages"])):
+                    raise PlanError("评论分页请求缺少产品、帖子或合法页码")
+                if request.get("kind") == "comment_replies" and (not isinstance(request.get("params"), dict)
+                        or not meta.get("parent_comment_id") or str(meta["parent_comment_id"]) != str(request["params"].get("comment_id"))):
+                    raise PlanError("子回复父级必须与请求的 comment_id 一致")
+        elif plan.get("collection_version") is not None:
+            raise PlanError("不支持的 collection_version")
+        elif len(requests) > 10 or len(requests) % 2 != 0:
             raise PlanError("评论深挖计划应为 1 到 5 个帖子各两次请求")
     if stage == "evidence_gap_verification":
         cost_policy = plan.get("cost_policy")
@@ -1109,11 +1131,18 @@ def _execute_plan_with_pricing(
     batch_id: str = "default",
     resolve_unknown: Iterable[str] = (),
     retry_failed: Iterable[str] = (),
+    budget_home: str | Path | None = None,
+    recurring: bool = False,
+    stop_on_failure: bool = False,
 ) -> dict[str, Any]:
     """使用已验证价格执行计划；仅供生产入口和测试调用。"""
     secret = token.strip()
     if not secret:
         raise PlanError("缺少 TIKHUB_API_KEY；密钥只能通过环境变量提供")
+    if recurring and budget_home is None:
+        raise PlanError("持续预算必须指定 DATA_HOME")
+    if budget_home is not None and journal_path is None:
+        journal_path = Path(budget_home).expanduser().resolve() / "runs" / plan["run_id"] / "paid-journal.sqlite3"
     base = api_base.rstrip("/")
     if base not in ALLOWED_API_BASES:
         raise PlanError("api_base 仅允许 TikHub 官方域名")
@@ -1147,7 +1176,8 @@ def _execute_plan_with_pricing(
         ) for item in estimate["requests"]
     }
     try:
-        with RequestJournal(journal_path, run_id=plan["run_id"], as_of=plan["as_of"]) as journal:
+        with RequestJournal(journal_path, run_id=plan["run_id"], as_of=plan["as_of"],
+                            budget_home=budget_home, recurring=recurring) as journal:
             journal.register_batch(batch_id, estimate["plan_sha256"], _sanitize(items, secret), resume=resume)
             allowances = select_attempts(
                 items, journal, max_attempts=max_attempts, resolve_unknown=resolve_unknown, retry_failed=retry_failed,
@@ -1165,6 +1195,13 @@ def _execute_plan_with_pricing(
             required_cost = eligible_cost + ineligible_cost
             budget_guard = prior_cost + required_cost
             enforce_budget({"budget_guard_cost_usd": str(budget_guard), "worst_case_cost_usd": str(budget_guard)}, max_cost_usd)
+            if journal.budget is not None and required_cost:
+                journal.budget.require_authorization(recurring=recurring)
+                # 先检查整批；每次发送仍在原子事务内重新检查，防止跨 RUN 并发竞争。
+                shared = journal.budget.snapshot()
+                for period, limit in shared["policy"]["limits"].items():
+                    if limit is not None and Decimal(shared["occupied_usd"][period]) + required_cost > Decimal(limit):
+                        raise BudgetError(f"共享 {period} 预算不足，已在发送前停止")
             account_snapshot = fetch_account_snapshot(
                 token=secret, api_base=base, timeout=timeout, transport=account_transport,
             )
@@ -1199,8 +1236,11 @@ def _execute_plan_with_pricing(
                 pricing_snapshot=pricing_snapshot, send=send, sanitize=lambda value: _sanitize(value, secret),
                 classify_error=_classify_error, is_retryable=_is_retryable_error, sleep_func=sleep_func,
                 max_result_bytes=MAX_BATCH_RESULT_BYTES,
+                stop_on_failure=stop_on_failure or recurring,
             )
-    except JournalError as exc:
+            if journal.budget is not None:
+                execution["global_budget"] = journal.budget.snapshot()
+    except (JournalError, BudgetError) as exc:
         raise PlanError(str(exc)) from exc
 
     execution["run_ledger"]["max_cost_usd_exact"] = str(Decimal(str(max_cost_usd)))
@@ -1268,11 +1308,23 @@ def execute_plan(
     batch_id: str = "default",
     resolve_unknown: Iterable[str] = (),
     retry_failed: Iterable[str] = (),
+    budget_home: str | Path | None = None,
+    recurring: bool = False,
+    stop_on_failure: bool = False,
 ) -> dict[str, Any]:
     """生产执行入口：内部强制刷新实时价格后再做预算、余额和数据请求。"""
     secret = token.strip()
     if not secret:
         raise PlanError("缺少 TIKHUB_API_KEY；密钥只能通过环境变量提供")
+    if recurring:
+        if budget_home is None:
+            raise PlanError("持续预算必须指定 DATA_HOME")
+        try:
+            with BudgetStore(budget_home) as budget:
+                # 只允许原 RUN 先取得 journal 会话锁并核对遗留请求；发送前仍严格检查。
+                budget.require_authorization(recurring=True, recovery_run_id=plan["run_id"])
+        except BudgetError as exc:
+            raise PlanError(str(exc)) from exc
     observed_at = datetime.now(timezone.utc).isoformat()
     pricing_rows = fetch_live_pricing()
     return _execute_plan_with_pricing(
@@ -1293,6 +1345,7 @@ def execute_plan(
         sleep_func=sleep_func,
         journal_path=journal_path, resume=resume, batch_id=batch_id,
         resolve_unknown=resolve_unknown, retry_failed=retry_failed,
+        budget_home=budget_home, recurring=recurring, stop_on_failure=stop_on_failure,
     )
 
 
@@ -1335,6 +1388,19 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
 def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
     parser = argparse.ArgumentParser(description="TikHub 查询与运行前成本预估")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    default_home = Path(os.environ.get("AI_OPPORTUNITY_RADAR_HOME", "~/Documents/AI-Opportunity-Radar")).expanduser()
+    for name in ("budget-configure", "budget-report", "budget-import", "budget-resume"):
+        budget_parser = subparsers.add_parser(name, help="配置、报告、导入历史或显式恢复共享预算")
+        budget_parser.add_argument("--home", type=Path, default=default_home)
+        if name == "budget-configure":
+            budget_parser.add_argument("--daily-limit-usd", required=True)
+            budget_parser.add_argument("--monthly-limit-usd", required=True)
+            budget_parser.add_argument("--total-limit-usd", required=True)
+            budget_parser.add_argument("--enable-recurring", action="store_true")
+        elif name == "budget-import":
+            budget_parser.add_argument("--input", type=Path, required=True)
+        elif name == "budget-resume":
+            budget_parser.add_argument("--acknowledge-pause", action="store_true", required=True)
     comments_parser = subparsers.add_parser("build-comments", help="为 1–5 个已选帖子生成详情与一级评论计划")
     comments_parser.add_argument("--date", dest="as_of", required=True, help="计划日期 YYYY-MM-DD")
     comments_parser.add_argument("--parent-search-run-id", required=True, help="来源搜索运行 ID")
@@ -1352,6 +1418,8 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
     _add_common_arguments(run_parser)
     run_parser.add_argument("--max-cost-usd", type=float, required=True, help="显式最坏费用上限；指定 journal 时约束同 run 跨批累计费用")
     run_parser.add_argument("--journal", type=Path, help="同 run 共用的 SQLite 请求日志与累计预算账本")
+    run_parser.add_argument("--home", type=Path, default=default_home, help="跨 RUN 共享预算的数据根目录")
+    run_parser.add_argument("--recurring-budget", action="store_true", help="仅使用已配置持续预算，不自动启用或调度")
     run_parser.add_argument("--resume", action="store_true", help="恢复已登记的同一批次与计划")
     run_parser.add_argument("--batch-id", default="default", help="新补证批必须指定新 ID；默认 default")
     run_parser.add_argument("--resolve-unknown", action="append", default=[], metavar="REQUEST_ID", help="显式授权该未知请求重试；可重复；仍受累计次数和预算约束")
@@ -1360,6 +1428,25 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
     args = parser.parse_args()
 
     try:
+        if args.command.startswith("budget-"):
+            if args.command == "budget-report":
+                payload = budget_report(args.home)
+            else:
+                with BudgetStore(args.home) as budget:
+                    if args.command == "budget-configure":
+                        payload = budget.configure(daily_limit_usd=args.daily_limit_usd,
+                                                   monthly_limit_usd=args.monthly_limit_usd,
+                                                   total_limit_usd=args.total_limit_usd,
+                                                   recurring_enabled=args.enable_recurring)
+                    elif args.command == "budget-import":
+                        history = _read_json(args.input)
+                        if not isinstance(history, dict):
+                            raise BudgetError("历史导入文件必须为包含 entries 的 JSON 对象")
+                        payload = budget.import_history(history.get("entries"))
+                    else:
+                        payload = budget.resume(acknowledge_pause=args.acknowledge_pause)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "build-comments":
             raw_selections = _read_json(args.input)
             selections = raw_selections.get("selections") if isinstance(raw_selections, dict) else raw_selections
@@ -1385,10 +1472,10 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
         plan = _load_plan(args.plan)
         token = ""
         if args.command == "run":
-            if args.journal and args.output:
-                journal_path = args.journal.expanduser().resolve()
-                if args.output.expanduser().resolve() in {journal_path, Path(str(journal_path) + ".lock")}:
-                    raise PlanError("output 不能覆盖请求 journal 或其会话锁")
+            if args.output:
+                journal_path = (args.journal or args.home.expanduser().resolve() / "runs" / plan["run_id"] / "paid-journal.sqlite3").expanduser().resolve()
+                if args.output.expanduser().resolve() in {journal_path, Path(str(journal_path) + ".lock"), budget_path(args.home)}:
+                    raise PlanError("output 不能覆盖请求 journal、会话锁或共享预算库")
             token = os.environ.get("TIKHUB_API_KEY") or os.environ.get("TIKHUB_API_TOKEN") or ""
             if not token.strip():
                 raise PlanError("缺少 TIKHUB_API_KEY；密钥只能通过环境变量提供")
@@ -1426,6 +1513,7 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
                 api_base=args.api_base,
                 journal_path=args.journal, resume=args.resume, batch_id=args.batch_id,
                 resolve_unknown=args.resolve_unknown, retry_failed=args.retry_failed,
+                budget_home=args.home, recurring=args.recurring_budget,
             )
             _print_estimate(payload["estimate"])
         if args.output:
@@ -1433,7 +1521,7 @@ def main() -> int:  # pragma: no cover - CLI 由集成测试覆盖
         else:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
-    except (PlanError, BudgetExceeded) as exc:
+    except (PlanError, BudgetExceeded, BudgetError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
 

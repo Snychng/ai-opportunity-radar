@@ -62,7 +62,8 @@ class QueryPlanTests(unittest.TestCase):
         for offset in range(3):
             daily = build_plan(date(2026, 7, 14 + offset), Path(tmp))
             three_day_union.update(daily["coverage_schedule"]["planned_sources"])
-        self.assertEqual(three_day_union, expected_tikhub_sources)
+        self.assertTrue(three_day_union <= expected_tikhub_sources)
+        self.assertTrue({"reddit", "xiaohongshu", "bilibili"} <= three_day_union)
         serialized_groups = json.dumps(plan["coverage_schedule"], ensure_ascii=False)
         for deferred in ("Product Hunt", "Indie Hackers", "App Store", "即刻", "脉脉", "Telegram", "微博", "快手"):
             self.assertNotIn(deferred, serialized_groups)
@@ -105,7 +106,7 @@ class QueryPlanTests(unittest.TestCase):
         self.assertIn("full_result_digest", plan["stage_contract"])
         self.assertTrue(plan["output_contract"]["display_full_qualified_ledger"])
         self.assertEqual(plan["output_contract"]["near_miss_display_max"], 20)
-        self.assertEqual(plan["paid_retrieval_policy"]["strategy"], "free_discovery_then_paid_gap_verification")
+        self.assertEqual(plan["paid_retrieval_policy"]["strategy"], "budgeted_cross_industry_discovery_then_gap_verification")
         self.assertEqual(
             plan["paid_retrieval_policy"]["stop_after_paid_requests_without_new_benchmark_or_qualified_idea"],
             3,
@@ -118,8 +119,8 @@ class QueryPlanTests(unittest.TestCase):
         community = plan["retrieval_plans"]["community"]
         self.assertEqual(community["provider"], "community-public")
         self.assertEqual(community["run_id"], plan["run_id"])
-        self.assertEqual({item["source"] for item in community["requests"]}, {"hackernews", "github"})
-        self.assertEqual(len(community["requests"]), 4)
+        self.assertEqual({item["source"] for item in community["requests"]}, {"hackernews"})
+        self.assertEqual(len(community["requests"]), 3)
         self.assertNotIn("last30days", json.dumps(plan, ensure_ascii=False).lower())
 
     def test_includes_executable_tikhub_search_plan(self) -> None:
@@ -147,9 +148,8 @@ class QueryPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             plan = build_plan(date(2026, 7, 14), Path(tmp))
 
-        localized = plan["retrieval_plans"]["tikhub"]["localized_query"]
-        self.assertNotEqual(localized["language"], "中文")
-        self.assertTrue(localized["query"])
+        locales = {r["query_scope"]["language"] for r in plan["retrieval_plans"]["tikhub"]["requests"]}
+        self.assertEqual(locales, {"en", "zh"})
         self.assertEqual(plan["retrieval_plans"]["tikhub"]["run_id"], plan["run_id"])
         self.assertEqual(plan["retrieval_plans"]["community"]["run_id"], plan["run_id"])
 

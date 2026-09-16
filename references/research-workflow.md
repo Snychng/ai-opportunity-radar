@@ -1,28 +1,28 @@
-# V3 研究工作流
+# 研究工作流与可恢复交接
 
-最后更新：2026-09-10。
+最后更新：2026-09-14。
 
 定向主题缺少可用英语查询时，`next_action` 会说明缺口；可以用 `resume RUN_ID --intent-plan-file FILE` 补充宿主查询并继续同一轮。已经执行过实际社区查询的运行应另建研究，不直接改写原检索历史。
 
 ## 1. 文件化主流程
 
 ```text
-research → evidence-packet.json → Agent 核验并填写 benchmarks
+research → evidence-packet / industry-packets / review_queue → Agent 核验并填写 benchmarks 或 leads
          → resume --benchmarks → tiered.json 与 assessment 模板
          → Agent 评分依据、主张与行动判断 → resume --assessment
-         → report.json 校验 → 本地状态提交 → completed
+         → report.json 1.1 校验 → 本地状态提交与 public 1.0.0 导出 → completed
 ```
 
 `research` 自动分配本轮唯一 ID，初始化目录、编译计划，先取得 history-context，再尝试免费来源并刷新证据包。JSON 返回 `status/next_action/input_template/artifacts`；`inspect RUN_ID --home DATA_HOME` 查看这些信息。新运行产物位于 `DATA_HOME/runs/RUN_ID/`，手动工具的 `raw/YYYY-MM-DD/` 仍兼容。
 
 | 状态 | 宿主下一步 |
 |---|---|
-| `awaiting_benchmarks` | 读 evidence-packet 与必要原文，复制模板到独立输入文件，填写对标和维度；无合格对标填 `empty_reason` |
+| `awaiting_benchmarks` | 读 evidence-packet 与必要原文，复制模板到独立输入文件，填写对标和维度或明确的探索线索 leads；二者皆空才填 `empty_reason` |
 | `awaiting_assessment` | 读 tiered（含 overflow），按返回稳定 ID 填 A 级评分输入及 decision；用 assessment 文件恢复 |
 | `committing` | 用同一运行、不带新输入恢复；等待原报告幂等提交完成 |
-| `completed` | 读取 report.json、report.md、summary.md、receipt.json；修订另开带 parent-run-id 的研究 |
+| `completed` | 本轮报告已交付；读取报告、public 导出与 research_quality，不代表研究缺口消失；修订另开子运行 |
 
-`resume RUN_ID --benchmarks FILE` 执行扩展、过滤和稳定 ID 准备；`resume RUN_ID --assessment FILE` 自动校验并提交本地状态，不只是保存草稿。decision 必填 `summary/largest_unknown/next_action/stop_condition`；没有主项目时 `primary_id=null`，无 A 级时 `scores=[]`。有 A 级时按当前模板用 `score_basis` 提供各维度 rationale 与 evidence_refs，不复制演示分数。可同时传 `--profile FILE` 评估个人约束。
+`resume RUN_ID --benchmarks FILE` 执行扩展、过滤和稳定 ID 准备；`resume RUN_ID --assessment FILE` 自动校验并提交本地状态，不只是保存草稿。decision 必填 `summary/largest_unknown/next_action/stop_condition`；没有主项目时 `primary_id=null`，无 A 级时 `scores=[]`。有 A 级时按当前模板用 `score_basis` 提供各维度 rationale 与 evidence_refs，不复制演示分数。assessment 可填 evidence_reviews（evidence_id/revision_id/status/reviewer/reviewed_at/rationale）与 publication_reviews；入包 selected 或网页 host_attested 不代替语义审阅。可同时传 `--profile FILE` 评估个人约束。
 
 通过 `resume --evidence FILE` 导入材料，可重复指定文件；跨轮证据保留来源运行，不能将旧费用混入新运行。产物受摘要保护，不直接编辑运行目录中的文件；将修订作为输入传回。已完成研究不接受新输入，使用 `research --parent-run-id RUN_ID` 建立后续研究。
 
@@ -34,7 +34,7 @@ research → evidence-packet.json → Agent 核验并填写 benchmarks
 
 ### 社区采集选项
 
-`research --include-comments` 可选启用评论，`--include-recent-activity` 可选启用旧帖近期活动查询；默认均关闭；`--concurrency` 控制新研究免费检索并发数，允许 1–4，默认 3，只影响免费检索，付费执行仍串行。这些选项在创建研究时设置，恢复沿用运行中的采集配置。旧帖活动日期不能冒充新发帖日期。先取历史上下文再采集，既有资料不代表本轮在线覆盖，也不使程序默认跳过实时检索；本轮 source 状态不采纳历史复用载荷。离线运行保留本地流程，不执行这些可选网络查询。
+新研究默认采集免费社区评论，`research --no-include-comments` 可关闭；`--include-recent-activity` 可选启用旧帖近期活动查询，默认关闭；`--concurrency` 控制新研究免费检索并发数，允许 1–4，默认 3，只影响免费检索，付费执行仍串行。这些选项在创建研究时设置，恢复沿用运行中的采集配置。旧帖活动日期不能冒充新发帖日期。先取历史上下文再采集，既有资料不代表本轮在线覆盖，也不使程序默认跳过实时检索；本轮 source 状态不采纳历史复用载荷。离线运行保留本地流程，不执行这些可选网络查询。
 
 ### 兼容手动流程
 
@@ -51,9 +51,9 @@ research → evidence-packet.json → Agent 核验并填写 benchmarks
 
 `build_query_plan.py` 生成共享 `run_id` 的社区与 TikHub 计划。精确定向用 `--scope-file` 声明国家、语言、人群、任务和本地查询；自由文本用 `--focus-file`，未指定的地区和语言保持未知，格式见 [Agent 集成](agent-integration.md)。社区只允许 Hacker News/GitHub；TikHub 只允许一期白名单。Web 用于打开竞品定价、付款证据、本地差异和反证，不绕过来源范围。
 
-先检查同日及近 30 日原始文件和历史状态，再运行免费来源。免费证据尚未转成 BENCH、候选和缺口清单前，不执行广泛付费检索。
+先检查同日及近 30 日原始文件和历史状态，再运行免费来源。默认按用户选定的六个方向规划，详见 [普通用户机会发现](cross-industry-discovery.md)。用户明确授权发现目标和一次性预算后，可 `resume --discover --max-cost-usd` 购买行业发现材料，不要求先有 BENCH；未授权预算时继续免费与网页核验。
 
-TikHub 必须先实时估价，再显式预算执行。每个付费请求必须关联候选 ID、缺失门槛和预期升级层级。搜索和评论分阶段估价；评论只深挖 1–5 个高价值帖子，不为凑数量批量抓取。付费发现最多占预算 20%。定向搜索补证每来源每批最多 3 请求是脚本硬限制；跨两个来源合计 4 请求合法。每批结束后由 Agent 评估是否新增 BENCH、合格候选或关键证据，无产出时停止该来源，不追加新批；执行器不能自动判断商业价值。
+TikHub 必须先实时估价，再显式预算执行。发现请求关联方向、查询及发现目标；定向补证关联候选 ID、缺失门槛和预期升级层级。搜索和评论分阶段估价；评论优先研究使用 `resume --comments-file`，每批最多选择 30 个相关帖子并有界分页，详见[评论优先发现](comment-first-discovery.md)；旧 `tikhub build-comments` 的 1–5 帖首页模式仍兼容。发现预算按用户本次授权，不再强制 20% 分配；所有批次共用同轮 journal 上限。定向搜索补证每来源每批最多 3 请求是脚本硬限制；跨两个来源合计 4 请求合法。每批结束后由 Agent 评估相关性、新线索、BENCH、合格候选或关键证据，无产出时停止原查询并说明原因；执行器不能自动判断商业价值。
 
 ## 3. 证据规范化
 
@@ -77,9 +77,9 @@ TikHub 必须先实时估价，再显式预算执行。每个付费请求必须�
 }
 ```
 
-规范化器支持搜索发现、定向补证和评论深挖结果；同一轮搜索、详情与评论保留同一 `run_id`。评论保留父帖定位；未知的原文语言不从查询语言推断。
+规范化器按 parse_status 区分 parsed、empty_result、unrecognized_response、upstream_error 和 partial_parse，并记录 raw_items/parsed_items/skipped_noncontent_items；未识别非空响应不冒充零结果。规范化器支持搜索发现、定向补证和评论深挖结果；同一轮搜索、详情与评论保留同一 `run_id`。帖子与评论按平台、对象类型、原生 ID 区分，父帖 URL 只表示关联；未知的原文语言不从查询语言推断。
 
-访问方式只用 `native-platform`、`third-party-api`、`search-index`、`authorized-browser-sample`、`manual-verification`。发布时间不确定就降低日期置信度；互动量未知就省略或写未知。
+访问方式只用 `native-platform`、`third-party-api`、`search-index`、`authorized-browser`、`manual-verification`。相对日期保留 published_at_raw 和 published_at_interval，date_confidence=estimated；跨研究窗口的区间为 uncertain，不能当作确定的近期需求。互动量未知就省略或写未知。
 
 ## 4. 建立 BENCH
 
@@ -102,8 +102,9 @@ TikHub 必须先实时估价，再显式预算执行。每个付费请求必须�
 用 `filter_ideas.py` 执行六项硬门槛。输出：
 
 - A：硬门槛通过，本地直接付款 + 至少两个有效独立原始来源 + 候选假设已补证；进入深度评分。
-- B：收费对标 + 投诉/替代/招聘/外包；进入快速点子，明确是否已有真实成交。
+- B：收费对标 + 有原文的需求行为（投诉、替代、招聘、外包、持续使用、创作产出、学习进展等）；明确是否已有真实成交。
 - R：来源市场收费对标 + 具体迁移理由，缺本地付款；进入区域 SIG，并说明本地差异。
+- research_leads：具体用户任务、原文和 AI 增量假设成立为可研究线索，但尚缺正式门槛；独立计数。
 - rejected：保留明确失败门槛，便于后续补证。
 
 目标数量不足时停在真实数量，并在报告说明是哪种证据不足。仓库示例输出是离线流程演示，不能作为真实市场结论。
@@ -130,6 +131,29 @@ TikHub 必须先实时估价，再显式预算执行。每个付费请求必须�
 
 R/SIG 只有在目标地区出现直接付款且独立来源达标后，才通过 `manage_state.py promote` 升级。升级保留双向链接。
 
+LEAD 后续输入保留 lead_id，修改标题或措辞不会替换显式身份。状态可为 needs_verification、observed_need、needs_review、archived、disproven、promoted；引用变化或撤回时历史视图标记 needs_review。以下命令只写本地生命周期，不联系客户、不替代正式门槛：
+
+```bash
+AOR_OFFLINE=1 aor leads list --home "$RADAR_HOME" --date 2026-09-14
+AOR_OFFLINE=1 aor leads transition "$LEAD_ID" --home "$RADAR_HOME" \
+  --run-id "$RUN_ID" --date 2026-09-14 --status archived --reason "当前缺少可触达目标用户，暂缓研究"
+```
+
+升级用 `--status promoted --promoted-to "$OPP_ID"`，目标必须已经正式入库且仍通过 A/B/R 门槛。日期须与记录该修订的新运行 ID 一致。
+
 ## 8. 深挖与趋势
 
 深挖优先补“最可能推翻机会的证据”。用 [个人适配与验证](personal-validation.md) 检查自己的技能、可触达渠道、时间、预算及运营约束，选一个主验证项目。72 小时实验分别记录真实任务、交付样例、报价反馈、付款、投入费用和停止条件；实验不会自动改变证据等级。历史趋势看出现日期、重复观察、证据源、付款变化、地区和证据层级。没有新结果不等于需求下降；只有发现需求被满足、用户迁移、竞品覆盖或付费消失时才降级。
+
+
+## 9. 已付费响应的离线重解析
+
+```bash
+AOR_OFFLINE=1 aor resume "$PARENT_RUN_ID" --reparse --home "$RADAR_HOME"
+```
+
+此命令创建离线子运行，保留父运行关联和原始响应，使用当前解析器重新规范化；不覆盖原报告、不重购响应、不将父运行费用算成新支出。以返回的子 run_id 继续提交更正后的对标、线索和 assessment。重解析不会自动批准旧线索原文引用，仍需准确绑定恢复后的对象与修订。
+
+证据身份迁移使用 `library migrate-identities --destination` 写入全新目标库，见 [证据库](evidence-library.md)。部署、更新实际安装版本与网站发布是各自的交付步骤，不能从本地 completed 自动推断已生效。
+
+用户评论可通过 benchmarks 输入中的可选 `observations` 独立提交，不必先有 BENCH 或 LEAD。输出 `tiered.user_discovery` 与 `state/user-discovery/RUN_ID.json`，原文与需求簇不计入正式 A/B 数量；完整格式见[评论优先发现](comment-first-discovery.md)。

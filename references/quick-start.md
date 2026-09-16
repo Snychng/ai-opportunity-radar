@@ -43,7 +43,7 @@ aor resume "$RUN_ID" --home "$RADAR_HOME" --assessment "$ASSESSMENT_FILE"
 
 `resume --assessment` 会校验并提交本地研究状态，不是预览命令。最终产物在 `--home/runs/RUN_ID/`：`report.json` 是校验与提交对象，`report.md` 和 `summary.md` 用于展示，`receipt.json` 保存提交回执。报告保留 `run_ledger`（整轮费用和尝试状态）及 `evidence_inventory`，Markdown 从结构化输入重算并展示 claims 与 `score_basis`。空结果填写 `empty_reason`，不为完成流程凑造候选。
 
-`research --offline` 不执行研究采集，离线标记保存在该运行中；带 `--offline` 的调用同时跳过更新预检；整段离线工作流建议设置 `AOR_OFFLINE=1`，使 sources、library、report 等后续调用也不进行联网预检。`--no-collect` 用于只处理已有材料，不应当作全局网络开关。离线模式不会替宿主执行网页研究，也不支持付费补证。可选 `research --include-comments --include-recent-activity` 分别启用社区评论和旧帖近期活动查询；默认不启用，离线时也不采集。`--concurrency` 为免费检索并发数（1–4，默认 3），付费执行仍串行。详见 [研究工作流](research-workflow.md)。
+`research --offline` 不执行研究采集，离线标记保存在该运行中；带 `--offline` 的调用同时跳过更新预检；整段离线工作流建议设置 `AOR_OFFLINE=1`，使 sources、library、report 等后续调用也不进行联网预检。`--no-collect` 用于只处理已有材料，不应当作全局网络开关。离线模式不会替宿主执行网页研究，也不支持付费补证。免费社区评论默认开启，`research --no-include-comments` 可关闭；`--include-recent-activity` 单独启用旧帖近期活动查询，默认关闭，离线时均不采集。`--concurrency` 为免费检索并发数（1–4，默认 3），付费执行仍串行。详见 [研究工作流](research-workflow.md)。
 
 ## 可运行离线示例
 

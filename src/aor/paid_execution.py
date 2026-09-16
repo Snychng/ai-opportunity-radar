@@ -54,7 +54,7 @@ def execute_requests(
     pricing_snapshot: dict[str, Any], send: Callable[[dict[str, Any]], Any],
     sanitize: Callable[[Any], Any], classify_error: Callable[[Exception], str],
     is_retryable: Callable[[Exception], bool], sleep_func: Callable[[float], None],
-    max_result_bytes: int,
+    max_result_bytes: int, stop_on_failure: bool = False,
 ) -> dict[str, Any]:
     """每次发送前记录 started，每次完成立即保存脱敏结果。"""
     results: list[dict[str, Any]] = []
@@ -92,7 +92,8 @@ def execute_requests(
                     result.update(status="error", error_code="batch_result_limit", error="复用结果超过批次安全上限")
                     stop_reason = "batch_result_limit"
         elif stop_reason:
-            result.update(status="skipped", error_code="skipped_batch_limit", error="批次结果已达到安全上限，未发起请求")
+            result.update(status="skipped", error_code="skipped_batch_limit" if stop_reason == "batch_result_limit" else "paused_after_failure",
+                          error="本批已停止，未发起后续请求")
         else:
             unit_list, unit_estimated = prices[fingerprint]
             for index in range(allowances[fingerprint]):
@@ -121,7 +122,7 @@ def execute_requests(
                     state = "outcome_unknown" if uncertain else "failed"
                     result.update(status=state if uncertain else "error", error_code=error_code,
                                   error=str(sanitize(str(exc)))[:500])
-                    retry = not uncertain and is_retryable(exc) and index + 1 < allowances[fingerprint]
+                    retry = not stop_on_failure and not uncertain and is_retryable(exc) and index + 1 < allowances[fingerprint]
                 else:
                     try:
                         cleaned = sanitize(response)
@@ -144,6 +145,8 @@ def execute_requests(
                 if not retry:
                     break
                 sleep_func(min(2 ** index, 5))
+        if stop_on_failure and result["attempts"] and result["status"] in {"error", "outcome_unknown"}:
+            stop_reason = "outcome_unknown" if result["status"] == "outcome_unknown" else "request_failed"
         results.append(result)
         source = by_source[item["source"]]
         source["requests"] += 1

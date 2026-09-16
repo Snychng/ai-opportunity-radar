@@ -1,32 +1,39 @@
 # 结构化报告与旧日报兼容契约
 
-最后更新：2026-09-10。
+最后更新：2026-09-14。
 
 ## 首选：report.json
 
-`research/resume` 从同一结构化对象生成报告并提交。`report.json` 是校验与 commit 的依据；`report.md` 展示完整清单、主张及评分依据，`summary.md` 提供决策摘要，`receipt.json` 记录本地提交结果。
+`research/resume` 从同一结构化对象生成报告并提交。内部 `report.json` 是校验与 commit 的依据，包含研究与执行细节，不直接公开；`report.md` 展示完整清单、主张及评分依据，`summary.md` 提供决策摘要，`receipt.json` 记录本地提交结果。
 
 ```bash
 AOR_OFFLINE=1 aor report "$REPORT_JSON" --json
 AOR_OFFLINE=1 aor report "$REPORT_JSON" --commit --home "$RADAR_HOME"
 ```
 
-report JSON 当前要求 `schema_version=3.0`、`report_version=1.0`、合法且一致的 `run_id/as_of`。主要字段：
+report JSON 当前要求 `schema_version=3.0`、`report_version=1.1`、合法且一致的 `run_id/as_of`。主要字段：
 
 | 字段 | 约束与用途 |
 |---|---|
 | `tiered` | deep_candidates=A、validated_ideas=B、regional_signals=R；含 overflow；全部使用稳定 OPP/SIG |
 | `decision` | 非空 summary、largest_unknown、next_action、stop_condition；primary_id 可空，非空须在报告中 |
-| `metrics`、`source_yield` | 从同轮候选、证据和执行结果生成，分层计数含 overflow |
+| `metrics`、`source_yield` | metrics 2.0 按平台原生对象去重，区分正式候选、探索线索与任一引用的使用量；分层计数含 overflow，旧 1.0 口径可审计 |
 | `source_coverage` | 本轮来源状态；没有实时采集不得根据已有证据补写平台成功 |
 | `claims`、`claim_evidence` | 主张及可寻址原文修订，校验引用位置和截止日期，不判断商业语义 |
 | `profile_assessment` | 个人约束评估；未提供为 null，警告不等于已评估适配 |
 | `market_validated` | 必须为 false；程序不能宣称自己的产品已被客户验证 |
 | `execution_results` | 各次调用的执行结果，不重复累计历史调用 |
-| `evidence_inventory` | 保留运行元数据及证据 id/url/source 的统计输入；不代替原文与主张证据 |
+| `evidence_inventory` | 保留原生对象身份、来源、角色、日期区间、语义审阅、行业/任务及运行元数据；不代替原文与主张证据 |
 | `run_ledger` | 同 run 整轮尝试状态及累计原价/估计费用；没有付费 journal 时可为 null |
+| `coverage_plan`、`industry_coverage` | coverage 2.0；方向/子赛道、计划/尝试/跳过、语言、近期/历史/未知日期、页面核验/语义审阅、用户行为/收费对标/替代/反证分别计数 |
+| `evidence_selection`、`research_quality` | 证据包遗漏、行业缺口及零结果诊断；遗漏不代表无机会 |
+| `tiered.research_leads` | 稳定 LEAD、原文支持、AI 增量假设、缺失条件及下一问题；独立于正式候选数 |
 
-验证器从 tiered、execution_results、evidence_inventory 与 run_ledger 重算 metrics/source_yield，并检查候选分层、稳定 ID 去重、A 级计算、计数、决策与主张引用。渲染器也从这些结构化字段重算清单，不读取旧 digest_markdown 缓存作为事实来源。存在候选而未提供主张清单时保留警告；不要把结构通过解释成原文语义已自动核验。演示报告必须保留演示提示，空结果允许，只要如实解释没有合格对标。
+旧 `report_version=1.0` 可继续做历史审计读取，其覆盖按旧版规则理解；不能直接升级版本号后公开发布。网站使用独立的 [公开契约 1.0.0](website-contract.md)，公开导出只允许白名单字段并执行引用与发布检查。
+
+新 Markdown 报告先展示逐方向覆盖表，并完整列出探索线索；校验器重算覆盖和诊断，不能通过手改计数伪造覆盖。线索保存到 `state/research-leads.jsonl`，后续研究使用 `research-lead-history.json`，不冒充本轮新证据。
+
+验证器从 tiered、execution_results、evidence_inventory 与 run_ledger 重算 metrics/source_yield，并检查候选分层、稳定 ID 去重、A 级计算、计数、决策与主张引用。渲染器也从这些结构化字段重算清单，不读取旧 digest_markdown 缓存作为事实来源。存在候选而未提供主张清单时保留警告；不要把结构通过解释成原文语义已自动核验。演示报告必须保留演示提示，空结果允许，只要如实解释缺口。只含探索线索的报告可以完成本轮交付，但不能宣称已找到正式候选。
 
 `--commit` 先校验再提交 OPP/SIG，回执包含 report_sha256、records_sha256 与结果；同一有效报告可幂等重放。编排在第二次交接的 resume 中已经执行 commit，通常不必再手动提交。正式运行的修改另开新 run，不能通过编辑 Markdown 改写历史。展示文件丢失时，不带新输入 resume 可从结构化报告重新渲染。
 
@@ -276,3 +283,11 @@ Markdown 不支持 `--commit`；新正式提交使用 report.json。旧手动 `s
 - “合格结论数量”必须等于“日报展示结论数量 + 完整清单额外结论数量”；费用单价按完整合格数计算。
 - “已利用证据数量”不得大于“规范化证据数量”；证据利用率允许 `0.01` 个百分点误差。
 - “单个合格结论估算成本 USD”必须等于 TikHub 预计费用 USD 除以合格结论数量，允许 `1e-6` USD 误差；没有合格结论时写“未知”。
+
+全量审阅诊断使用 `research_quality.review_scope=active_context`：`unreviewed_evidence_count` 包含历史复用中仍待审阅的有效对象，并列出 current/historical 分项。行业 coverage 仍统计本轮来源覆盖，不把旧材料伪装成新采集；两者不是同一个计数口径。
+
+`current_evidence_state` 可包含整个证据库截至研究日的状态，正文目录只保留本轮相关材料。校验要求本轮对象逐一匹配且所有状态格式合法；全站聚合因此能收到未进入本轮阅读包的旧引用失效信息。
+
+## 评论优先报告（4.3）
+
+用户观察和需求簇来自 `tiered.user_discovery`，只代表绑定原文的宿主分类，不要求已有收费对标；摘要列出计数与前 10 个需求簇，完整报告保留所有观察及固定修订引文。`comment_collection_coverage` 从本轮实际保存的评论执行响应重新计算，分别显示平台、请求记录、成功 HTTP 评论页、去重评论，`exhaustive=false`；HTTP 成功不代表成功解析或全量覆盖，失败详情看 request_statuses 与评论状态文件。两项均不增加 A/B 计数。

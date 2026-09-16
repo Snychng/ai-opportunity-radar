@@ -8,7 +8,7 @@
 
 CLI 新增 `--intent-plan-file FILE`。未提供时继续生成默认计划；提供后替换本次检索计划，不偷偷增加默认付费来源。scope/focus 仍作为研究上下文。run_id 包含结构化意图内容。
 
-最小单源意图（每个字段必填，candidate_gaps 可空；最多 20 个意图，社区合并后最多 12 个请求）：
+最小单源意图（每个字段必填，candidate_gaps 可空；最多 100 个意图，社区合并后最多 12 个请求）：
 
 ```json
 {
@@ -25,7 +25,7 @@ CLI 新增 `--intent-plan-file FILE`。未提供时继续生成默认计划；�
 }
 ```
 
-`evidence_type` 表示要找的证据，不是已经成立的证据。允许值：official_pricing、product_update、product_review、hiring、outsourcing、payment、workflow_pain、alternative、regional_gap、counter_evidence。
+`evidence_type` 表示要找的证据，不是已经成立的证据。允许值：official_pricing、product_update、product_review、hiring、outsourcing、payment、workflow_pain、alternative、regional_gap、counter_evidence、usage_behavior、creative_output、learning_progress、social_sharing。
 
 `aor.sources.planning.validate_intent_plan(plan: Any) -> dict` 验证并规范化契约。
 
@@ -93,3 +93,18 @@ python3 scripts/source_query.py import --input verified-pages.json --run-id RUN-
 ```
 
 该操作只读写本地 JSON，不获取未知端点、不抓网页。常规网页归 source=web；已有平台的授权网页摘录可保留其 source，但 provider 仍为 host-verified-web。导入器不承诺 URL 规范化、来源独立性或真实付款，这些由证据层继续核验。
+
+
+## 六方向计划与覆盖 2.0
+
+`industries.json` 默认仅电商、游戏、创作、成人学习、生活、传统互联网 AI 改造；各 6 个子赛道，每个子赛道定义人群、job_to_be_done、existing_behavior_to_verify、spend_status、双语查询和人工来源。目录的支出描述是研究问题，不能计作付款证据。
+
+`build_industry_discovery(..., history=None)` 保留原参数；可注入 `history={tasks:{(task_id, language):{attempts,last_attempt,review_gaps}}}`。未注入时只读 home/runs 最近 60 份 coverage 2.0 快照，排除当前 run；无实际请求不算历史完成。付费子计划增加 research_tasks、catalog_version 和 selection_history。每请求包含 task_id、subtrack_ids、research_priority 与未执行的 fallback_requests；后者只由已有 search 构建器生成同查询、同语言替补。
+
+`prepare_discovery_plan` 在实时价格和累计预算内选择主请求或替补，返回 skipped_requests/substitutions；计划无 status 不计采集。执行结果及选中计划应连同这些原因进入报告覆盖输入。
+
+`build_industry_coverage(plan,payloads,tiered,version='2.0')` 对象去重使用原生身份，payload 与 item 级 reused_for_run_id/run_ids 控制历史复用。coverage 包含逐行业和 tasks 维度的计划、实际请求、跳过、语义审阅、近期/历史/未知/不确定日期、用户行为、商业对标、替代与反证计数。保留 version='1.0' 仅供旧报告重算。`research_quality` 根据语义审阅与证据角色缺口判断，host_attested 官网不使方向自动完成。
+
+透传覆盖所需字段：对象身份及 revision_id/content_hash、industry_ids/task_id/subtrack_ids、query_scope/provenance/query_metadata、evidence_role、published_at/published_at_interval、verification、relevance_review、relevance_status、retracted/is_demo、运行元数据。relevance_review 须绑定 evidence_id/revision_id（或当前 content_sha256），含 reviewer/reviewed_at 和 relevant/unrelated 状态。
+
+来源角色描述不产生新 API 能力；appstore/googleplay/steam/shopify_app_store 等仍是宿主手动核验来源。默认辅助 HN 最多 3 请求，不能替代消费者来源，也不默认启用 GitHub。

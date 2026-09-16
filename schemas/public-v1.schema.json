@@ -1,0 +1,1122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snychng.github.io/ai-opportunity-radar/schemas/public-v1.schema.json",
+  "title": "AOR PublicDocument v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/PublicDataset"
+    },
+    {
+      "$ref": "#/$defs/PublicIndex"
+    },
+    {
+      "$ref": "#/$defs/PublicDetail"
+    }
+  ],
+  "$defs": {
+    "Subtrack": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{1,63}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "Industry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,35}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "subtracks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Subtrack"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "subtracks"
+      ]
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        }
+      },
+      "required": [
+        "id",
+        "revision_id",
+        "quote"
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "string",
+              "format": "date-time"
+            }
+          ]
+        },
+        "published_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "date_confidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "source_observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "semantic_reviewed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        }
+      },
+      "required": [
+        "id",
+        "revision_id",
+        "source",
+        "url",
+        "title",
+        "excerpt",
+        "role",
+        "observed_at",
+        "published_at",
+        "date_confidence"
+      ]
+    },
+    "AIValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "hypothesis",
+            "supported",
+            "disproven",
+            "unknown"
+          ]
+        },
+        "baseline": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "user_benefit": {
+          "type": "string"
+        },
+        "incremental_advantage": {
+          "type": "string"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "baseline",
+        "capability",
+        "user_benefit",
+        "incremental_advantage",
+        "evidence_refs"
+      ]
+    },
+    "Item": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(LEAD|OPP|SIG)-[A-Za-z0-9-]+$"
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "industry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,35}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "subtrack_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "target_user": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "job_to_be_done": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "wedge": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "hypothesis",
+            "observed_need",
+            "candidate",
+            "regional_hypothesis"
+          ]
+        },
+        "evidence_tier": {
+          "enum": [
+            null,
+            "A",
+            "B",
+            "R"
+          ]
+        },
+        "ai_value": {
+          "$ref": "#/$defs/AIValue"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "missing_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "next_action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "publication_status": {
+          "type": "string",
+          "enum": [
+            "published",
+            "withdrawn"
+          ]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "origin_lead_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^LEAD-[A-Za-z0-9-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "promoted_to": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(OPP|SIG)-[A-Za-z0-9-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_run_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+          }
+        },
+        "last_source_run_id": {
+          "type": "string",
+          "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        }
+      },
+      "required": [
+        "id",
+        "revision_id",
+        "title",
+        "summary",
+        "industry_ids",
+        "subtrack_ids",
+        "target_user",
+        "job_to_be_done",
+        "wedge",
+        "stage",
+        "evidence_tier",
+        "ai_value",
+        "evidence_refs",
+        "missing_evidence",
+        "next_action",
+        "publication_status",
+        "updated_at",
+        "origin_lead_id",
+        "promoted_to",
+        "source_run_ids",
+        "last_source_run_id"
+      ]
+    },
+    "Coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "industry_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "material_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "historical_material_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reviewed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recent_demand_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commercial_evidence_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "counterevidence_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unreviewed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing_dimensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "exhaustive": {
+          "const": false
+        }
+      },
+      "required": [
+        "industry_id",
+        "status",
+        "material_count",
+        "reviewed_count",
+        "recent_demand_count",
+        "commercial_evidence_count",
+        "counterevidence_count",
+        "unreviewed_count",
+        "missing_dimensions",
+        "exhaustive"
+      ]
+    },
+    "Quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coverage_incomplete": {
+          "type": "boolean"
+        },
+        "omitted_evidence_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "withheld_item_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "market_validated": {
+          "const": false
+        },
+        "review_summary": {
+          "$ref": "#/$defs/ReviewSummary"
+        }
+      },
+      "required": [
+        "coverage_incomplete",
+        "omitted_evidence_count",
+        "withheld_item_count",
+        "market_validated"
+      ]
+    },
+    "ListItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision_id",
+        "title",
+        "summary",
+        "industry_ids",
+        "stage",
+        "evidence_tier",
+        "publication_status",
+        "source_run_ids",
+        "last_source_run_id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(LEAD|OPP|SIG)-[A-Za-z0-9-]+$"
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "industry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,35}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "hypothesis",
+            "observed_need",
+            "candidate",
+            "regional_hypothesis"
+          ]
+        },
+        "evidence_tier": {
+          "enum": [
+            null,
+            "A",
+            "B",
+            "R"
+          ]
+        },
+        "publication_status": {
+          "type": "string",
+          "enum": [
+            "published",
+            "withdrawn"
+          ]
+        },
+        "source_run_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+          }
+        },
+        "last_source_run_id": {
+          "type": "string",
+          "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        }
+      }
+    },
+    "PublicDataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+        },
+        "dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16,64}$"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "taxonomy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "industries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Industry"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Item"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "coverage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Coverage"
+          }
+        },
+        "quality": {
+          "$ref": "#/$defs/Quality"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "view": {
+          "const": "full"
+        },
+        "snapshot_scope": {
+          "enum": [
+            "research_run",
+            "site_catalog"
+          ]
+        },
+        "source_runs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/SourceRun"
+          }
+        },
+        "site_manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiteManifest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "freshness_policy": {
+          "$ref": "#/$defs/FreshnessPolicy"
+        }
+      },
+      "required": [
+        "contract_version",
+        "dataset_id",
+        "revision",
+        "as_of",
+        "generated_at",
+        "taxonomy_version",
+        "industries",
+        "items",
+        "evidence",
+        "coverage",
+        "quality",
+        "extensions",
+        "view",
+        "snapshot_scope",
+        "source_runs",
+        "site_manifest"
+      ]
+    },
+    "PublicIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+        },
+        "dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16,64}$"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "taxonomy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "industries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Industry"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ListItem"
+          }
+        },
+        "coverage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Coverage"
+          }
+        },
+        "quality": {
+          "$ref": "#/$defs/Quality"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "view": {
+          "const": "index"
+        },
+        "snapshot_scope": {
+          "enum": [
+            "research_run",
+            "site_catalog"
+          ]
+        },
+        "source_runs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/SourceRun"
+          }
+        },
+        "site_manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiteManifest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "freshness_policy": {
+          "$ref": "#/$defs/FreshnessPolicy"
+        }
+      },
+      "required": [
+        "contract_version",
+        "dataset_id",
+        "revision",
+        "as_of",
+        "generated_at",
+        "taxonomy_version",
+        "industries",
+        "items",
+        "coverage",
+        "quality",
+        "extensions",
+        "view",
+        "snapshot_scope",
+        "source_runs",
+        "site_manifest"
+      ]
+    },
+    "PublicDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+        },
+        "dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16,64}$"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "taxonomy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "industries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Industry"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "coverage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Coverage"
+          }
+        },
+        "quality": {
+          "$ref": "#/$defs/Quality"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "view": {
+          "const": "detail"
+        },
+        "snapshot_scope": {
+          "enum": [
+            "research_run",
+            "site_catalog"
+          ]
+        },
+        "source_runs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/SourceRun"
+          }
+        },
+        "site_manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiteManifest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "freshness_policy": {
+          "$ref": "#/$defs/FreshnessPolicy"
+        }
+      },
+      "required": [
+        "contract_version",
+        "dataset_id",
+        "revision",
+        "as_of",
+        "generated_at",
+        "taxonomy_version",
+        "industries",
+        "items",
+        "evidence",
+        "coverage",
+        "quality",
+        "extensions",
+        "view",
+        "snapshot_scope",
+        "source_runs",
+        "site_manifest"
+      ]
+    },
+    "SourceRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "report_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "run_id",
+        "as_of",
+        "generated_at",
+        "report_sha256"
+      ]
+    },
+    "SiteTombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(LEAD|OPP|SIG)-[A-Za-z0-9-]+$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "reason": {
+          "enum": [
+            "explicit_withdrawal",
+            "withheld",
+            "scope_excluded"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "as_of",
+        "reason"
+      ]
+    },
+    "SiteManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_run_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "published_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "withdrawn_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retained_from_history_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latest_run_id": {
+          "type": "string",
+          "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "coverage_basis": {
+          "const": "latest_research_run"
+        },
+        "tombstones": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SiteTombstone"
+          }
+        },
+        "scope_removed_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(LEAD|OPP|SIG)-[A-Za-z0-9-]+$"
+          }
+        }
+      },
+      "required": [
+        "source_run_count",
+        "published_count",
+        "withdrawn_count",
+        "retained_from_history_count",
+        "latest_run_id",
+        "coverage_basis",
+        "tombstones",
+        "scope_removed_ids"
+      ]
+    },
+    "ReviewSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_run_id": {
+          "type": "string",
+          "pattern": "^RUN-[0-9]{8}-[A-F0-9]{10}$"
+        },
+        "evidence_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reviewed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unreviewed_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source_run_id",
+        "evidence_count",
+        "reviewed_count",
+        "unreviewed_count"
+      ]
+    },
+    "Freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "enum": [
+            "fresh",
+            "due",
+            "overdue",
+            "unknown"
+          ]
+        },
+        "last_verified_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "review_due_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "source_observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "semantic_reviewed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "publication_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        }
+      },
+      "required": [
+        "as_of",
+        "status",
+        "last_verified_at",
+        "review_due_at",
+        "source_observed_at",
+        "semantic_reviewed_at",
+        "publication_checked_at"
+      ]
+    },
+    "FreshnessPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "review_period_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "due_soon_days": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "review_period_days",
+        "due_soon_days"
+      ]
+    }
+  }
+}

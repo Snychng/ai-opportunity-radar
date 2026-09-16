@@ -43,7 +43,7 @@ examples/experiment.json 是 planned 示例，实际使用自己的稳定记录 
 评估与快速摘要可使用 CAND。记录实验前，从分层结果选择候选：A/B 用 `state prepare --kind opportunity`，R 用 `--kind signal`，将返回的 `id` 填入实验 `record_id`。`prepare` 不提交研究观察，计划实验无需先生成日报或运行真实采集。新编排已在 awaiting_assessment 前准备稳定 ID，直接引用 tiered 中的 id 即可；空结果离线编排示例见 [快速开始](quick-start.md#可运行离线示例)。
 
 - experiment_id：EXP- 开头，后接字母、数字或连字符。
-- record_id：OPP/SIG；run_id、as_of：本次观察运行与日期。
+- record_id：OPP/SIG 或稳定 LEAD；早期探索线索可直接记录实验，不需先升级为正式候选。run_id、as_of：本次观察运行与日期。
 - status：planned/running/completed/stopped。
 - hypothesis、offer、success_criteria、stop_criteria：假设、交付样例、预先定义的成功与停止条件。
 - counts：contacted、interviewed、real_tasks、accepted_quotes、paid_trials。每项为非负整数，未统计可省略。
@@ -58,3 +58,9 @@ examples/experiment.json 是 planned 示例，实际使用自己的稳定记录 
 写入 state/experiment-events.jsonl，独立文件锁及原子替换。同 experiment_id + run_id 的同内容回放不重复，不同内容明确冲突；新观察使用新合法运行 ID。每次 counts 为观察快照，不把多次快照直接相加为人数。
 
 实验不会自动联系客户、扣费、修改机会等级或批准立项。真实付款仍需按候选契约回填核验。
+
+## AI 增量对比
+
+实验可补 `ai_comparison`，把原有办法和 AI 方案用于同一批真实授权任务。必填 `baseline`、`ai_variant`、`task_selection`、`evaluation_method`、大于零的 `planned_sample_size`，以及 `metrics` 数组；每个指标有唯一 `id`、`unit`、预先约定的 `acceptance_rule`。同时检查总耗时、错误率和人工返工量，不只统计模型生成速度。
+
+`measurements` 初始为空。执行后每项填写 `metric_id/baseline_value/ai_value/sample_size/evidence_ref`；引用必须绑定同一实验 evidence 中的 url 或 local_ref，planned 状态不能填写实测值。阈值通过仍只是该批任务效果，付费和重复使用另行记录。实验档案始终是内部数据，不将用户素材或任务记录直接导出网站。

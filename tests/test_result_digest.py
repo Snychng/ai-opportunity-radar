@@ -79,6 +79,63 @@ def evidence_payload() -> dict:
 
 
 class ResultDigestTests(unittest.TestCase):
+    def native_evidence(self, native_id, *, comment=False, **updates):
+        return {"id": f"reddit:{'comment:' if comment else ''}{native_id}", "source": "reddit",
+                "source_item_id": native_id, "evidence_kind": "comment" if comment else "post",
+                "url": "https://reddit.example/thread/1", "url_kind": "parent_post" if comment else "post",
+                "evidence_id": f"EVID-{native_id}", "library_evidence_id": f"EVID-{native_id}",
+                "revision_id": f"EVID-{native_id}:v1", "original_text": f"原文 {native_id}", **updates}
+
+    def test_object_metrics_keep_parent_and_comments_and_separate_lead_usage(self):
+        post = self.native_evidence("post")
+        comments = [self.native_evidence(f"comment-{index}", comment=True) for index in range(29)]
+        def refs(rows):
+            return [{"evidence_id": row["evidence_id"], "revision_id": row["revision_id"]} for row in rows]
+        tiered = {"validated_ideas": [{"id": "B-1", "evidence": refs([post])}],
+                  "research_leads": [{"lead_id": "LEAD-1", "evidence": refs(comments[:2])}]}
+        payload = {"evidence": [post], "comments": comments}
+        result = build_result_digest(tiered, evidence_payloads=[payload, deepcopy(payload)])
+        metrics = result["metrics"]
+        self.assertEqual(metrics["metrics_version"], "2.0")
+        self.assertEqual(metrics["normalized_evidence_count"], 30)
+        self.assertEqual(metrics["used_normalized_evidence_count"], 1)
+        self.assertEqual(metrics["lead_used_normalized_evidence_count"], 2)
+        self.assertEqual(metrics["any_used_normalized_evidence_count"], 3)
+        self.assertEqual(metrics["unused_normalized_evidence_count"], 27)
+        self.assertEqual(result["source_yield"][0]["linked_conclusions"], 1)
+        self.assertEqual(result["source_yield"][0]["linked_research_leads"], 1)
+
+    def test_metrics_use_current_revision_and_ignore_superseded_or_audit_only_rows(self):
+        old = self.native_evidence("post")
+        current = self.native_evidence("post", revision_id="EVID-post:v2", original_text="更正原文")
+        obsolete = self.native_evidence("obsolete", comment=True)
+        superseded = {**obsolete, "status": "superseded", "derivation_status": "superseded"}
+        payloads = [{"evidence": [old, obsolete]}, {"evidence": [current, superseded,
+                    {**old, "historical_reference_only": True}]}]
+        result = build_result_digest({"research_leads": [{"lead_id": "LEAD-1", "evidence": [old, obsolete]}]},
+                                     evidence_payloads=payloads)
+        self.assertEqual(result["metrics"]["normalized_evidence_count"], 1)
+        self.assertEqual(result["metrics"]["lead_used_normalized_evidence_count"], 0)
+
+    def test_ambiguous_parent_url_cannot_credit_usage_to_all_native_comments(self):
+        post = self.native_evidence("post")
+        comment = self.native_evidence("comment", comment=True)
+        result = build_result_digest({"research_leads": [{"lead_id": "LEAD-1", "evidence": [{"url": post["url"]}]}]},
+                                     evidence_payloads=[{"evidence": [post, comment]}])
+        self.assertEqual(result["metrics"]["normalized_evidence_count"], 2)
+        self.assertEqual(result["metrics"]["lead_used_normalized_evidence_count"], 0)
+
+    def test_legacy_metrics_keep_url_counting_and_original_output_fields_for_audits(self):
+        post = self.native_evidence("post")
+        comment = self.native_evidence("comment", comment=True)
+        result = build_result_digest({"research_leads": [{"lead_id": "LEAD-1", "evidence": [comment]}]},
+                                     evidence_payloads=[{"evidence": [post, comment]}], metrics_version="1.0")
+        self.assertEqual(result["metrics"]["normalized_evidence_count"], 1)
+        self.assertEqual(result["metrics"]["lead_used_normalized_evidence_count"], 1)
+        self.assertNotIn("metrics_version", result["metrics"])
+        self.assertNotIn("any_used_normalized_evidence_count", result["metrics"])
+        self.assertNotIn("linked_research_leads", result["source_yield"][0])
+
     def test_demo_and_truncation_remain_visible_after_full_pipeline(self) -> None:
         payload = json.loads((ROOT / "examples" / "benchmarks-and-dimensions.json").read_text())
         expanded = expand_ideas(payload, limit=200)

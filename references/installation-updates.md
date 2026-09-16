@@ -1,6 +1,6 @@
 # 安装与更新
 
-AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前版本为 `4.0.0`，数据协议保持 `3.0`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
+AOR 使用一个产品版本管理 CLI、根技能和本项目登记的子技能。当前源码版本为 `4.3.0`，数据协议保持 `3.0`，目前登记一个根技能；稳定安装取得的版本以官方 Release 为准。运行需要 Python 3.10+ 与 macOS/Linux；安装和更新另需 Git，不引入 Python 运行时依赖。
 
 ## 安装稳定版本
 
@@ -118,18 +118,20 @@ python3 scripts/radar.py install --source /absolute/path/to/ai-opportunity-radar
 
 此方式不查询远端；来源必须是完整、干净且 `origin` 指向官方仓库的 Git 根目录。安装器复制本地 HEAD 为独立快照，不将启动器绑定到开发目录。它只证明装入了所选本地提交，不证明该提交已发布；之后执行 `aor update` 仍使用稳定 Release 渠道。
 
+4.1.0 将证据身份、解析器、内部报告和网站契约分别版本化。已有 URL 混合帖子／评论的库需要显式迁移：`aor library --root /absolute/old-library migrate-identities --destination /absolute/new-library`。先核验迁移映射，再切换使用，原库保留。旧报告使用 `aor resume RUN_ID --reparse` 创建离线子运行，不重复购买原响应，不手改旧报告版本。网站接入见 [公开数据契约](website-contract.md)。
+
 ## 目录与环境变量
 
-下面以 `4.0.0` 展示目录结构，实际版本和提交前缀以安装结果为准：
+下面以 `4.1.0` 展示目录结构，实际版本和提交前缀以安装结果为准：
 
 ```text
 ~/.local/bin/aor
 ~/.local/share/aor/
 ├── install.json
 ├── update.lock
-├── current -> versions/v4.0.0-<提交前缀>/
+├── current -> versions/v4.1.0-<提交前缀>/
 └── versions/
-    └── v4.0.0-<提交前缀>/
+    └── v4.1.0-<提交前缀>/
         ├── SKILL.md
         ├── agent-manifest.json
         ├── bin/aor

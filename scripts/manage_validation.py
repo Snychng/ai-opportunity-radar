@@ -26,6 +26,48 @@ class ValidationError(ValueError):
     """个人约束或实验记录不符合契约。"""
 
 
+def _validate_subject(record_id):
+    """探索线索也能先做小实验，无须为记录实验伪造正式候选资格。"""
+    if isinstance(record_id, str) and re.fullmatch(r"LEAD-[A-F0-9]{12,32}", record_id):
+        return
+    validate_record_id(record_id)
+
+
+def _validate_comparison(value):
+    if not isinstance(value, dict):
+        raise ValidationError("ai_comparison 必须为对象")
+    for field in ("baseline", "ai_variant", "task_selection", "evaluation_method"):
+        if not isinstance(value.get(field), str) or not value[field].strip():
+            raise ValidationError(f"ai_comparison 缺少 {field}")
+    _number(value.get("planned_sample_size"), "planned_sample_size", integer=True)
+    if value["planned_sample_size"] < 1:
+        raise ValidationError("planned_sample_size 必须大于零")
+    metrics = value.get("metrics")
+    if not isinstance(metrics, list) or not metrics:
+        raise ValidationError("AI 对比需要预先指定指标")
+    names = set()
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            raise ValidationError("每个对比指标必须为对象")
+        for field in ("id", "unit", "acceptance_rule"):
+            if not isinstance(metric.get(field), str) or not metric[field].strip():
+                raise ValidationError(f"对比指标缺少 {field}")
+        if metric["id"] in names:
+            raise ValidationError("对比指标 id 不能重复")
+        names.add(metric["id"])
+    measurements = value.get("measurements", [])
+    if not isinstance(measurements, list):
+        raise ValidationError("measurements 必须为实测结果数组")
+    for result in measurements:
+        if not isinstance(result, dict) or result.get("metric_id") not in names:
+            raise ValidationError("实测结果必须对应预先指定的指标")
+        for field in ("baseline_value", "ai_value"):
+            _number(result.get(field), field)
+        _number(result.get("sample_size"), "sample_size", integer=True)
+        if result["sample_size"] < 1 or not isinstance(result.get("evidence_ref"), str) or not result["evidence_ref"].strip():
+            raise ValidationError("实测结果需要有效样本量和证据引用")
+
+
 def _number(value: Any, field: str, *, integer: bool = False) -> float | int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(f"{field} 必须是非负有限数字")
@@ -139,7 +181,7 @@ def _validate_experiment(value: Any) -> dict[str, Any]:
     if not isinstance(experiment_id, str) or not re.fullmatch(r"EXP-[A-Za-z0-9-]{1,80}", experiment_id):
         raise ValidationError("experiment_id 必须以 EXP- 开头并使用字母、数字或连字符")
     try:
-        validate_record_id(item.get("record_id"))
+        _validate_subject(item.get("record_id"))
         validate_run_as_of(item.get("run_id"), item.get("as_of"))
     except ContractError as exc:
         raise ValidationError(str(exc)) from exc
@@ -148,6 +190,10 @@ def _validate_experiment(value: Any) -> dict[str, Any]:
     for field in ("hypothesis", "offer", "success_criteria", "stop_criteria"):
         if not isinstance(item.get(field), str) or not item[field].strip():
             raise ValidationError(f"实验缺少 {field}")
+    if "ai_comparison" in item:
+        _validate_comparison(item["ai_comparison"])
+        if item["status"] == "planned" and item["ai_comparison"].get("measurements"):
+            raise ValidationError("planned 实验不能填写已完成实测")
     counts = item.get("counts", {})
     if not isinstance(counts, dict) or set(counts) - set(COUNT_FIELDS):
         raise ValidationError("counts 包含未知指标或不是对象")
@@ -173,6 +219,11 @@ def _validate_experiment(value: Any) -> dict[str, Any]:
         fact = row.get("original_text") or row.get("fact")
         if not traceable or not isinstance(fact, str) or not fact.strip():
             raise ValidationError("实验 evidence 必须有可追溯的 url/local_ref 和 original_text/fact")
+    references = {row.get(field) for row in evidence for field in ("url", "local_ref")
+                  if isinstance(row.get(field), str)}
+    for result in (item.get("ai_comparison") or {}).get("measurements", []):
+        if result["evidence_ref"] not in references:
+            raise ValidationError("AI 实测结果 evidence_ref 必须指向本次 evidence 中的记录")
     if item["status"] in {"completed", "stopped"}:
         for field in ("outcome", "next_action"):
             if not isinstance(item.get(field), str) or not item[field].strip():
@@ -238,7 +289,7 @@ def list_experiments(home: Path, *, record_id: str | None = None, as_of: str | N
             raise ValidationError("as_of 必须是有效日期") from exc
     if record_id is not None:
         try:
-            validate_record_id(record_id)
+            _validate_subject(record_id)
         except ContractError as exc:
             raise ValidationError(str(exc)) from exc
     events = _read_events(home.expanduser().resolve() / "state" / "experiment-events.jsonl")

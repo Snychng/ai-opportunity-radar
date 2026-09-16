@@ -31,16 +31,20 @@ def validate_intent_plan(plan: Any) -> dict[str, Any]:
 
     if not isinstance(plan, dict) or set(plan) != {"intents"}:
         raise ValueError("intent_plan 必须只包含 intents 数组")
-    if not isinstance(plan["intents"], list) or not 1 <= len(plan["intents"]) <= 20:
-        raise ValueError("intents 必须包含 1 到 20 个结构化意图")
+    if not isinstance(plan["intents"], list) or not 1 <= len(plan["intents"]) <= 100:
+        raise ValueError("intents 必须包含 1 到 100 个结构化意图")
     fields = {"id", "question", "evidence_type", "search_query", "ranking_query", "source", "locale", "candidate_gaps"}
     sources = {row["source"] for row in source_catalog()}
     seen = set()
     result = []
     for raw in plan["intents"]:
-        if not isinstance(raw, dict) or set(raw) != fields:
+        if not isinstance(raw, dict) or not fields <= set(raw) or set(raw) - fields - {"industry_ids"}:
             raise ValueError("单条意图必须包含：" + ", ".join(sorted(fields)))
         item = deepcopy(raw)
+        if "industry_ids" in item:
+            if not isinstance(item["industry_ids"], list) or len(item["industry_ids"]) > 10:
+                raise ValueError("industry_ids 必须为最多 10 项的数组")
+            item["industry_ids"] = [text_field(v, "industry_ids", 36) for v in item["industry_ids"]]
         for name in fields - {"locale", "candidate_gaps"}:
             item[name] = text_field(item[name], name, 100 if name == "search_query" else 1000)
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,39}", item["id"]) or item["id"].endswith("-") or item["id"] in seen:

@@ -13,6 +13,8 @@ from typing import Any, Iterable
 from urllib.parse import urlparse
 
 from contracts import SCHEMA_VERSION, ContractError, canonical_sha256, fingerprint_record, normalize_identity, validate_stage_envelope
+from aor.evidence.identity import evidence_identity_key, evidence_object_identity
+from aor.evidence.retrieval import EvidenceReferenceError, resolve_evidence_reference
 
 
 class DigestError(ValueError):
@@ -192,6 +194,7 @@ def _family_key(record: dict[str, Any]) -> str:
 def _normalized_evidence(
     payloads: Iterable[dict[str, Any]],
 ) -> tuple[set[str], dict[str, set[str]]]:
+    """仅保留 metrics 1.0 的 URL 口径供旧报告审计。"""
     all_markers: set[str] = set()
     by_source: dict[str, set[str]] = defaultdict(set)
     for payload in payloads:
@@ -205,6 +208,62 @@ def _normalized_evidence(
             all_markers.add(marker)
             by_source[source].add(marker)
     return all_markers, by_source
+
+
+def _active_evidence_catalog(payloads: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按原生对象统计，库中当前修订覆盖采集副本；审计旧引用不参与当前产出。"""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    authoritative: set[str] = set()
+    for payload in payloads:
+        for field in ("evidence", "comments"):
+            for item in _as_list(payload.get(field), label=field):
+                if item.get("historical_reference_only"):
+                    continue
+                key = _object_marker(item)
+                if item.get("revision_id") and (item.get("library_evidence_id") or item.get("object_identity")):
+                    grouped[key] = [item]
+                    authoritative.add(key)
+                elif key not in authoritative:
+                    grouped.setdefault(key, []).append(item)
+    return [item for rows in grouped.values() for item in rows
+            if item.get("status") != "superseded" and item.get("derivation_status") != "superseded"]
+
+
+def _object_marker(item: dict[str, Any]) -> str:
+    return evidence_identity_key(item) or str(item.get("library_evidence_id") or item.get("evidence_id")
+                                             or item.get("id") or canonical_sha256(item))
+
+
+def _object_source(item: dict[str, Any]) -> str:
+    identity = evidence_object_identity(item)
+    return normalize_identity(identity[0] if identity else item.get("source")) or "unknown"
+
+
+def _resolved_usage(records: Iterable[dict[str, Any]], catalog: list[dict[str, Any]]) -> tuple[set[str], dict[str, int]]:
+    """以对象与精确修订匹配引用；只有父帖 URL 的含糊评论不算已利用。"""
+    markers: set[str] = set()
+    linked: dict[str, int] = defaultdict(int)
+    fields = ("id", "evidence_id", "library_evidence_id", "revision_id", "url", "original_url", "source", "platform",
+              "source_item_id", "source_object_id", "object_identity", "original_object_identity", "object_kind",
+              "object_type", "evidence_kind", "url_kind", "parent_comment_id")
+    for record in records:
+        sources = set()
+        for item in record.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            # inventory 只保存身份与统计元数据；引用原文正确性由报告引用校验负责。
+            reference = {key: item[key] for key in fields if key in item}
+            try:
+                resolved = resolve_evidence_reference(reference, catalog)
+            except EvidenceReferenceError:
+                continue
+            if resolved.get("retracted") or resolved.get("status") in {"retracted", "withdrawn", "superseded"}:
+                continue
+            markers.add(_object_marker(resolved))
+            sources.add(_object_source(resolved))
+        for source in sources:
+            linked[source] += 1
+    return markers, linked
 
 
 def _cluster_count(payloads: Iterable[dict[str, Any]]) -> int:
@@ -238,6 +297,7 @@ def _linked_by_source(records: Iterable[dict[str, Any]]) -> dict[str, int]:
 
 
 def _used_evidence_markers(records: Iterable[dict[str, Any]]) -> set[str]:
+    """仅供 metrics 1.0 重算，不用于当前对象与修订的引用统计。"""
     result: set[str] = set()
     for record in records:
         for item in record.get("evidence") or []:
@@ -341,13 +401,17 @@ def build_result_digest(
     research_payloads: Iterable[dict[str, Any]] = (),
     rejected_limit: int = 20,
     run_ledger: dict[str, Any] | None = None,
+    metrics_version: str = "2.0",
 ) -> dict[str, Any]:
     """生成指标和 Markdown；所有合格及 overflow 候选都必须展示。"""
     if not isinstance(tiered, dict):
         raise DigestError("tiered 输入必须是对象")
     if not 0 <= rejected_limit <= 100:
         raise DigestError("rejected_limit 必须在 0 到 100 之间")
+    if metrics_version not in {"1.0", "2.0"}:
+        raise DigestError("不支持的 metrics_version")
     deep, quick, regional = _all_qualified(tiered)
+    leads = _as_list(tiered.get("research_leads"), label="research_leads")
     rejected = _as_list(tiered.get("rejected"), label="rejected")
     rejected = sorted(
         rejected,
@@ -372,11 +436,23 @@ def build_result_digest(
             "estimated_cost_usd": _decimal(row["estimated_attempted_cost_usd_exact"]),
         } for row in run_ledger.get("by_source", [])}
     cost_available = bool(execution_payloads) or run_ledger is not None
-    evidence_markers, evidence_by_source = _normalized_evidence(evidence_payloads)
+    if metrics_version == "1.0":
+        evidence_markers, evidence_by_source = _normalized_evidence(evidence_payloads)
+        used_markers = _used_evidence_markers(all_qualified)
+        lead_markers = _used_evidence_markers(leads)
+        linked_by_source = _linked_by_source(all_qualified)
+        linked_leads = {}
+    else:
+        catalog = _active_evidence_catalog(evidence_payloads)
+        evidence_by_source = defaultdict(set)
+        for item in catalog:
+            evidence_by_source[_object_source(item)].add(_object_marker(item))
+        evidence_markers = {_object_marker(item) for item in catalog}
+        used_markers, linked_by_source = _resolved_usage(all_qualified, catalog)
+        lead_markers, linked_leads = _resolved_usage(leads, catalog)
     cluster_count = _cluster_count(research_payloads)
-    used_markers = _used_evidence_markers(all_qualified)
     used_normalized = used_markers & evidence_markers
-    linked_by_source = _linked_by_source(all_qualified)
+    lead_used_normalized = lead_markers & evidence_markers
     qualified_count = len(all_qualified)
     family_count = len({_family_key(record) for record in all_qualified})
     validated_family_count = len({_family_key(record) for record in [*deep, *quick]})
@@ -387,7 +463,7 @@ def build_result_digest(
     utilization = (Decimal(len(used_normalized)) / len(evidence_markers) * 100) if evidence_markers else None
     benchmarks = _as_list(tiered.get("benchmarks"), label="benchmarks")
 
-    sources = sorted(set(execution_sources) | set(evidence_by_source) | set(linked_by_source))
+    sources = sorted(set(execution_sources) | set(evidence_by_source) | set(linked_by_source) | set(linked_leads))
     source_rows: list[dict[str, Any]] = []
     for source in sources:
         execution = execution_sources.get(source) or {}
@@ -402,6 +478,8 @@ def build_result_digest(
                 "linked_conclusions": linked_by_source.get(source, 0),
             }
         )
+        if metrics_version == "2.0":
+            source_rows[-1]["linked_research_leads"] = linked_leads.get(source, 0)
 
     summary = tiered.get("summary") or {}
     expansion_summary = tiered.get("expansion_summary") or {}
@@ -412,7 +490,7 @@ def build_result_digest(
         raise DigestError("warnings 必须是字符串数组")
     inherited_demo = tiered.get("is_demo") is True
     contains_demo = inherited_demo or any(
-        _is_demo(record) for record in [*all_qualified, *benchmarks, *_as_list(tiered.get("rejected"), label="rejected")]
+        _is_demo(record) for record in [*all_qualified, *leads, *benchmarks, *_as_list(tiered.get("rejected"), label="rejected")]
     )
     raw_count = int(summary.get("raw") or 0)
     metrics = {
@@ -435,6 +513,8 @@ def build_result_digest(
         "regional_hypothesis_family_count": len({_family_key(record) for record in regional}),
         "delivery_variant_count": sum(len(record.get("variants") or [record]) for record in all_qualified),
         "rejected_total": len(_as_list(tiered.get("rejected"), label="rejected")),
+        "research_lead_count": len(leads),
+        "lead_used_normalized_evidence_count": len(lead_used_normalized),
         "rejected_displayed": len(rejected),
         "normalized_evidence_count": len(evidence_markers),
         "used_normalized_evidence_count": len(used_normalized),
@@ -447,6 +527,10 @@ def build_result_digest(
         "cost_per_qualified_conclusion_usd": None if cost_per_qualified is None else float(cost_per_qualified.quantize(Decimal("0.000001"))),
         "cost_per_validated_family_usd": None if not cost_available or not validated_family_count else float((cost / validated_family_count).quantize(Decimal("0.000001"))),
     }
+    if metrics_version == "2.0":
+        any_used = used_normalized | lead_used_normalized
+        metrics.update(metrics_version="2.0", any_used_normalized_evidence_count=len(any_used),
+                       unused_normalized_evidence_count=len(evidence_markers - any_used))
 
     utilization_text = "未知" if utilization is None else f"{utilization.quantize(Decimal('0.01'))}%"
     cost_text = "未知" if not cost_available else f"{cost.quantize(Decimal('0.000001'))}"
@@ -472,11 +556,14 @@ def build_result_digest(
     if warnings:
         notices.append("运行提示：\n\n" + "\n".join(f"- {_text(item)}" for item in warnings))
 
+    lead_section = "## 待验证线索完整清单\n\n" + _leads_table(leads) if leads else ""
     markdown = f"""# AI 创业机会完整结论清单｜{_text(tiered.get('as_of'), '未注明日期')}
 
 {chr(10).join(notices)}
 
 > 本文件展示全部合格 A/B/R 候选，包括超出日报数量上限的 overflow；不会只保留 Top 5。
+
+{lead_section}
 
 ## 结果总览
 
@@ -492,6 +579,7 @@ def build_result_digest(
 - A/B 研究资格家族数量：{metrics['validated_opportunity_family_count']}
 - 交付与报价变体数量：{metrics['delivery_variant_count']}
 - 被拒绝候选总数：{metrics['rejected_total']}
+- 待验证研究线索：{metrics['research_lead_count']}（不计入合格结论）
 - 展示的接近合格候选数量：{metrics['rejected_displayed']}
 
 ## 费用产出
@@ -502,6 +590,7 @@ def build_result_digest(
 - 规范化证据数量：{metrics['normalized_evidence_count']}
 - 聚类候选数量：{metrics['cluster_candidate_count']}
 - 已利用证据数量：{metrics['used_normalized_evidence_count']}
+- 探索线索引用证据：{metrics['lead_used_normalized_evidence_count']}（单独统计，不增加合格结论数）
 - 证据利用率：{utilization_text}
 - 单个合格结论估算成本 USD：{cost_per_text}
 
@@ -532,6 +621,18 @@ def build_result_digest(
 - 合格结论包含 R 级假设；低单价不代表市场已验证。A/B 研究资格也不等于你的产品已获得付款。
 """
     return {"metrics": metrics, "source_yield": source_rows, "markdown": markdown}
+
+
+def _leads_table(leads: list[dict]) -> str:
+    lines = ["| 线索 | 用户与需求 | AI 增量价值假设 | 待核验 | 证据 |", "|---|---|---|---|---|"]
+    for row in leads:
+        lines.append(f"| {_cell(row.get('lead_id'))} · {_cell(row.get('title'))} | "
+                     f"{_cell(row.get('target_user'))}：{_cell(row.get('problem_or_desire'))} | "
+                     f"{_cell((row.get('ai_value') or {}).get('incremental_advantage'))} | "
+                     f"{_cell(row.get('missing_requirements'))}；下一步：{_cell(row.get('next_question'))} | {_evidence_links(row)} |")
+    if not leads:
+        lines.append("| 暂无 | 本轮尚未保存可追溯线索 | — | 按覆盖缺口继续调查 | — |")
+    return "\n".join(lines)
 
 
 def _read_object(path: Path) -> dict[str, Any]:

@@ -147,6 +147,8 @@ def collect_community(
                 row['request_ids'] = list(dict.fromkeys([item['id'], *origin.get('request_ids', []), *origin.get('request_aliases', [])]))
                 row['intent_refs'] = list(origin.get('intent_refs', []))
                 row['query_metadata'] = list(origin.get('query_metadata') or origin.get('provenance') or [])
+                from aor.sources.industries import industry_ids
+                row['industry_ids'] = industry_ids(row)
                 row['query'] = _query(item)
                 row.update(assess_quality(row, query=row['query'], as_of=plan['as_of'], window=plan['window']))
                 if parent and row['relevance_status'] == 'unrelated':
@@ -167,6 +169,8 @@ def collect_community(
                   'status': status, **counts, 'items': len(rows), 'started_at': started,
                   'finished_at': datetime.now(tz=timezone.utc).isoformat(),
                   'duration_ms': round((clock.monotonic() - tick) * 1000, 3)}
+        from aor.sources.industries import industry_ids
+        record['industry_ids'] = industry_ids(parent or item)
         if parent:
             record['parent_item_id'] = parent['id']
         return record, rows
@@ -229,4 +233,3 @@ def collect_community(
             'plan_sha256': plan_sha256, 'window': plan['window'], 'status': status,
             'required_queries': plan.get('required_queries', []), 'stats': stats,
             'requests': request_results, 'evidence': evidence, 'comments': comments}
-

@@ -335,6 +335,7 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
             "localized_queries": (scope["queries"] if scope else []) or [{"language": "unknown", "query": short_topic(query_focus)}],
         }
     planned_sources, coverage_schedule = _daily_sources(as_of)
+    industry_discovery = None
     if intent_plan is not None:
         retrieval_plans = compile_intents(intent_plan, as_of=as_of.isoformat(), run_id=run_id)
         coverage_schedule = {
@@ -342,6 +343,14 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
             "planned_sources": list(dict.fromkeys(item["source"] for item in intent_plan["intents"])),
             "all_phase_one_sources": list(PHASE_ONE_TIKHUB_SOURCES),
         }
+    elif not focus and not scope:
+        from aor.sources.industries import build_industry_discovery
+
+        industry_discovery = build_industry_discovery(as_of=as_of, run_id=run_id, home=home,
+                                                     preferences=preferences, planned_sources=planned_sources)
+        retrieval_plans = industry_discovery["retrieval_plans"]
+        coverage_schedule["strategy"] = "cross_industry_daily_with_source_rotation"
+        coverage_schedule["planned_sources"] = list(dict.fromkeys(r["source"] for r in retrieval_plans["tikhub"]["requests"]))
     else:
         community = build_community_plan(
             as_of=as_of.isoformat(), run_id=run_id,
@@ -380,6 +389,11 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
         "custom_focus": focus,
         "research_scope": scope,
         "intent_plan": intent_plan,
+        "industry_catalog": industry_discovery["catalog"] if industry_discovery else [],
+        "catalog_version": industry_discovery["catalog_version"] if industry_discovery else "2.0",
+        "selected_industries": industry_discovery["selected"] if industry_discovery else [],
+        "audiences": preferences.get("audiences", ["small_business", "consumer"]),
+        "require_ai_value": True,
         "phase_scope": {
             "id": PHASE_ONE_ID,
             "platform_expansion_enabled": False,
@@ -429,12 +443,13 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
             "near_miss_display_max": preferences.get("near_miss_display_max", 20),
         },
         "paid_retrieval_policy": {
-            "strategy": "free_discovery_then_paid_gap_verification",
-            "broad_discovery_budget_share_max": preferences.get("paid_discovery_budget_share_max", 0.2),
+            "strategy": "budgeted_cross_industry_discovery_then_gap_verification",
+            "discovery_budget_policy": "explicit_run_budget",
             "stop_after_paid_requests_without_new_benchmark_or_qualified_idea": preferences.get(
                 "paid_no_yield_stop_requests", 3
             ),
-            "require_target_evidence_gap_before_paid_run": True,
+            "require_target_evidence_gap_before_paid_run": False,
+            "require_explicit_discovery_objective_and_budget": True,
             "require_post_run_cost_yield_report": True,
         },
         "stage_contract": [

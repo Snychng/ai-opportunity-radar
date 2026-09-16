@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+
+from aor.storage.budget import BudgetError, BudgetStore
 
 
 class JournalError(ValueError):
@@ -31,12 +33,16 @@ def _json(value: Any) -> str:
 class RequestJournal:
     """一个路径绑定一个 run；path=None 时保留相同的内存执行语义。"""
 
-    def __init__(self, path: str | Path | None, *, run_id: str, as_of: str):
+    def __init__(self, path: str | Path | None, *, run_id: str, as_of: str,
+                 budget_home: str | Path | None = None, recurring: bool = False):
         self.path = Path(path).expanduser().resolve() if path is not None else None
         self.run_id = run_id
         self.as_of = as_of
         self.connection: sqlite3.Connection | None = None
         self.lock: sqlite3.Connection | None = None
+        self.budget_home = budget_home
+        self.recurring = recurring
+        self.budget: BudgetStore | None = None
 
     def __enter__(self) -> RequestJournal:
         try:
@@ -70,6 +76,10 @@ class RequestJournal:
                 raise JournalError("journal 已绑定其他 run_id/as_of")
             with self.connection:
                 self.connection.execute("INSERT OR IGNORE INTO run VALUES (?, ?)", (self.run_id, self.as_of))
+            if self.budget_home is not None:
+                self.budget = BudgetStore.attach(self.connection, self.budget_home)
+                with self._transaction():
+                    self._synchronize_budget()
             return self
         except BaseException as exc:
             self.__exit__(None, None, None)
@@ -78,10 +88,49 @@ class RequestJournal:
             raise
 
     def __exit__(self, *args: Any) -> None:
+        if (args and args[0] is not None and self.budget is not None and self.recurring
+                and self.connection.execute("SELECT 1 FROM attempts WHERE state='started'").fetchone()):
+            # 正常异常退出可记录暂停；进程被强杀时 reserved 仍保守占用。
+            try:
+                self.budget.pause("interrupted_paid_execution")
+            except (sqlite3.Error, BudgetError):
+                pass
         if self.connection is not None:
             self.connection.close()
         if self.lock is not None:
             self.lock.close()
+
+    @contextmanager
+    def _transaction(self):
+        # BEGIN IMMEDIATE 同时锁住已附加的全局库。事务涵盖费用与本地尝试。
+        with self.budget.transaction() if self.budget is not None else self.connection:
+            yield
+
+    def _synchronize_budget(self) -> None:
+        if self.budget is None:
+            return
+        history_coverage = self.budget.history_coverage(self.run_id)
+        ordinals: dict[str, int] = {}
+        pending_sync: list[tuple[Any, int]] = []
+        uncovered = Decimal(0)
+        for row in self.connection.execute("SELECT * FROM attempts ORDER BY id").fetchall():
+            fingerprint = row["fingerprint"]
+            ordinals[fingerprint] = ordinals.get(fingerprint, 0) + 1
+            ordinal = ordinals[fingerprint]
+            if history_coverage is not None and not self.budget.has_attempt(self.run_id, fingerprint, ordinal):
+                uncovered += Decimal(row["list_cost_usd"])
+            else:
+                pending_sync.append((row, ordinal))
+        if history_coverage is not None and uncovered > history_coverage:
+            raise BudgetError("本地 journal 已尝试费用超过已导入历史覆盖额；请核对并补账，不能忽略新增费用或自动叠加整轮历史")
+        for row, ordinal in pending_sync:
+            fingerprint = row["fingerprint"]
+            self.budget.reserve(run_id=self.run_id, fingerprint=fingerprint, attempt_number=ordinal,
+                                list_cost_usd=row["list_cost_usd"], estimated_cost_usd=row["estimated_cost_usd"],
+                                now=row["started_at"], recurring=self.recurring, historical=True)
+            if row["state"] != "started":
+                self.budget.settle(run_id=self.run_id, fingerprint=fingerprint,
+                                   attempt_number=ordinal, state=row["state"])
 
     def register_batch(
         self, batch_id: str, plan_sha256: str, requests: list[dict[str, Any]], *, resume: bool = False,
@@ -97,7 +146,7 @@ class RequestJournal:
             raise JournalError("批次已登记；恢复请使用 resume，新补证批请指定新的 batch_id")
         if existing and existing[0] != plan_sha256:
             raise JournalError("恢复计划内容与 journal 不符；请显式建立新批次")
-        with db:
+        with self._transaction():
             db.execute("INSERT OR IGNORE INTO batches VALUES (?, ?, ?)", (batch_id, plan_sha256, _now()))
             for item in requests:
                 fingerprint = item["request_fingerprint"]
@@ -106,6 +155,7 @@ class RequestJournal:
             # 会话锁已取得，因此上次遗留 started 必定不再有本地执行者。
             db.execute("UPDATE attempts SET state='outcome_unknown', finished_at=? WHERE state='started'", (_now(),))
             db.execute("UPDATE requests SET state='outcome_unknown', updated_at=? WHERE state='started'", (_now(),))
+            self._synchronize_budget()
 
     def get_request(self, fingerprint: str) -> dict[str, Any]:
         row = dict(self.connection.execute("SELECT * FROM requests WHERE fingerprint=?", (fingerprint,)).fetchone())
@@ -163,13 +213,18 @@ class RequestJournal:
         max_cost_usd: Decimal, max_attempts: int,
     ) -> int:
         """先持久化 started 与预算占用，返回本次 attempt id。"""
-        with self.connection:
+        with self._transaction():
             current = self.get_request(fingerprint)
             if current["state"] in {"started", "succeeded"} or current["attempts"] >= max_attempts:
                 raise JournalError("请求不可再次开始或已达到累计 max_attempts")
             occupied = Decimal(self.snapshot()["list_attempted_cost_usd_exact"])
             if occupied + list_cost_usd > max_cost_usd:
                 raise JournalError("本次尝试超过 run 累计预算")
+            if self.budget is not None and not self.budget.reserve(
+                run_id=self.run_id, fingerprint=fingerprint, attempt_number=current["attempts"] + 1,
+                list_cost_usd=list_cost_usd, estimated_cost_usd=estimated_cost_usd, recurring=self.recurring,
+            ):
+                raise BudgetError("全局账本已登记此尝试，当前本地日志不匹配；不能再次发送")
             cursor = self.connection.execute(
                 "INSERT INTO attempts (fingerprint,batch_id,state,list_cost_usd,estimated_cost_usd,"
                 "pricing_snapshot,started_at) VALUES (?,?,'started',?,?,?,?)",
@@ -185,10 +240,14 @@ class RequestJournal:
         """result 为脱敏产物，保存失败会保留 started 供恢复时按未知处理。"""
         if state not in {"succeeded", "failed", "outcome_unknown"}:
             raise JournalError("不合法的请求完成状态")
-        with self.connection:
+        with self._transaction():
             row = self.connection.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             if row is None or row["state"] != "started":
                 raise JournalError("只能完成正在执行的尝试")
+            if self.budget is not None:
+                ordinal = self.connection.execute("SELECT COUNT(*) FROM attempts WHERE fingerprint=? AND id<=?",
+                                                  (row["fingerprint"], attempt_id)).fetchone()[0]
+                self.budget.settle(run_id=self.run_id, fingerprint=row["fingerprint"], attempt_number=ordinal, state=state)
             self.connection.execute("UPDATE attempts SET state=?, finished_at=? WHERE id=?", (state, _now(), attempt_id))
             self.connection.execute(
                 "UPDATE requests SET state=?, result=?, updated_at=? WHERE fingerprint=?",
