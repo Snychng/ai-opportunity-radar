@@ -32,6 +32,12 @@ research → evidence-packet / industry-packets / review-packets → Agent 核�
 
 主包和 industry-packets 之外，review-packets.json 保存可读材料的补读批次；research-followup.reading_batches 指示下一批及未分配原因。摘录不替代全文，全文按固定引用读取 evidence-context.json；入包和补读不代表语义审阅完成。
 
+### 可选协作搜索
+
+在 awaiting_benchmarks 阶段按[协作搜索](multi-model-search.md)执行 `search plan/collect/import/status`。Grok 负责 X，宿主 AI 负责网页及必要的 X 回退；无 Grok 时仍可走有本轮预算的 TikHub 或宿主搜索。先完成登录配置再启用 Grok，缺失配置不能阻断整轮研究。
+
+搜索 worker 独立输出，协调者统一登记；原文核验后仍通过 `sources import → resume --evidence`，多个模型的观察合并为一个快照再提交。不将链接候选写成已核验证据；search 状态与已有 industry coverage 分别记录，计划和待办不增加实际覆盖。
+
 ### 离线执行
 
 严格离线会话设置 `AOR_OFFLINE=1`，并使用 `research --offline` 或 `resume RUN_ID --offline`。环境变量避免 CLI 更新预检联网，`--offline` 也跳过本次更新预检并停止编排采集；以离线模式创建的运行会持久保留该约束，付费入口拒绝执行。`--no-collect` 仅用于已有材料处理，不是所有底层命令的网络沙箱。

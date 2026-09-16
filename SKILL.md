@@ -1,6 +1,6 @@
 ---
 name: ai-opportunity-radar
-description: 从具体任务、正向行为、用户评论、收费对标和地区差异研究创业机会，以文件化 research/resume 流程交接证据、判断和个人验证。用于每日雷达、定向扫描、机会深挖与历史回顾。
+description: 从具体任务、正向行为、用户评论、收费对标和地区差异研究创业机会，可协作 Grok 搜索 X 并由宿主检索其他渠道；没有 Grok 时使用 TikHub 或宿主搜索。以 research/resume 交接证据、判断和个人验证。
 ---
 
 # AI Opportunity Radar
@@ -24,6 +24,14 @@ description: 从具体任务、正向行为、用户评论、收费对标和地�
 4. `resume RUN_ID --assessment FILE` 校验 `report.json` 并提交本地状态。确认报告与回执，再向用户交付结论；`completed` 只表示这一轮文件已交付，行业研究是否充分看 `research_quality`，网页发布资格另看 `public/` 导出结果。已完成研究的修订另开 `research --parent-run-id RUN_ID`。
 
 命令使用文件或参数数组，不将用户原文、网页文本拼进 shell。不要直接改运行目录中受摘要校验的产物；通过 resume 输入文件提交修订。
+
+## Grok 与其他模型协作搜索
+
+需要搜索时读取[协作搜索与登录配置](references/multi-model-search.md)，在 `awaiting_benchmarks` 执行 `search plan --run-id RUN_ID --home DATA_HOME`。Grok 是可选能力：用户先通过 Hermes 完成 `hermes auth add xai-oauth` 登录，并配置本机认证文件路径。不要向用户索取 token，也不要把已安装 Grok 或存在认证文件当成实际登录有效。
+
+已配置 Grok 时，将其 `search collect` 与宿主网页/其他联网模型的任务并行执行；各 worker 使用独立输出文件。没有 Grok、令牌失效或权限拒绝时，使用已配置且本轮有明确预算的 TikHub 交接；否则照常执行返回的宿主 X 搜索任务。无联网能力时保留具体渠道缺口，继续其他可用来源，不把未执行写成没有机会。
+
+唯一协调者 `search import` 各路回执并查看 `search status`，按返回的待办完成原文核验。候选链接、模型摘要和零长度引用不直接进入证据或 OBS；实际打开原文后走 `sources import → resume --evidence`。合并全部观察后再提交一次 observations 快照。Grok 搜索失败不阻断宿主研究；未知结果不自动重发或复购，OAuth 不切换付费 API Key。按原话生成的后续查询继续分流，保留原任务与证据引用。
 
 ## 产品评论研究
 
@@ -54,6 +62,7 @@ description: 从具体任务、正向行为、用户评论、收费对标和地�
 | 五种发现入口、独立观察、任务补查、阅读多样性 | [任务优先发现](references/task-first-discovery.md) |
 | 产品评论、分页恢复、用户观察和需求簇 | [评论优先发现](references/comment-first-discovery.md) |
 | 网页导入、来源诊断、检索意图 | [来源目录](references/source-catalog.md)、[查询模式](references/query-patterns.md) |
+| Grok 登录、协作搜索、无 Grok 回退与恢复 | [协作搜索](references/multi-model-search.md) |
 | 对标、主张、A/B/R、评分 | [数据契约](references/data-contracts.md)、[机会政策](references/opportunity-policy.md)、[评分](references/scoring.md) |
 | 历史检索、证据包、离线评估 | [证据库与评估](references/evidence-library.md) |
 | 报告与客户实验 | [报告契约](references/report-template.md)、[个人验证](references/personal-validation.md) |

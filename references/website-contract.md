@@ -1,6 +1,6 @@
 # 网站数据契约与接入
 
-产品版本 4.4.0；内部 `report_version=1.1`，公开 `contract_version=1.0.0`，分别维护。网站只读取公开导出，内部 `report.json` 含采集响应和本机路径，不应直接托管。
+产品版本 4.5.0；内部 `report_version=1.1`，公开 `contract_version=1.0.0`，分别维护。网站只读取公开导出，内部 `report.json` 含采集响应和本机路径，不应直接托管。
 
 `coverage[].material_count/reviewed_count` 保持本轮新增材料口径；可选 `historical_material_count` 显示复用的历史材料，不将离线复核伪装成重新联网采集。全站当前材料复核总数读取 `quality.review_summary`。示例消费页见 [website-consumer](../examples/website-consumer/README.md)。
 

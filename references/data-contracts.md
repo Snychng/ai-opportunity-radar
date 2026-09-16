@@ -230,6 +230,8 @@ OPP.promoted_from -> SIG ID
 
 intent_plan 分离 question、search_query、ranking_query；编译后按请求指纹归并并保存 intent_refs/provenance，详情见 [查询模式](query-patterns.md)。`sources import` 接收宿主已核验网页的原文子串与核验声明，不将价格页转换成直接付款，详情见 [来源目录](source-catalog.md)。
 
+协作搜索的计划、执行回执和候选使用独立版本，绑定 run_id、plan_sha256、task_id 和 input_sha256；不加入 evidence[] 以冒充已核验原文。`source=twitter` 表示原始渠道，Grok/TikHub/host 是执行者。新 X 网页导入可显式绑定 source_object_id/object_kind，并记录真实 query/retrieval 元数据；模型回答和执行者信息保留 sidecar，旧证据身份不重算。配置、回退与状态含义见[协作搜索](multi-model-search.md)。
+
 证据库使用 evidence_id、revision_id、content_hash、观察日期与 raw_ref；重复来源标签不增加独立来源。新主张引用使用 evidence_refs 内的 evidence_id/revision_id/quote，可选 field；旧 state 付款信号的 evidence_revision_id 属于另一层兼容契约，不要混用字段名。引用定位成功不等于语义成立，详见 [证据库与评估](evidence-library.md)。
 
 ## 11. 报告与付费回执
