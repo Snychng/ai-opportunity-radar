@@ -143,6 +143,16 @@ class ProductSearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             prepared = build_plan(date.fromisoformat(DAY), Path(temp), intent_plan=plan)
         self.assertEqual(len(prepared['retrieval_plans']['tikhub']['requests']), 27)
+        paid = prepared['retrieval_plans']['tikhub']
+        self.assertEqual(paid['cost_policy']['purpose'], 'cross_industry_discovery')
+        self.assertIn('TestProduct', paid['discovery_objective'])
+        from aor.sources.discovery import prepare_discovery_plan
+        pricing = [{'endpoint_uri': r['endpoint'], 'endpoint_cost': 0.001,
+                    'allow_free_credit': False, 'allow_discount': False, 'platform': r['source']}
+                   for r in {r['endpoint']: r for r in paid['requests']}.values()]
+        bounded = prepare_discovery_plan(paid, pricing, max_cost_usd=0.003, max_requests=100)
+        self.assertEqual(len(bounded['requests']), 3)
+        self.assertEqual(bounded['discovery_objective'], paid['discovery_objective'])
         self.assertEqual({r['source'] for r in plan['intents']}, {'xiaohongshu', 'douyin', 'twitter'})
         self.assertTrue(any('worth it' in r['search_query'] for r in plan['intents']))
         self.assertTrue(any('退款' in r['search_query'] for r in plan['intents']))
@@ -232,6 +242,28 @@ class CommentPaginationTests(unittest.TestCase):
         self.assertEqual(collection_coverage([response, response])['unique_comments'], 1)
         self.assertEqual(page_metadata({'comments': [{'cursor': 'wrong', 'has_more': True}], 'has_more': False})['next_cursor'], None)
 
+    def test_x_mixed_comment_endpoints_preserve_native_ids_and_exclude_root(self):
+        state = start_collection({'selections': [selection('twitter')]}, run_id=RUN, as_of=DAY)
+        data = {'thread': [{'id': '101', 'text': 'I paid but Pro did not activate'}],
+                'timeline': [{'tweet_id': '100', 'text': 'Official product announcement'},
+                             {'tweet_id': '101', 'text': 'I paid but Pro did not activate',
+                              'in_reply_to_status_id_str': '100'},
+                             {'tweet_id': '102', 'text': 'Same here', 'in_reply_to_status_id_str': '101'},
+                             {'tweet_id': '999', 'conversation_id': '999', 'text': 'A separate quote post'}]}
+        response = execution(state, data)
+        parsed = normalize_documents([response])
+        self.assertEqual({c['source_item_id'] for c in parsed['comments']}, {'101', '102'})
+        child = next(c for c in parsed['comments'] if c['source_item_id'] == '102')
+        self.assertEqual(child['url'], 'https://x.com/i/status/102')
+        self.assertEqual(child['parent_comment_id'], '101')
+        node = response
+        for part in child['raw_json_pointer'].strip('/').split('/'):
+            node = node[int(part)] if isinstance(node, list) else node[part]
+        self.assertEqual(node['tweet_id'], child['source_item_id'])
+        advanced = advance_collection(state, response)
+        self.assertEqual(advanced['summary']['unique_comments'], 2)
+        self.assertEqual(collection_coverage([response])['unique_comments'], 2)
+
     def test_budget_stop_resume_and_recovery_do_not_rebuy_saved_pages(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AOR_OFFLINE': '1'}):
             home = Path(temp)
@@ -252,8 +284,12 @@ class CommentPaginationTests(unittest.TestCase):
                     account_transport=healthy_account_transport, transport=transport)
 
             with patch('tikhub_query.execute_plan', side_effect=execute), patch.dict(os.environ, {'AOR_OFFLINE': '0'}):
+                with patch('tikhub_query.execute_plan', side_effect=tq.PlanError('预检失败，批次尚未登记')):
+                    with self.assertRaises(tq.PlanError):
+                        run_comment_collection(home, run['run_id'], inputs, max_cost_usd=0.002)
+                self.assertEqual(calls, [])
                 with self.assertRaises(tq.BudgetExceeded):
-                    run_comment_collection(home, run['run_id'], inputs, max_cost_usd=0.002)
+                    run_comment_collection(home, run['run_id'], inputs, max_cost_usd=0.002, resume=True)
                 self.assertEqual(len(calls), 2)
                 with patch('aor.sources.comments.advance_collection', side_effect=OSError('中断保存分页状态')):
                     with self.assertRaises(OSError):
@@ -302,3 +338,18 @@ class CommentPaginationTests(unittest.TestCase):
                 result = research.main(['resume', RUN, '--comments-file', 'unused.json', *extra])
                 self.assertEqual(result, 2)
                 execute.assert_not_called()
+
+    def test_long_provider_cursor_is_bounded_without_relaxing_identifiers(self):
+        state = start_collection({'selections': [selection('twitter')]}, run_id=RUN, as_of=DAY)
+        state['pending'] = [r for r in state['pending'] if r['kind'] == 'top_level_comments']
+        plan = collection_plan(RUN, DAY, state['pending'], state['policy'])
+        for row in plan['requests']:
+            row['params']['cursor'] = 'A' * 623
+        tq.validate_plan(plan, prices())
+        plan['requests'][0]['params']['cursor'] = 'A' * 4097
+        with self.assertRaises(tq.PlanError):
+            tq.validate_plan(plan, prices())
+        plan['requests'][0]['params']['cursor'] = 'A' * 623
+        plan['requests'][0]['params']['tweet_id'] = '9' * 501
+        with self.assertRaises(tq.PlanError):
+            tq.validate_plan(plan, prices())

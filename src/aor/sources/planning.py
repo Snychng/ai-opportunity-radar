@@ -178,6 +178,12 @@ def compile_intents(intent_plan: dict[str, Any], *, as_of: str, run_id: str) -> 
     for item in tikhub["requests"]:
         item["provenance"] = [by_id[item["query_group"]]]
         item["ranking_query"] = by_id[item["query_group"]]["ranking_query"]
+    if paid_groups:
+        # 目标来自已验证的宿主意图；这里只补全计划，执行仍需显式预算和账户预检。
+        tikhub["cost_policy"]["purpose"] = "cross_industry_discovery"
+        tikhub["discovery_objective"] = "；".join(dict.fromkeys(
+            by_id[group["id"]]["question"] for group in paid_groups
+        ))
     finalize_plan(community)
     finalize_plan(tikhub)
     if community["requests"]:

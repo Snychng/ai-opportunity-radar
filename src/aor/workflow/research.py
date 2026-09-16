@@ -270,6 +270,7 @@ def run_comment_collection(home: Path, run_id: str, input_file: Path, *, max_cos
                            batch_id: str = "comments", resume: bool = False) -> dict:
     """分页批次共享既有预算与恢复日志，不重新请求未知/失败的页面。"""
     from aor.sources.comments import start_collection, collection_plan, advance_collection
+    from aor.storage.request_journal import batch_registered
     directory = _run_dir(home, run_id)
     state_name = "comment-collection-" + canonical_sha256(batch_id)[:12]
     input_value = _read(input_file)
@@ -306,7 +307,7 @@ def run_comment_collection(home: Path, run_id: str, input_file: Path, *, max_cos
                 else:
                     path = _artifact(directory, manifest, plan_name, plan)
                 paid_prefix = "paid-" + canonical_sha256(round_id)[:12]
-                batch_exists = paid_prefix + "-plan" in manifest["artifacts"]
+                batch_exists = batch_registered(directory / "paid-journal.sqlite3", round_id)
             run_paid_batch(home, run_id, path, max_cost_usd=max_cost_usd, batch_id=round_id, resume=batch_exists)
             with _run_lock(directory):
                 manifest = _read(directory / "run.json")
