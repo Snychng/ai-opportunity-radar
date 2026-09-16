@@ -25,6 +25,7 @@ _META = (
     "fact", "supporting_fact", "supports", "quote",
     "retracted", "status", "is_demo",
     "industry_ids", "evidence_role", "relevance_status", "window_status",
+    "task_id", "task_family_id", "task_family_ids",
     "object_identity", "identity_version", "source_item_id", "evidence_kind", "url_kind", "parent_url",
     "legacy_references", "published_at_interval", "published_at_raw", "semantic_relevance_status", "relevance_basis",
     "historical_import", "historical_reference_only",
@@ -328,7 +329,7 @@ def build_evidence_packet(evidence: Iterable[Mapping[str, Any]], *,
                   "semantic_validation": "not_performed", "truncated": any(omitted.values()) or any(
                       record["omitted_text_chars"] for record in selected.values()),
                   "limits": {"max_items": max_items, "max_chars": max_chars}, "serialized_chars": 0}
-        packet["selection_policy"] = "industry_source_role_diversity_v1"
+        packet["selection_policy"] = "task_industry_source_role_diversity_v2"
         while True:
             length = len(json.dumps(packet, ensure_ascii=False, separators=(",", ":")))
             if length == packet["serialized_chars"]:

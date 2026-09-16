@@ -251,6 +251,10 @@ coverage 2.0 分开统计 material、词面 related、页面 verified、语义 r
 
 `evidence-index` 与 `research-followup.review_queue` 保存未审阅材料；selected 仅表示进入阅读包。industry-packets 提供逐方向有界包。`completed` 是文件交接结束，不能等同于市场覆盖完整或客户需求已验证。
 
-## 4.3 用户观察与需求簇
+## 4.4 用户观察与需求簇
 
-benchmarks 输入可只包含 `observations`，每轮最多 2000 条。字段、标签与引用格式见[评论优先发现](comment-first-discovery.md)。程序核验原文和固定修订、日期、当前撤回状态，按规范化的 product/target_user/task/need 生成稳定 OBS/NEED 标识；相同引用和需求去重，冲突分类拒绝提交。`tiered.user_discovery` 保存完整观察与需求簇，原有 A/B/R/LEAD 数据和 report_version=1.1 保持兼容。`classification_status=host_classified`、`authenticity=not_independently_verified`、`market_validated=false` 不允许通过输入提升。
+`--observations-file` 可独立保存本轮 observations 快照；benchmarks 内的 observations 仍兼容，每轮合并后最多 2000 条。字段、标签、上限与引用格式见[任务优先发现](task-first-discovery.md)。user_discovery 2.0 不要求 product，按规范化的 target_user/task/constraints 生成 TASK，再加入 need 生成 NEED；OBS 由 NEED 及固定引用生成。products 只是上下文，相同原话的产品上下文合并，冲突分类拒绝提交。solution_hypotheses 只能为 hypothesis，不影响需求身份、独立用户数或正式候选计数。
+
+程序核验显式 evidence_id/revision_id/quote、原文位置、日期和失效状态。`tiered.user_discovery` 保存完整观察与需求簇，原有 A/B/R/LEAD 数据和 report_version=1.1 保持兼容；validator 按 user_discovery.version 使用对应身份规则，已保存 1.0 的 product/target_user/task/need 身份不会被新规则重算。`classification_status=host_classified`、`authenticity=not_independently_verified`、`market_validated=false` 不允许通过输入提升。
+
+公开扩展仅增加白名单统计：任务族、正向行为、产物观察及去重产物、交付假设计数和固定枚举分布，不输出私有正文。review-packets.manifest 保留主包引用、补读批次、未分配引用及原因，packet_generation_is_review=false；coverage 2.1 的 scope_defined/scope_gaps/task_gaps 保留范围和任务缺口，旧 2.0 覆盖数据继续按旧规则重验。

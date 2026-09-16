@@ -107,6 +107,7 @@ def start_research(home: Path, *, as_of: date, focus: str | None = None, scope: 
                    include_comments: bool = True, include_recent_activity: bool = False, concurrency: int = 3,
                    parent_run_id: str | None = None, evidence_files: list[Path] | None = None,
                    benchmarks_file: Path | None = None, assessment_file: Path | None = None,
+                   observations_file: Path | None = None,
                    profile_file: Path | None = None) -> dict:
     home = initialize_home(Path(home).expanduser().resolve())
     if parent_run_id:
@@ -132,12 +133,12 @@ def start_research(home: Path, *, as_of: date, focus: str | None = None, scope: 
     for kind, child in plan["retrieval_plans"].items():
         _artifact(directory, manifest, f"{kind}-plan", child)
     return resume_research(home, run_id, evidence_files=evidence_files, benchmarks_file=benchmarks_file,
-                           assessment_file=assessment_file, profile_file=profile_file)
+                           assessment_file=assessment_file, profile_file=profile_file, observations_file=observations_file)
 
 
 def _accept_inputs(directory: Path, manifest: dict, *, evidence_files: list[Path],
                    benchmarks_file: Path | None, assessment_file: Path | None,
-                   profile_file: Path | None) -> None:
+                   profile_file: Path | None, observations_file: Path | None = None) -> None:
     for path in evidence_files:
         payload = _input_envelope(_read(path), manifest, reused=True)
         digest = canonical_sha256(payload)
@@ -147,9 +148,15 @@ def _accept_inputs(directory: Path, manifest: dict, *, evidence_files: list[Path
             manifest["evidence_artifacts"].append(name)
             for downstream in ("expanded", "tiered", "report", "receipt"):
                 manifest["artifacts"].pop(downstream, None)
-    for name, path in (("benchmarks", benchmarks_file), ("assessment", assessment_file), ("profile", profile_file)):
+    for name, path in (("benchmarks", benchmarks_file), ("assessment", assessment_file), ("profile", profile_file),
+                       ("observations-input", observations_file)):
         if path is not None:
             payload = _read(path)
+            if name == "observations-input":
+                if set(payload) - {"schema_version", "run_id", "as_of", "observations"}:
+                    raise ValueError("observations-file 只接受运行元数据和 observations；产品假设不替代正式候选输入")
+                if not isinstance(payload.get("observations"), list) or len(payload["observations"]) > 2000:
+                    raise ValueError("observations-file 需要最多 2000 条 observations 数组")
             if name != "profile":
                 payload = _input_envelope(payload, manifest)
             _artifact(directory, manifest, name, payload)
@@ -157,6 +164,29 @@ def _accept_inputs(directory: Path, manifest: dict, *, evidence_files: list[Path
             for downstream in ("expanded", "tiered", "report", "receipt"):
                 manifest["artifacts"].pop(downstream, None)
     _save(directory, manifest)
+
+
+def _research_observations(manifest: dict) -> list[dict]:
+    """独立观察文件是可替换快照；兼容旧 benchmarks 输入，并合并完全重复的记录。"""
+    result, seen = [], set()
+    for name in ("observations-input", "benchmarks"):
+        if name not in manifest["artifacts"]:
+            continue
+        observations = _load_artifact(manifest, name).get("observations", [])
+        if not isinstance(observations, list) or len(observations) > 2000:
+            raise ValueError("observations 必须是最多 2000 条的数组")
+        for item in observations:
+            if not isinstance(item, dict) or not isinstance(item.get("evidence_refs"), list):
+                raise ValueError("用户观察必须是对象并包含 evidence_refs 数组")
+            if any(not isinstance(ref, dict) for ref in item["evidence_refs"]):
+                raise ValueError("用户观察引用必须为对象")
+            digest = canonical_sha256(item)
+            if digest not in seen:
+                result.append(item)
+                seen.add(digest)
+    if len(result) > 2000:
+        raise ValueError("合并后的 observations 超过 2000 条，请拆分研究")
+    return result
 
 
 def run_paid_batch(home: Path, run_id: str, plan_file: Path, *, max_cost_usd: float,
@@ -447,6 +477,8 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
     assessment = _load_artifact(manifest, "assessment") if "assessment" in manifest["artifacts"] else {}
     claims = assessment.get("claims") or []
     referenced_ids = {ref.get("evidence_id") for claim in claims for ref in claim.get("evidence_refs", [])}
+    observations = _research_observations(manifest)
+    referenced_ids.update(ref.get("evidence_id") for observation in observations for ref in observation["evidence_refs"])
     for judgment in assessment.get("scores", []):
         for basis in (judgment.get("score_basis") or {}).values():
             referenced_ids.update(ref.get("evidence_id") for ref in basis.get("evidence_refs", []))
@@ -478,15 +510,8 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
         for item in [*inputs.get("benchmarks", []), *inputs.get("leads", [])]:
             references.extend(item.get("evidence", []))
             references.extend((item.get("ai_value") or {}).get("evidence_refs", []))
-        observations = inputs.get("observations", [])
-        if not isinstance(observations, list) or len(observations) > 2000:
-            raise ValueError("observations 必须是最多 2000 条的数组")
-        for observation in observations:
-            if not isinstance(observation, dict) or not isinstance(observation.get("evidence_refs"), list):
-                raise ValueError("用户观察必须是对象并包含 evidence_refs 数组")
-            if any(not isinstance(ref, dict) for ref in observation["evidence_refs"]):
-                raise ValueError("用户观察引用必须为对象")
-            references.extend(observation["evidence_refs"])
+    for observation in observations:
+        references.extend(observation["evidence_refs"])
     known_revisions = {(r["evidence_id"], r["revision_id"]) for r in [*context, *superseded]}
     for ref in references:
         if not ref.get("revision_id"):
@@ -516,12 +541,37 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
         # 由持久日志选择最后有效复核；重放旧 assessment 不能覆盖后来 unrelated 的结论。
         context = library.apply_reviews(context, as_of=manifest["as_of"])
         latest_context = library.apply_reviews(latest_context, as_of=manifest["as_of"])
+    from aor.opportunity.needs import build_user_discovery
+    discovery = build_user_discovery(observations, context, as_of=manifest["as_of"], run_id=manifest["run_id"])
+    _artifact(directory, manifest, "user-discovery", discovery)
+    _artifact(directory, manifest, "observations-template", {**_metadata(manifest), "observations": []})
+    from aor.sources.task_discovery import build_task_followups, task_followup_intents
+    task_followups = build_task_followups(discovery, as_of=manifest["as_of"], run_id=manifest["run_id"])
+    _artifact(directory, manifest, "task-followup-plan", task_followups)
+    next_intents = task_followup_intents(task_followups)
+    if next_intents:
+        _artifact(directory, manifest, "task-followup-intents", next_intents)
+    else:
+        manifest["artifacts"].pop("task-followup-intents", None)
+        (directory / "task-followup-intents.json").unlink(missing_ok=True)
+    task_families = {}
+    for observation in discovery["observations"]:
+        for ref in observation["evidence_refs"]:
+            task_families.setdefault((ref["evidence_id"], ref["revision_id"]), set()).add(
+                observation.get("task_family_id") or observation["cluster_id"])
+    for row in context:
+        families = task_families.get((row["evidence_id"], row["revision_id"]))
+        if families:
+            row["task_family_ids"] = sorted(families)
     packet = build_evidence_packet(context, claims=claims, as_of=manifest["as_of"], run_id=manifest["run_id"],
                                    experiments=experiments, max_items=30, max_chars=18000)
     packet["reviewed_evidence_refs"] = [{k: row[k] for k in ("evidence_id", "revision_id")} for row in context if row.get("relevance_review")]
     _artifact(directory, manifest, "evidence-context", {**_metadata(manifest), "evidence": context})
     _artifact(directory, manifest, "evidence-packet", packet)
     _artifact(directory, manifest, "evidence-index", evidence_index(context, packet))
+    from aor.evidence.selection import build_review_packets
+    review_packets = build_review_packets(context, primary_packet=packet, as_of=manifest["as_of"], run_id=manifest["run_id"])
+    _artifact(directory, manifest, "review-packets", review_packets)
     _artifact(directory, manifest, "industry-packets", build_industry_packets(
         context, as_of=manifest["as_of"], run_id=manifest["run_id"], selected_industries=plan.get("selected_industries", [])))
     from aor.opportunity.exploration import lead_history
@@ -535,6 +585,9 @@ def _refresh_library(directory: Path, manifest: dict) -> tuple[list[dict], dict]
     index = evidence_index(context, packet)
     _artifact(directory, manifest, "research-followup", {**_metadata(manifest),
         "industry_tasks": coverage.get("tasks", []), "review_queue": index.get("review_queue", []),
+        "reading_batches": review_packets["manifest"], "task_followups": task_followups["summary"],
+        "task_followup_plan": str(directory / "task-followup-plan.json"),
+        "next_intent_plan": str(directory / "task-followup-intents.json") if next_intents else None,
         "completion_note": "保存报告不代表市场研究完整；按真实材料补齐需求、商业对标、替代与反证，缺失保持未知。"})
     return context, packet
 
@@ -567,7 +620,7 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
                     if key in source:
                         signal[key] = source[key]
     if not benchmarks.get("benchmarks"):
-        if not str(benchmarks.get("empty_reason") or "").strip() and not benchmarks.get("leads") and not benchmarks.get("observations"):
+        if not str(benchmarks.get("empty_reason") or "").strip() and not benchmarks.get("leads") and not _research_observations(manifest):
             raise ValueError("没有合格对标时请填写 empty_reason；无需编造候选")
         expanded = {**_metadata(manifest), "benchmarks": [], "candidates": [], "summary": {"raw": 0},
                     "warnings": [benchmarks.get("empty_reason") or "本轮只保留待验证线索，尚未建立收费对标"]}
@@ -588,7 +641,7 @@ def _prepare_tiered(directory: Path, manifest: dict) -> dict:
         lead.update(run_id=manifest["run_id"], as_of=manifest["as_of"])
     tiered["summary"]["research_leads"] = len(merged_leads)
     from aor.opportunity.needs import build_user_discovery
-    tiered["user_discovery"] = build_user_discovery(benchmarks.get("observations", []),
+    tiered["user_discovery"] = build_user_discovery(_research_observations(manifest),
         _load_artifact(manifest, "evidence-context")["evidence"], as_of=manifest["as_of"], run_id=manifest["run_id"])
     for key, tier in BUCKETS:
         for bucket in (tiered, tiered.get("overflow") or {}):
@@ -662,17 +715,18 @@ def reparse_run(home: Path, run_id: str) -> dict:
 
 def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | None = None,
                     benchmarks_file: Path | None = None, assessment_file: Path | None = None,
-                    profile_file: Path | None = None, collect: bool = True, intent_plan: dict | None = None) -> dict:
+                    profile_file: Path | None = None, observations_file: Path | None = None,
+                    collect: bool = True, intent_plan: dict | None = None) -> dict:
     directory = _run_dir(home, run_id)
     if not (directory / "run.json").exists():
         raise ValueError(f"找不到研究运行：{run_id}")
     with _run_lock(directory):
         manifest = _read(directory / "run.json")
         validate_run_as_of(manifest["run_id"], manifest["as_of"])
-        if manifest["status"] == "committing" and (evidence_files or benchmarks_file or assessment_file or profile_file or intent_plan):
+        if manifest["status"] == "committing" and (evidence_files or benchmarks_file or assessment_file or profile_file or observations_file or intent_plan):
             raise ValueError("报告正在恢复提交，先用原输入恢复完成；修订请另建研究运行")
         if manifest["status"] == "completed":
-            if evidence_files or benchmarks_file or assessment_file or profile_file or intent_plan:
+            if evidence_files or benchmarks_file or assessment_file or profile_file or observations_file or intent_plan:
                 raise ValueError("已提交研究保持不可变；使用 research --parent-run-id 创建补证运行")
             _render_deliverables(directory, _load_artifact(manifest, "report"))
             return inspect_run(home, run_id)
@@ -696,7 +750,7 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
             for name in ("report", "receipt", "community-results"):
                 manifest["artifacts"].pop(name, None)
         _accept_inputs(directory, manifest, evidence_files=evidence_files or [], benchmarks_file=benchmarks_file,
-                       assessment_file=assessment_file, profile_file=profile_file)
+                       assessment_file=assessment_file, profile_file=profile_file, observations_file=observations_file)
         if "history-context" not in manifest["artifacts"]:
             _, historical_packet = _refresh_library(directory, manifest)
             _artifact(directory, manifest, "history-context", historical_packet)
@@ -710,8 +764,9 @@ def resume_research(home: Path, run_id: str, *, evidence_files: list[Path] | Non
                             if community_plan.get("plan_status") == "needs_host_queries" else "")
             return _handoff(directory, manifest, "awaiting_benchmarks",
                             query_notice + "按 industry-coverage.json 检查未覆盖方向，执行 web_import-plan.json 的网页核验；"
-                            "阅读 evidence-packet.json 与完整 evidence-index.json。B 补需求行为，R 补迁移理由，A 补直接付款。"
-                            "先在 observations 记录产品、用户、任务、需求与原话引用，不要求收费或 AI 方案；"
+                            "阅读 evidence-packet.json、完整 evidence-index.json，并按 review-packets.json 分批补读。B 补需求行为，R 补迁移理由，A 补直接付款。"
+                            "先用 --observations-file 记录用户、任务、触发、绕行办法、产物与原话引用，产品可未知，不要求收费或 AI 方案；"
+                            "task-followup-plan.json 从观察生成下一轮检索；有意图时用 research --parent-run-id 配合 --intent-plan-file 新建后续运行。"
                             "已有 AI 假设时填 leads。按产品搜索可用 research --products-file；评论分页用 resume --comments-file --max-cost-usd。",
                             template={**_metadata(manifest), "benchmarks": [], "leads": [], "observations": [], "dimensions": {}, "empty_reason": None})
         tiered = _load_artifact(manifest, "tiered") if "tiered" in manifest["artifacts"] else _prepare_tiered(directory, manifest)

@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=3, help="新研究免费检索并发数，1–4")
     parser.add_argument("--evidence", type=Path, action="append", default=[])
     parser.add_argument("--benchmarks", type=Path)
+    parser.add_argument("--observations-file", type=Path, help="独立保存任务观察快照并生成后续检索，不要求产品、收费对标或 AI 方案")
     parser.add_argument("--assessment", type=Path)
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--paid-plan", type=Path, help="本轮明确缺口或评论补证计划")
@@ -52,7 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         inputs = {"evidence_files": args.evidence, "benchmarks_file": args.benchmarks,
-                  "assessment_file": args.assessment, "profile_file": args.profile}
+                  "assessment_file": args.assessment, "profile_file": args.profile,
+                  "observations_file": args.observations_file}
+        if args.observations_file and (args.action == "inspect" or args.discover or args.paid_plan):
+            raise ValueError("observations-file 用于 research/resume 的本地研究输入，不能与付费执行合并")
         intent = json.loads(args.intent_plan_file.read_text(encoding="utf-8")) if args.intent_plan_file else None
         if args.products_file:
             if args.action != "research" or intent:
@@ -62,12 +66,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.comments_file and (args.action != "resume" or not args.run_id or args.max_cost_usd is None
                                   or args.discover or args.paid_plan or args.reparse or args.offline or args.no_collect
                                   or args.recurring_budget or args.max_attempts != 1 or args.resolve_unknown or args.retry_failed
-                                  or args.benchmarks or args.assessment or args.profile or args.evidence or intent):
+                                  or args.benchmarks or args.assessment or args.profile or args.observations_file or args.evidence or intent):
             raise ValueError("评论分页使用 resume RUN_ID --comments-file FILE --max-cost-usd；失败/未知页面不自动重买")
         if args.recurring_budget and not (args.discover or args.paid_plan):
             raise ValueError("recurring-budget 仅适用于显式付费发现或补证")
         if args.reparse and (args.action != "resume" or not args.run_id or args.discover or args.paid_plan
-                             or args.benchmarks or args.assessment or args.evidence or args.profile or intent):
+                             or args.benchmarks or args.assessment or args.evidence or args.profile or args.observations_file or intent):
             raise ValueError("离线重解析使用 resume RUN_ID --reparse；补充研究输入请在返回的新运行继续")
         if args.discover and (args.action != "resume" or not args.run_id or args.max_cost_usd is None or args.paid_plan):
             raise ValueError("付费发现需要 resume RUN_ID --discover --max-cost-usd，不能同时指定 paid-plan")
