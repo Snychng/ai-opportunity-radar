@@ -255,6 +255,15 @@ class RequestJournal:
             )
 
 
+def batch_registered(path: str | Path, batch_id: str) -> bool:
+    """计划落盘不代表执行器已登记批次；预检失败后据真实 journal 决定恢复方式。"""
+    path = Path(path).expanduser().resolve()
+    if not path.exists():
+        return False
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+        return db.execute("SELECT 1 FROM batches WHERE batch_id=?", (batch_id,)).fetchone() is not None
+
+
 def read_run_ledger(path: str | Path) -> dict[str, Any]:
     """只读账本，供 runner 读取跨批累计金额；不恢复状态，也不发起网络请求。"""
     path = Path(path).expanduser().resolve()

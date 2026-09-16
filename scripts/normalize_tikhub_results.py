@@ -22,7 +22,7 @@ from aor.text import language as _language
 from aor.evidence.quality import assess_quality, aggregate_status, mark_reposts, research_window
 
 
-PARSER_VERSION = "2.2.0"
+PARSER_VERSION = "2.2.1"
 
 PHASE_ONE_SOURCES = (
     "tiktok",
@@ -654,7 +654,14 @@ def _comment_text(row: dict[str, Any]) -> str | None:
 
 
 def _comment_id(row: dict[str, Any], parent: str | None = None, post: str | None = None) -> str:
-    return _clean_text(_first(*(row.get(key) for key in ("comment_id", "cid", "reply_id", "id", "id_str", "rest_id", "pk"))), limit=300) or canonical_sha256({"post": post, "parent": parent, "text": _comment_text(row)})[:20]
+    return _clean_text(_first(*(row.get(key) for key in ("comment_id", "cid", "reply_id", "id", "id_str", "rest_id", "tweet_id", "pk"))), limit=300) or canonical_sha256({"post": post, "parent": parent, "text": _comment_text(row)})[:20]
+
+
+def _is_twitter_comment(row: dict[str, Any], selected_item_id: str) -> bool:
+    """排除原帖和接口混入的独立转引帖；不把会话根 ID 当成直接父评论。"""
+    identity = _comment_id(row)
+    conversation = _clean_text(_first(row.get("conversation_id"), row.get("conversation_id_str")), limit=300)
+    return identity != selected_item_id.split(":")[-1] and conversation != identity
 
 
 def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> list[dict[str, Any]]:
@@ -668,7 +675,7 @@ def _extract_comment_items(data: dict[str, Any], selected_item_id: str = "") -> 
             for index, child in enumerate(value):
                 visit(child, parent, f"{pointer}/{index}", depth + 1)
         elif isinstance(value, dict):
-            is_comment = _comment_text(value) and any(key in value for key in ("comment_id", "cid", "reply_id", "id", "id_str", "rest_id", "pk", "author", "user", "create_time", "created_at"))
+            is_comment = _comment_text(value) and any(key in value for key in ("comment_id", "cid", "reply_id", "id", "id_str", "rest_id", "tweet_id", "pk", "author", "user", "create_time", "created_at"))
             next_parent = parent
             if is_comment:
                 row = dict(value)
@@ -976,7 +983,7 @@ def normalize_documents(
                 raw_comments = _extract_comment_items(data, selected_item_id)
                 root_count = 0
                 if source == "twitter":
-                    filtered = [row for row in raw_comments if _comment_id(row) != selected_item_id.split(":")[-1]]
+                    filtered = [row for row in raw_comments if _is_twitter_comment(row, selected_item_id)]
                     root_count = len(raw_comments) - len(filtered)
                     raw_comments = filtered
                 normalized_count = 0

@@ -607,14 +607,14 @@ def _is_sensitive_key(key: object) -> bool:
     return any(part in normalized for part in SENSITIVE_KEY_PARTS)
 
 
-def _validate_scalar(value: Any, *, location: str) -> None:
+def _validate_scalar(value: Any, *, location: str, max_string_length: int = 500) -> None:
     if value is None or isinstance(value, (bool, int)):
         return
     if isinstance(value, float) and math.isfinite(value):
         return
-    if isinstance(value, str) and len(value) <= 500:
+    if isinstance(value, str) and len(value) <= max_string_length:
         return
-    raise PlanError(f"{location} 只允许长度不超过 500 的标量值")
+    raise PlanError(f"{location} 只允许长度不超过 {max_string_length} 的标量值")
 
 
 def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -713,7 +713,8 @@ def validate_plan(plan: dict[str, Any], pricing_rows: Iterable[dict[str, Any]]) 
                 raise PlanError(f"请求 {request_id} 禁止携带敏感参数：{key}")
             if key not in profile["allowed_params"]:
                 raise PlanError(f"请求 {request_id} 包含未允许参数：{key}")
-            _validate_scalar(value, location=f"请求 {request_id} 参数 {key}")
+            _validate_scalar(value, location=f"请求 {request_id} 参数 {key}",
+                             max_string_length=4096 if stage == "comment_deep_dive" and key == "cursor" else 500)
         if stage in {"search_discovery", "evidence_gap_verification"}:
             query_scope = item.get("query_scope", {})
             if not isinstance(query_scope, dict) or set(query_scope) - {"country", "language"}:

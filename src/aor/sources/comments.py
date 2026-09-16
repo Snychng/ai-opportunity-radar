@@ -134,7 +134,7 @@ def _reply_request(item: dict, comment_id: str) -> dict | None:
 
 def advance_collection(state: dict, execution: dict) -> dict:
     """消费一批已经保存的执行结果，产生可恢复的下一批，不发送网络。"""
-    from normalize_tikhub_results import _extract_comment_items, _comment_id, _upstream_error
+    from normalize_tikhub_results import _extract_comment_items, _comment_id, _is_twitter_comment, _upstream_error
     result = deepcopy(state)
     pending = {r["id"]: r for r in result["pending"][:100]}
     next_requests = deepcopy(result["pending"][100:])
@@ -162,7 +162,7 @@ def advance_collection(state: dict, execution: dict) -> dict:
             continue
         rows = _extract_comment_items(data, item["selected_item_id"])
         if item["source"] == "twitter":
-            rows = [r for r in rows if _comment_id(r) != item["selected_item_id"].split(":")[-1]]
+            rows = [r for r in rows if _is_twitter_comment(r, item["selected_item_id"])]
         record.update(page_metadata(data))
         post_key = item["source"] + ":" + item["selected_item_id"]
         known = set(result["seen_comments"].get(post_key, []))
