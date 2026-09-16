@@ -1,6 +1,6 @@
 # 评论优先的产品研究
 
-4.3 把「用户说了什么」放在商业筛选之前：产品发现 → 相关帖子 → 评论与回复 → 用户观察 OBS → 需求簇 NEED → LEAD → A/B。OBS/NEED 不要求收费对标、AI 方案或 30 天 MVP；后续商业候选保留既有门槛。程序核验原文绑定，宿主负责语义与产品关联，不自动证明身份、购买、退款或市场成立。
+4.3 引入产品评论 → 用户观察 OBS → 需求簇 NEED → LEAD → A/B；4.4 同时支持[任务优先发现](task-first-discovery.md)。OBS/NEED 不要求已知产品、收费对标、AI 方案或 30 天 MVP；后续商业候选保留既有门槛。程序核验原文绑定，宿主负责语义与产品关联，不自动证明身份、购买、退款或市场成立。
 
 ## 1. 按产品扩展查询
 
@@ -76,7 +76,7 @@ aor resume RUN_ID --comments-file comments.json --max-cost-usd AMOUNT --batch-id
 
 ## 3. 原文、观察与需求簇
 
-对原始评论做宿主语义审阅后，通过 benchmarks 输入的 observations 提交；原有 benchmarks/leads 仍兼容。可以只提交 observations，再按 assessment 模板完成本轮判断。
+对原始评论做宿主语义审阅后，可先用 `resume RUN_ID --observations-file FILE` 保存观察快照并生成后续查询，保持 awaiting_benchmarks；也可通过 benchmarks 输入的 observations 提交。原有 benchmarks/leads 仍兼容；需要完成报告时继续 benchmarks/assessment 流程。
 
 ```json
 {
@@ -97,11 +97,11 @@ aor resume RUN_ID --comments-file comments.json --max-cost-usd AMOUNT --batch-id
 }
 ```
 
-每条观察需要 product、target_user、task、need、industry_ids 和 1–20 个固定修订引用，单轮最多 2000 条；quote 必须在可见日期内的该修订原文中准确定位。当前撤回、失效或修订变化须重新复核，不能用旧原话维持当前结论。
+2.0 每条观察需要 target_user、task、need、industry_ids 和 1–20 个固定修订引用，product 可省略，products 可保留多个产品上下文，单轮最多 2000 条；quote 必须在可见日期内的该修订原文中准确定位。当前撤回、失效或修订变化须重新复核，不能用旧原话维持当前结论。新增 trigger/current_workaround/desired_outcome/artifact/constraints 与正向行为字段，详见[完整任务契约](task-first-discovery.md)。
 
-feedback_type 允许 usage、purchase_claim、refund_claim、recommendation_request、promotion、official_response、suspected_spam、unknown；sentiment 为 positive/negative/mixed/neutral/unknown。不能凭关键词自动将帖子标为真实付费用户。前四类的非演示观察可进入需求簇，其他材料仍保留在观察层。
+feedback_type 允许 usage、purchase_claim、refund_claim、recommendation_request、positive_behavior、promotion、official_response、suspected_spam、unknown；sentiment 为 positive/negative/mixed/neutral/unknown。不能凭关键词自动将帖子标为真实付费用户。前五类的非演示观察可进入需求簇，其他材料仍保留在观察层。
 
-相同规范化的产品、人群、任务和需求归为 NEED；不同表达是否是同一需求由宿主规范化，不做无依据的自动语义归并。同一原文可以支持多个不同需求；观察数不等于评论数或人数。OBS 由需求及固定引用生成，重复输入幂等，冲突分类要求合并。需求簇固定 needs_verification、market_validated=false、independent_user_count=null。
+2.0 以规范化的人群、任务、明确约束组成 TASK，再加需求形成 NEED，产品只作为上下文；已保存的 1.0 数据仍按原产品身份规则核验，不重算旧报告。不同表达是否是同一需求由宿主规范化，不做无依据的自动语义归并。同一原文可以支持多个不同需求；观察数不等于评论数或人数。OBS 由需求及固定引用生成，重复输入幂等，冲突分类要求合并。需求簇固定 needs_verification、market_validated=false、independent_user_count=null。solution_hypotheses 只能为 hypothesis，不增加需求数或已验证商业事实。
 
 报告保留原话、证据 ID/修订和归组，完整私有结构写入 `state/user-discovery/RUN_ID.json`。公开 `extensions.user_discovery` 只导出统计，不导出未发布复核的评论、用户或需求正文。等收费对标、AI 增量和验证路径明确后，再进入 LEAD/A/B。
 

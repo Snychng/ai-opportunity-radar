@@ -34,7 +34,7 @@
         "zhihu"
       ]
     },
-    "catalog_version": "2.0",
+    "catalog_version": "3.0",
     "subtracks": [
       {
         "id": "product_media",
@@ -198,6 +198,118 @@
           "counter_evidence"
         ]
       }
+    ],
+    "discovery_entries": [
+      {
+        "id": "first_fair",
+        "lens": "event",
+        "name": "首次市集备货",
+        "audience": "首次参加市集的小卖家",
+        "job_to_be_done": "准备首场市集的数量、包装和价格标签",
+        "artifact": "备货表和摊位清单",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "first craft fair how much inventory packing price labels"
+          ],
+          "zh": [
+            "第一次 摆摊 市集 备货 数量 包装 价签"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "custom_order_cards",
+        "lens": "workflow",
+        "name": "定制订单制作交接",
+        "audience": "接个性化订单的卖家",
+        "job_to_be_done": "把消息里的尺寸、数量和改稿整理到制作单",
+        "artifact": "每单表格和确认截图",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "custom orders spreadsheet personalization messages keep track"
+          ],
+          "zh": [
+            "定制 订单 每单 表格 尺寸 改稿 聊天 记录"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "returns_timeline",
+        "lens": "artifact",
+        "name": "退货材料整理",
+        "audience": "处理退货争议的小卖家",
+        "job_to_be_done": "按订单整理实拍、发货与沟通记录",
+        "artifact": "退货截图和发货照片",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "seller refund dispute screenshots shipping photos timeline"
+          ],
+          "zh": [
+            "卖家 退款 申诉 截图 发货 照片 整理"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "repeat_customers",
+        "lens": "positive",
+        "name": "老客复购与感谢",
+        "audience": "经营小店的手工卖家",
+        "job_to_be_done": "记住客户偏好并完成个性化回礼",
+        "artifact": "复购备注和感谢卡",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "repeat customers handmade shop remember preferences thank you notes"
+          ],
+          "zh": [
+            "手工 小店 老客 复购 偏好 备注 感谢卡"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "synthetic_product_images",
+        "lens": "capability_change",
+        "name": "生成商品图与实物差异",
+        "audience": "使用生成图片展示商品的卖家和买家",
+        "job_to_be_done": "核实展示效果与实际交付是否一致",
+        "artifact": "商品图与实拍对照",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "AI product images actual item different customer returns"
+          ],
+          "zh": [
+            "AI 商品图 实物 不一样 买家 退货"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      }
     ]
   },
   {
@@ -235,7 +347,7 @@
         "xiaohongshu"
       ]
     },
-    "catalog_version": "2.0",
+    "catalog_version": "3.0",
     "subtracks": [
       {
         "id": "teammate_matching",
@@ -399,6 +511,118 @@
           "counter_evidence"
         ]
       }
+    ],
+    "discovery_entries": [
+      {
+        "id": "campaign_return",
+        "lens": "event",
+        "name": "停团后重新开团",
+        "audience": "暂停数月后继续游戏的团体",
+        "job_to_be_done": "重新找回人物关系、承诺和未完线索",
+        "artifact": "上次记录和角色关系图",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "DnD returning after months campaign recap forgotten clues"
+          ],
+          "zh": [
+            "跑团 停团 几个月 重新开团 忘记 剧情 线索"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "session_handoff",
+        "lens": "workflow",
+        "name": "跑团记录接续",
+        "audience": "边主持边记录的游戏主持人",
+        "job_to_be_done": "游戏后整理决策并为下一次准备",
+        "artifact": "录音和手写笔记",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "DnD session notes while playing recording recap next session"
+          ],
+          "zh": [
+            "跑团 主持 边玩 记笔记 录音 复盘 下次"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "raid_roster",
+        "lens": "artifact",
+        "name": "团队活动排班",
+        "audience": "组织固定团队游戏的玩家",
+        "job_to_be_done": "协调时间、替补与不同角色需求",
+        "artifact": "排班表和候补名单",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "raid roster spreadsheet availability substitute roles schedule"
+          ],
+          "zh": [
+            "游戏 固定队 排班 表格 替补 时间 职业"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "campaign_newspaper",
+        "lens": "positive",
+        "name": "故事共创与分享",
+        "audience": "喜欢制作世界观物料的玩家",
+        "job_to_be_done": "把共同冒险做成可收藏和分享的纪念",
+        "artifact": "世界内报纸和冒险日志",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "DnD campaign newspaper player journal handmade keepsake"
+          ],
+          "zh": [
+            "跑团 报纸 玩家 日志 世界观 纪念 分享"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "speaker_character_mapping",
+        "lens": "capability_change",
+        "name": "转写中的玩家与角色",
+        "audience": "用录音回顾游戏的玩家",
+        "job_to_be_done": "区分玩家、角色名和虚构地点并回查原话",
+        "artifact": "有说话人标签的转写",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "DnD transcription wrong character names speakers corrections"
+          ],
+          "zh": [
+            "跑团 AI 转写 角色名 说话人 错误 修正"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      }
     ]
   },
   {
@@ -436,7 +660,7 @@
         "wechat_search"
       ]
     },
-    "catalog_version": "2.0",
+    "catalog_version": "3.0",
     "subtracks": [
       {
         "id": "video_editing",
@@ -600,6 +824,118 @@
           "counter_evidence"
         ]
       }
+    ],
+    "discovery_entries": [
+      {
+        "id": "wedding_group_list",
+        "lens": "event",
+        "name": "婚礼合影执行",
+        "audience": "准备婚礼的新人和摄影师",
+        "job_to_be_done": "把亲友关系整理为现场可执行的合影顺序",
+        "artifact": "合影名单和点名表",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "wedding family photo list names groups organizing"
+          ],
+          "zh": [
+            "婚礼 合影 名单 姓名 亲友 分组 顺序"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "pattern_resume",
+        "lens": "workflow",
+        "name": "手作创作进度接续",
+        "audience": "按图解制作手工作品的创作者",
+        "job_to_be_done": "中断后恢复行数、修改和下一步",
+        "artifact": "图解上的标记和修改笔记",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "crochet pattern lose row count modifications resume project"
+          ],
+          "zh": [
+            "钩织 图解 忘记 行数 修改 继续 作品"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "client_revision_log",
+        "lens": "artifact",
+        "name": "创作改稿记录",
+        "audience": "接委托的设计和视频创作者",
+        "job_to_be_done": "追踪分散反馈对应的版本和确认情况",
+        "artifact": "改稿表和批注截图",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "client revisions spreadsheet version notes approval screenshots"
+          ],
+          "zh": [
+            "客户 改稿 表格 版本 批注 截图 确认"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "project_reproduction",
+        "lens": "positive",
+        "name": "作品复现与分享",
+        "audience": "记录作品过程的创作者",
+        "job_to_be_done": "保存成功材料、参数和个人修改供以后复现",
+        "artifact": "作品日志和材料卡",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "finished craft project journal materials modifications make again"
+          ],
+          "zh": [
+            "完成 作品 日志 材料 修改 复刻 分享"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "generated_continuity",
+        "lens": "capability_change",
+        "name": "生成内容连续性",
+        "audience": "用生成视频做系列内容的创作者",
+        "job_to_be_done": "追踪人物与场景变动并补齐不一致镜头",
+        "artifact": "分镜表和人物参考图",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "AI video character continuity storyboard reference corrections"
+          ],
+          "zh": [
+            "AI 视频 人物 一致性 分镜 参考图 修正"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      }
     ]
   },
   {
@@ -637,7 +973,7 @@
         "zhihu"
       ]
     },
-    "catalog_version": "2.0",
+    "catalog_version": "3.0",
     "subtracks": [
       {
         "id": "language_practice",
@@ -801,6 +1137,118 @@
           "counter_evidence"
         ]
       }
+    ],
+    "discovery_entries": [
+      {
+        "id": "conference_questions",
+        "lens": "event",
+        "name": "首次学术报告问答",
+        "audience": "第一次参加会议报告的研究者",
+        "job_to_be_done": "根据自己论文准备方法、实验和局限的追问",
+        "artifact": "论文与问答准备清单",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "first conference presentation questions methodology limitations prepare"
+          ],
+          "zh": [
+            "第一次 学术会议 报告 提问 方法 实验 局限 准备"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "lesson_handoff",
+        "lens": "workflow",
+        "name": "课程之间的接续",
+        "audience": "有多名学生的教师与复习者",
+        "job_to_be_done": "记下最后达成的作业和下次目标并找回",
+        "artifact": "课后笔记与作业表",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "tutor lesson notes homework next lesson spreadsheet"
+          ],
+          "zh": [
+            "老师 课后 笔记 作业 下节课 表格 记录"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "mistake_journal",
+        "lens": "artifact",
+        "name": "错题与练习记录",
+        "audience": "准备考试和技能考核的学习者",
+        "job_to_be_done": "从错题本看清反复错误及已掌握内容",
+        "artifact": "错题本和练习日志",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "exam mistake notebook spreadsheet recurring errors review"
+          ],
+          "zh": [
+            "考试 错题本 表格 反复 错误 复习 记录"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "reading_club_completion",
+        "lens": "positive",
+        "name": "共同阅读与完成",
+        "audience": "参加读书会和学习小组的人",
+        "job_to_be_done": "保持投入、分享发现并完成一个阶段",
+        "artifact": "共读进度和讨论卡",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "book club finished reading notes accountability discussion cards"
+          ],
+          "zh": [
+            "读书会 共读 完成 进度 阅读笔记 分享"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "practice_transfer",
+        "lens": "capability_change",
+        "name": "练习工具与真实应用",
+        "audience": "使用 AI 对话练习语言的学习者",
+        "job_to_be_done": "核对练习反馈能否迁移到真实交流",
+        "artifact": "练习记录与真实会话复盘",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "AI language practice real conversation feedback limitations"
+          ],
+          "zh": [
+            "AI 口语 练习 真实 交流 反馈 问题"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      }
     ]
   },
   {
@@ -838,7 +1286,7 @@
         "zhihu"
       ]
     },
-    "catalog_version": "2.0",
+    "catalog_version": "3.0",
     "subtracks": [
       {
         "id": "photo_memories",
@@ -1002,6 +1450,118 @@
           "counter_evidence"
         ]
       }
+    ],
+    "discovery_entries": [
+      {
+        "id": "moving_box_retrieval",
+        "lens": "event",
+        "name": "搬家后找物",
+        "audience": "正在搬家和整理家庭的个人",
+        "job_to_be_done": "装箱后按物品找回所在箱子",
+        "artifact": "箱子照片和编号清单",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "moving boxes inventory photos cannot find things"
+          ],
+          "zh": [
+            "搬家 箱子 照片 编号 清单 找不到 东西"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "renovation_changes",
+        "lens": "workflow",
+        "name": "装修报价变更确认",
+        "audience": "异地跟进装修的屋主",
+        "job_to_be_done": "核对品牌、数量、工艺与追加项目",
+        "artifact": "报价表与聊天变更记录",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "renovation quote changes spreadsheet materials quantities remote"
+          ],
+          "zh": [
+            "异地 装修 报价 表格 材料 数量 增项 记录"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "sewing_pattern_archive",
+        "lens": "artifact",
+        "name": "手作材料与图纸整理",
+        "audience": "积累材料和图纸的爱好者",
+        "job_to_be_done": "找回已拥有的图纸并核对适配材料",
+        "artifact": "布料表、封面图与 PDF",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "sewing patterns fabric stash spreadsheet cover images filenames"
+          ],
+          "zh": [
+            "缝纫 纸样 布料 表格 封面 文件名 整理"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "family_handwriting_book",
+        "lens": "positive",
+        "name": "家庭手稿纪念",
+        "audience": "整理长辈遗留手稿的家庭成员",
+        "job_to_be_done": "保存手迹和故事并制成家人能分享的书",
+        "artifact": "手写食谱和相册",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "grandmother handwritten recipes family cookbook scanning printing"
+          ],
+          "zh": [
+            "祖母 手写 食谱 家庭 纪念册 扫描 印刷"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "photo_identity_preservation",
+        "lens": "capability_change",
+        "name": "修复照片保留本人样貌",
+        "audience": "修复家庭旧照片的人",
+        "job_to_be_done": "去除损伤同时保留真实面部细节",
+        "artifact": "原照与修复结果对照",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "AI photo restoration changes relatives faces preserve original"
+          ],
+          "zh": [
+            "AI 老照片 修复 亲人 变脸 保留 原貌"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      }
     ]
   },
   {
@@ -1039,7 +1599,7 @@
         "wechat_search"
       ]
     },
-    "catalog_version": "2.0",
+    "catalog_version": "3.0",
     "subtracks": [
       {
         "id": "personal_search",
@@ -1202,6 +1762,118 @@
           "alternative",
           "counter_evidence"
         ]
+      }
+    ],
+    "discovery_entries": [
+      {
+        "id": "community_handover",
+        "lens": "event",
+        "name": "社群管理员交接",
+        "audience": "刚接手社区的组织者",
+        "job_to_be_done": "找回规则、待办和历史约定供新人继续",
+        "artifact": "交接清单和置顶消息",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "new community moderator handover rules old messages checklist"
+          ],
+          "zh": [
+            "新 管理员 社群 交接 规则 历史 消息 清单"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "saved_story_retrieval",
+        "lens": "workflow",
+        "name": "按情节找回收藏",
+        "audience": "积累大量故事与文章的读者",
+        "job_to_be_done": "用记住的片段找回读过的作品",
+        "artifact": "收藏、标签与手工表格",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "fanfiction bookmarks spreadsheet remember scene find story"
+          ],
+          "zh": [
+            "同人文 收藏 表格 记得 情节 找文"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "newsletter_notebook",
+        "lens": "artifact",
+        "name": "订阅主题回溯",
+        "audience": "长期阅读多个订阅源的读者",
+        "job_to_be_done": "追踪一个主题在不同时间的来源",
+        "artifact": "邮件摘录和主题索引",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "newsletter reading notes topic index spreadsheet archive"
+          ],
+          "zh": [
+            "订阅 邮件 阅读笔记 主题 索引 表格"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "shared_collections",
+        "lens": "positive",
+        "name": "收藏与推荐分享",
+        "audience": "分享兴趣清单的社区成员",
+        "job_to_be_done": "把个人收藏整理成可理解的推荐",
+        "artifact": "推荐单与收藏批注",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "share curated collection favorites annotated recommendations"
+          ],
+          "zh": [
+            "分享 收藏 清单 喜欢 推荐 批注"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
+      },
+      {
+        "id": "small_app_permissions",
+        "lens": "capability_change",
+        "name": "自建应用共享边界",
+        "audience": "用生成工具做小应用的非技术团队",
+        "job_to_be_done": "分享应用前厘清谁能看见和修改数据",
+        "artifact": "分享链接与权限清单",
+        "existing_behavior_to_verify": "核验用户原文中的触发事件、实际操作、现成替代和未采用原因；付款与产品判断留给后续阶段",
+        "queries": {
+          "en": [
+            "vibe coded app sharing data access permissions team"
+          ],
+          "zh": [
+            "AI 做应用 分享 数据 访问 权限 团队"
+          ]
+        },
+        "manual_sources": [
+          "web"
+        ],
+        "spend_status": "research_question_not_established",
+        "hypothesis_status": "retrieval_seed_not_observed_demand"
       }
     ]
   }

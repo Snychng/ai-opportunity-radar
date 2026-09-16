@@ -10,6 +10,9 @@ from pathlib import Path
 
 from .registry import TIKHUB_SOURCES, source_catalog
 
+DISCOVERY_LENSES = ("event", "workflow", "artifact", "positive", "capability_change")
+DISCOVERY_CHECKS = ["recent_user_behavior", "existing_alternative", "non_adoption_reason", "counter_evidence"]
+
 
 def load_industries(home: Path | None = None) -> list[dict]:
     """内置目录可由 DATA_HOME/config/industries.json 同 ID 覆盖或新增。"""
@@ -44,8 +47,11 @@ def validate_industry(row: dict) -> None:
     subtracks = row.get("subtracks", [])
     if not isinstance(subtracks, list) or len(subtracks) > 50:
         raise ValueError("subtracks 必须是最多 50 项的数组")
+    entries = row.get("discovery_entries", [])
+    if not isinstance(entries, list) or len(entries) > 50:
+        raise ValueError("discovery_entries 必须是最多 50 项的数组")
     seen = set()
-    for task in subtracks:
+    for task in [*subtracks, *entries]:
         identifier = task.get("id") if isinstance(task, dict) else None
         if not isinstance(identifier, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,35}", identifier) or identifier in seen:
             raise ValueError("子赛道 id 必须合法且在行业内唯一")
@@ -57,6 +63,8 @@ def validate_industry(row: dict) -> None:
             queries = task.get("queries", {}).get(language)
             if not isinstance(queries, list) or not queries or any(not isinstance(q, str) or not 1 <= len(q.strip()) <= 100 for q in queries):
                 raise ValueError("子赛道必须包含中英文查询")
+        if task in entries and task.get("lens") not in DISCOVERY_LENSES:
+            raise ValueError("discovery_entries.lens 必须是已定义的任务发现入口")
         known_sources = {r["source"] for r in source_catalog()}
         if not set(task.get("manual_sources", [])) <= known_sources:
             raise ValueError("子赛道人工来源必须来自已有来源目录")
@@ -100,7 +108,7 @@ def _history(home: Path, run_id: str) -> dict:
                 ignored += 1
                 continue
             snapshot = json.loads(path.read_text(encoding="utf-8"))
-            if snapshot.get("version") != "2.0":
+            if snapshot.get("version") not in {"2.0", "2.1"}:
                 continue
             consulted += 1
             for row in snapshot.get("tasks", []):
@@ -118,11 +126,19 @@ def _history(home: Path, run_id: str) -> dict:
     return {"tasks": tasks, "snapshots_consulted": consulted, "ignored_snapshots": ignored}
 
 
-def _task_for(row: dict, language: str, as_of: date, history: dict) -> tuple[dict, dict]:
-    tasks = row.get("subtracks") or [{"id": "general", "name": row["name"], "audience": row["audience"],
+def catalog_tasks(row: dict) -> list[dict]:
+    """交错保留新增发现入口和原有子赛道；旧目录的任务集合与顺序不变。"""
+    entries, subtracks = row.get("discovery_entries", []), row.get("subtracks", [])
+    tasks = [group[index] for index in range(max(len(entries), len(subtracks)))
+             for group in (entries, subtracks) if index < len(group)]
+    return tasks or [{"id": "general", "name": row["name"], "audience": row["audience"],
         "queries": row["queries"], "job_to_be_done": row["demand_model"],
         "existing_behavior_to_verify": "核验已有使用与支出行为", "manual_sources": ["web"]}]
-    rotation = as_of.toordinal() % len(tasks)
+
+
+def _task_for(row: dict, language: str, as_of: date, history: dict, *, offset: int = 0) -> tuple[dict, dict]:
+    tasks = catalog_tasks(row)
+    rotation = (as_of.toordinal() + offset) % len(tasks)
     def rank(pair):
         index, task = pair
         state = history.get("tasks", {}).get((f"{row['id']}.{task['id']}", language), {})
@@ -155,7 +171,7 @@ def build_industry_discovery(*, as_of: date, run_id: str, home: Path,
     for index, row in enumerate(active):
         chosen = {}
         for language in ("en", "zh"):
-            task, state = _task_for(row, language, as_of, history)
+            task, state = _task_for(row, language, as_of, history, offset=index)
             chosen[language] = task
             query = task["queries"][language][as_of.toordinal() % len(task["queries"][language])]
             choices = [s for s in row["sources"][language] if s in planned_sources]
@@ -167,6 +183,9 @@ def build_industry_discovery(*, as_of: date, run_id: str, home: Path,
             origin = {"id": identifier, "industry_ids": [row["id"]], "subtrack_ids": [task["id"]],
                       "task_id": task_id, "search_query": query, "question": task["job_to_be_done"],
                       "candidate_gaps": list(state.get("review_gaps", [])),
+                      "discovery_lens": task.get("lens", "legacy_seed"),
+                      "artifact_to_verify": task.get("artifact"), "required_checks": DISCOVERY_CHECKS,
+                      "hypothesis_status": "retrieval_seed_not_observed_demand",
                       "evidence_type": "workflow_pain" if row["demand_model"] == "efficiency" else "usage_behavior",
                       "locale": locale}
             tasks.append({**origin, "language": language, "status": "planned" if choices else "not_scheduled",
@@ -183,38 +202,41 @@ def build_industry_discovery(*, as_of: date, run_id: str, home: Path,
             alternatives = []
             for item in child["requests"]:
                 item.update(provenance=[origin], industry_ids=[row["id"]], subtrack_ids=[task["id"]],
-                            task_id=task_id, research_priority=priority, ranking_query=task["job_to_be_done"])
+                            task_id=task_id, discovery_lens=origin["discovery_lens"],
+                            research_priority=priority, ranking_query=task["job_to_be_done"])
                 alternatives.append(item)
             primary = alternatives[0]
             for alternate in alternatives[1:]:
                 alternate["fallback_for_request_id"] = primary["id"]
             primary["fallback_requests"] = alternatives[1:]
             requests.append(primary)
-        task = chosen["zh" if (as_of.toordinal() + index) % 2 else "en"]
+        manual_language = "zh" if (as_of.toordinal() + index) % 2 else "en"
+        task = chosen[manual_language]
         imports.append({"id": row["id"] + "-web", "industry_ids": [row["id"]], "subtrack_ids": [task["id"]],
                         "task_id": f"{row['id']}.{task['id']}", "source": "web",
-                        "question": f"核验{task['name']}的用户原文、收费对标、免费替代与反证",
-                        "search_query": task["queries"]["en"][0], "evidence_type": "product_review",
-                        "locale": {"country": "unknown", "language": "en"},
+                        "question": f"核验{task['name']}的用户操作、产物、现成替代和未采用原因",
+                        "search_query": task["queries"][manual_language][0], "evidence_type": "usage_behavior",
+                        "locale": {"country": "CN" if manual_language == "zh" else "unknown", "language": manual_language},
+                        "discovery_lens": task.get("lens", "legacy_seed"),
                         "suggested_sources": task.get("manual_sources", ["web"]),
-                        "required_checks": ["recent_user_behavior", "commercial_benchmark", "alternative", "counter_evidence"],
+                        "required_checks": DISCOVERY_CHECKS,
                         "status": "host_verification_required", "automatic_fetch": False})
     if paid is None:
         paid = {"schema_version": "3.0", "provider": "tikhub", "run_id": run_id, "as_of": as_of.isoformat(),
                 "stage": "search_discovery", "cost_policy": {"max_attempts": 1}}
     paid["requests"] = requests
     paid["skipped_requests"] = unavailable
-    paid["catalog_version"] = "2.0"
+    paid["catalog_version"] = "3.0"
     paid["research_tasks"] = tasks
     paid["selection_history"] = {k: v for k, v in history.items() if k != "tasks"}
-    paid["discovery_objective"] = "六方向普通用户任务、真实行为、商业对标及反证；不预设每方向必须产出线索"
+    paid["discovery_objective"] = "从事件、操作、用户产物、正向行为与能力变化发现任务；核验替代与未采用原因，后续再判断产品和付款"
     paid["cost_policy"].update(purpose="cross_industry_discovery", explicit_budget_required=True)
     community = build_community_plan(as_of=as_of.isoformat(), run_id=run_id, focus_name="全球与中国")
     templates = {r["source"]: r for r in community["requests"]}
     community["requests"] = []
     for i in range(min(3, len(active))):
         row = active[(as_of.toordinal() * 3 + i) % len(active)]
-        task, _ = _task_for(row, "en", as_of, history)
+        task, _ = _task_for(row, "en", as_of, history, offset=active.index(row))
         query = task["queries"]["en"][0]
         origin = {"id": f"hn-{row['id']}", "industry_ids": [row["id"]], "subtrack_ids": [task["id"]],
                   "task_id": f"{row['id']}.{task['id']}", "search_query": query,
@@ -226,7 +248,7 @@ def build_industry_discovery(*, as_of: date, run_id: str, home: Path,
                     query_scope=origin["locale"], source_role="auxiliary")
         item["params"]["query"] = query
         community["requests"].append(item)
-    return {"catalog": catalog, "catalog_version": "2.0", "selected": selected,
+    return {"catalog": catalog, "catalog_version": "3.0", "selected": selected,
             "retrieval_plans": {"community": finalize_plan(community), "tikhub": finalize_plan(paid),
                 "web_import": {"provider": "host-verified-web", "run_id": run_id, "as_of": as_of.isoformat(),
                                "requests": [], "required_imports": imports, "automatic_fetch": False}}}

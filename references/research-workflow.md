@@ -1,13 +1,15 @@
 # 研究工作流与可恢复交接
 
-最后更新：2026-09-14。
+最后更新：2026-09-16。
 
 定向主题缺少可用英语查询时，`next_action` 会说明缺口；可以用 `resume RUN_ID --intent-plan-file FILE` 补充宿主查询并继续同一轮。已经执行过实际社区查询的运行应另建研究，不直接改写原检索历史。
 
 ## 1. 文件化主流程
 
 ```text
-research → evidence-packet / industry-packets / review_queue → Agent 核验并填写 benchmarks 或 leads
+research → evidence-packet / industry-packets / review-packets → Agent 核验实际任务
+         → resume --observations-file → user-discovery / task-followup-plan → 后续网页补查
+         → Agent 填写 benchmarks 或 leads（也可仅保留 observations）
          → resume --benchmarks → tiered.json 与 assessment 模板
          → Agent 评分依据、主张与行动判断 → resume --assessment
          → report.json 1.1 校验 → 本地状态提交与 public 1.0.0 导出 → completed
@@ -17,7 +19,7 @@ research → evidence-packet / industry-packets / review_queue → Agent 核验�
 
 | 状态 | 宿主下一步 |
 |---|---|
-| `awaiting_benchmarks` | 读 evidence-packet 与必要原文，复制模板到独立输入文件，填写对标和维度或明确的探索线索 leads；二者皆空才填 `empty_reason` |
+| `awaiting_benchmarks` | 读主包、补读批次与必要全文，可先独立保存 observations；有商业材料后填写对标和维度或探索线索 leads；三者皆空才填 `empty_reason` |
 | `awaiting_assessment` | 读 tiered（含 overflow），按返回稳定 ID 填 A 级评分输入及 decision；用 assessment 文件恢复 |
 | `committing` | 用同一运行、不带新输入恢复；等待原报告幂等提交完成 |
 | `completed` | 本轮报告已交付；读取报告、public 导出与 research_quality，不代表研究缺口消失；修订另开子运行 |
@@ -25,6 +27,10 @@ research → evidence-packet / industry-packets / review_queue → Agent 核验�
 `resume RUN_ID --benchmarks FILE` 执行扩展、过滤和稳定 ID 准备；`resume RUN_ID --assessment FILE` 自动校验并提交本地状态，不只是保存草稿。decision 必填 `summary/largest_unknown/next_action/stop_condition`；没有主项目时 `primary_id=null`，无 A 级时 `scores=[]`。有 A 级时按当前模板用 `score_basis` 提供各维度 rationale 与 evidence_refs，不复制演示分数。assessment 可填 evidence_reviews（evidence_id/revision_id/status/reviewer/reviewed_at/rationale）与 publication_reviews；入包 selected 或网页 host_attested 不代替语义审阅。可同时传 `--profile FILE` 评估个人约束。
 
 通过 `resume --evidence FILE` 导入材料，可重复指定文件；跨轮证据保留来源运行，不能将旧费用混入新运行。产物受摘要保护，不直接编辑运行目录中的文件；将修订作为输入传回。已完成研究不接受新输入，使用 `research --parent-run-id RUN_ID` 建立后续研究。
+
+`resume RUN_ID --observations-file FILE` 接收本轮元数据和 observations 快照，保存用户、任务、触发、现有做法、具体产物与固定引用，不要求先有产品、付款或 AI 方案。未提交 benchmarks 时保持 awaiting_benchmarks；需要交付报告时仍继续 benchmarks/assessment 流程。task-followup-plan.json 从观察生成有限的待执行网页查询，task-followup-intents.json 可用 `research --parent-run-id RUN_ID --intent-plan-file FILE` 开后续研究。计划生成不执行采集；输入快照替换、查询语言、引用与兼容规则见[任务优先发现](task-first-discovery.md)。
+
+主包和 industry-packets 之外，review-packets.json 保存可读材料的补读批次；research-followup.reading_batches 指示下一批及未分配原因。摘录不替代全文，全文按固定引用读取 evidence-context.json；入包和补读不代表语义审阅完成。
 
 ### 离线执行
 
@@ -156,4 +162,4 @@ AOR_OFFLINE=1 aor resume "$PARENT_RUN_ID" --reparse --home "$RADAR_HOME"
 
 证据身份迁移使用 `library migrate-identities --destination` 写入全新目标库，见 [证据库](evidence-library.md)。部署、更新实际安装版本与网站发布是各自的交付步骤，不能从本地 completed 自动推断已生效。
 
-用户评论可通过 benchmarks 输入中的可选 `observations` 独立提交，不必先有 BENCH 或 LEAD。输出 `tiered.user_discovery` 与 `state/user-discovery/RUN_ID.json`，原文与需求簇不计入正式 A/B 数量；完整格式见[评论优先发现](comment-first-discovery.md)。
+用户观察可通过 `--observations-file` 提前保存，也可通过 benchmarks 输入中的可选 `observations` 提交，不必先有 BENCH 或 LEAD。输出 `tiered.user_discovery`，报告提交后保存 `state/user-discovery/RUN_ID.json`；原文、任务族、需求簇与交付假设不计入正式 A/B 数量，完整格式见[任务优先发现](task-first-discovery.md)。

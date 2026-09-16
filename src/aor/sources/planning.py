@@ -38,9 +38,27 @@ def validate_intent_plan(plan: Any) -> dict[str, Any]:
     seen = set()
     result = []
     for raw in plan["intents"]:
-        if not isinstance(raw, dict) or not fields <= set(raw) or set(raw) - fields - {"industry_ids"}:
+        followup_fields = {"task_family_id", "source_observation_ids", "source_evidence_refs", "purpose", "query_key", "required_checks"}
+        if not isinstance(raw, dict) or not fields <= set(raw) or set(raw) - fields - {"industry_ids"} - followup_fields:
             raise ValueError("单条意图必须包含：" + ", ".join(sorted(fields)))
         item = deepcopy(raw)
+        if set(item) & followup_fields:
+            if not followup_fields <= set(item):
+                raise ValueError("观察补查意图需要完整的任务族、观察与证据修订引用")
+            for key in ("task_family_id", "purpose", "query_key"):
+                item[key] = text_field(item[key], key, 100)
+            for key in ("source_observation_ids", "required_checks"):
+                if not isinstance(item[key], list) or not 1 <= len(item[key]) <= 20:
+                    raise ValueError(f"{key} 必须包含 1–20 项")
+                item[key] = [text_field(value, key, 200) for value in item[key]]
+            refs = item["source_evidence_refs"]
+            if not isinstance(refs, list) or not 1 <= len(refs) <= 20:
+                raise ValueError("source_evidence_refs 必须包含 1–20 个固定修订引用")
+            for ref in refs:
+                if not isinstance(ref, dict) or set(ref) != {"evidence_id", "revision_id"}:
+                    raise ValueError("补查证据引用必须包含 evidence_id 和 revision_id")
+                for key in ref:
+                    ref[key] = text_field(ref[key], key, 200)
         if "industry_ids" in item:
             if not isinstance(item["industry_ids"], list) or len(item["industry_ids"]) > 10:
                 raise ValueError("industry_ids 必须为最多 10 项的数组")
@@ -164,7 +182,8 @@ def compile_intents(intent_plan: dict[str, Any], *, as_of: str, run_id: str) -> 
         elif source in TIKHUB_SOURCES:
             paid_groups.append({"id": intent["id"], "keyword": intent["search_query"], "sources": [source], **intent["locale"]})
         else:
-            imports.append({**intent, "status": "host_verification_required", "automatic_fetch": False})
+            imports.append({**intent, **({"task_id": intent["task_family_id"]} if intent.get("task_family_id") else {}),
+                            "status": "host_verification_required", "automatic_fetch": False})
     # 宿主未请求付费来源时保留空草稿，不能送给估价/执行器当作有效请求。
     tikhub = build_search_plan(as_of=as_of, run_id=run_id, query_groups=paid_groups) if paid_groups else {
         "schema_version": community["schema_version"], "provider": "tikhub",

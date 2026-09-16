@@ -1,6 +1,6 @@
 # 网站数据契约与接入
 
-产品版本 4.3.1；内部 `report_version=1.1`，公开 `contract_version=1.0.0`，分别维护。网站只读取公开导出，内部 `report.json` 含采集响应和本机路径，不应直接托管。
+产品版本 4.4.0；内部 `report_version=1.1`，公开 `contract_version=1.0.0`，分别维护。网站只读取公开导出，内部 `report.json` 含采集响应和本机路径，不应直接托管。
 
 `coverage[].material_count/reviewed_count` 保持本轮新增材料口径；可选 `historical_material_count` 显示复用的历史材料，不将离线复核伪装成重新联网采集。全站当前材料复核总数读取 `quality.review_summary`。示例消费页见 [website-consumer](../examples/website-consumer/README.md)。
 
@@ -88,6 +88,8 @@ AI 增量标为 `supported` 必须附可解析的原文引用；官网不代替�
 
 内部隔离原因仅保存在 CLI 返回值或运行 `publication.json`，不写进公开目录。契约、类型、三视图、跨运行聚合、撤回与中断均有离线回归；业务审阅仍需核验真实原文和竞品。
 
-### 4.3 可选需求发现统计
+### 4.4 可选需求发现统计
 
 `extensions.user_discovery` 可包含 observation_count、demand_cluster_count、unique_evidence_count、feedback_types 和固定为 false 的 market_validated。仅为计数，不导出 OBS/NEED 正文、原始评论或用户字段。缺少此扩展表示旧报告未提供；不要把计数解释为独立用户数或已验证机会数。public 1.0.0 保持兼容。
+
+user_discovery 2.0 增加 task_family_count、positive_behavior_count、artifact_count、artifact_observation_count、delivery_hypothesis_count，以及固定枚举的 behavior_types/delivery_forms 计数。只导出白名单整数和枚举，不输出任务名称、产物文本、产品上下文、检索关键词或方案正文。交付假设数不计作新需求或商业验证。

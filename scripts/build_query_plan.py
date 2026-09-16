@@ -338,6 +338,16 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
     industry_discovery = None
     if intent_plan is not None:
         retrieval_plans = compile_intents(intent_plan, as_of=as_of.isoformat(), run_id=run_id)
+        from aor.sources.industries import load_industries
+
+        catalog = load_industries(home)
+        declared_industries = {identifier for item in intent_plan["intents"] for identifier in item.get("industry_ids", [])}
+        known_industries = {row["id"] for row in catalog}
+        if declared_industries - known_industries:
+            raise ValueError("intent_plan.industry_ids 必须来自当前行业目录；自由主题可不提供行业标签")
+        if declared_industries:
+            industry_discovery = {"catalog": catalog, "catalog_version": "3.0",
+                                  "selected": [row["id"] for row in catalog if row["id"] in declared_industries]}
         coverage_schedule = {
             "strategy": "host_structured_intents",
             "planned_sources": list(dict.fromkeys(item["source"] for item in intent_plan["intents"])),
@@ -411,8 +421,10 @@ def build_plan(as_of: date, home: Path = DEFAULT_HOME, focus: str | None = None,
             {"id": "regional_gap", "name": "区域错配型机会", "target": 1},
         ],
         "query_priority": [
-            "付款、营收、订阅、定价、招聘、外包",
-            "取消、切换、投诉、手工表格与替代方案",
+            "触发事件、具体操作、表格清单和其他用户产物",
+            "收藏、纪念、分享、完成和熟练等正向行为",
+            "原文观察决定下一轮查询；核验现成替代与未采用原因",
+            "后续阶段核验付款、收费对标和交付形态，不作为观察准入条件",
             "目标地区的语言、支付、渠道与工作流差异",
             "泛讨论仅作补充，不单独进入正式机会",
         ],

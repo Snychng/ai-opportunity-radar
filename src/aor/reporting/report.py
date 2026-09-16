@@ -248,8 +248,12 @@ def render_summary(report: dict, *, full_path: str | None = None) -> str:
         counts = discovery["summary"]
         lines.extend([f"用户观察：{counts['observation_count']} 条；需求簇：{counts['demand_cluster_count']} 个。"
                       "原话分类尚不等于购买或身份已被独立证实。", ""])
+        if discovery.get("version") == "2.0":
+            lines.extend([f"任务族：{counts['task_family_count']} 个；正向行为观察：{counts['positive_behavior_count']} 条；"
+                          f"具体产物：{counts['artifact_count']} 种；交付假设：{counts['delivery_hypothesis_count']} 项。"
+                          "交付假设不增加需求数量，也不代表商业验证。", ""])
         for cluster in discovery["demand_clusters"][:10]:
-            lines.append(f"- {_safe_text(cluster['product'])} · {_safe_text(cluster['need'])}（待验证需求）")
+            lines.append(f"- {_safe_text(cluster['task'])} · {_safe_text(cluster['need'])}（待验证需求）")
         lines.append("")
         if len(discovery["demand_clusters"]) > 10:
             lines.extend(["更多需求簇见完整报告和 user_discovery 数据。", ""])
@@ -288,9 +292,21 @@ def render_report(report: dict) -> str:
         from aor.reporting.public import public_url
         lines.extend(["## 用户原话与需求发现", "", "以下标签为宿主分类，不自动证明评论者身份或真实成交。", ""])
         for observation in discovery["observations"]:
-            lines.append(f"### {observation['observation_id']} · {_safe_text(observation['product'])}")
+            lines.append(f"### {observation['observation_id']} · {_safe_text(observation['task'])}")
             lines.append(f"{_safe_text(observation['target_user'])} / {_safe_text(observation['task'])}：{_safe_text(observation['need'])}")
             lines.append(f"类型：{observation['feedback_type']}；倾向：{observation['sentiment']}；需求簇：{observation['cluster_id']}")
+            if observation.get("task_family_id"):
+                lines.append(f"任务族：{observation['task_family_id']}；行为：{observation['behavior_type']}；"
+                             f"观察/检索语言：{observation['language']}。")
+            for field, label in (("trigger", "触发事件"), ("current_workaround", "现有做法"),
+                                 ("desired_outcome", "期望结果"), ("artifact", "具体产物")):
+                if observation.get(field):
+                    lines.append(f"- {label}：{_safe_text(observation[field])}")
+            if observation.get("constraints"):
+                lines.append("- 明确约束：" + "；".join(_safe_text(value) for value in observation["constraints"]))
+            products = observation.get("products") or ([observation["product"]] if observation.get("product") else [])
+            if products:
+                lines.append("- 产品上下文：" + "、".join(_safe_text(value) for value in products))
             for ref in observation["evidence_refs"]:
                 lines.append(f"- 原话：{_safe_text(ref['quote'])}（{ref['evidence_id']} / {ref['revision_id']}）")
                 row = resolve_evidence_reference(ref, report["claim_evidence"], require_revision=True)
@@ -300,6 +316,13 @@ def render_report(report: dict) -> str:
                     url = None
                 if url:
                     lines.append(f"  - [来源]({url})")
+            if observation.get("solution_hypotheses"):
+                forms = {"one_off_delivery": "一次性交付", "human_assisted_service": "人工辅助服务",
+                         "plugin": "插件", "studio_tool": "工作室工具", "subscription_software": "订阅软件",
+                         "other": "其他形态"}
+                lines.extend(["", "**解决方案假设（与上述需求事实分层，尚未验证）**", ""])
+                for proposal in observation["solution_hypotheses"]:
+                    lines.append(f"- {forms[proposal['delivery_form']]}：{_safe_text(proposal['statement'])}（hypothesis）")
             lines.append("")
     if report.get("run_ledger"):
         ledger = report["run_ledger"]

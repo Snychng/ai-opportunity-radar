@@ -192,10 +192,10 @@ def _counts(row):
             "sources": sorted(row["sources"])}
 
 
-def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | None = None, *, version: str = "2.0") -> dict:
+def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | None = None, *, version: str = "2.1") -> dict:
     if version == "1.0":
         return _legacy_coverage(plan, payloads, tiered)
-    if version != "2.0":
+    if version not in {"2.0", "2.1"}:
         raise ValueError("未知行业覆盖版本")
     selected = set(plan.get("selected_industries", []))
     catalog = plan.get("industry_catalog", [])
@@ -204,6 +204,7 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
                       "catalog_subtrack_count": len(r.get("subtracks", [])), "qualified_count": 0, "lead_count": 0,
                       **_sets()} for r in catalog}
     tasks, requests, planned, skipped = {}, {}, {}, {}
+    scheduled_task_keys = set()
 
     def task_row(key, ids=()):
         if key not in tasks:
@@ -221,6 +222,7 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
             target = task_row(key, ids)
             if planned_request:
                 target["planned_requests"].add(identifier)
+                scheduled_task_keys.add(key)
         if planned_request:
             planned[(item.get("source"), identifier)] = item
         for alternative in item.get("fallback_requests", []):
@@ -232,10 +234,19 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
         for task in child.get("research_tasks", []):
             for key in _task_keys(task):
                 task_row(key, industry_ids(task))
+                scheduled_task_keys.add(key)
         for request in child.get("required_imports", []):
             register(request, planned_request=False)
+            if version == "2.1":
+                scheduled_task_keys.update(_task_keys(request))
         for request in child.get("skipped_requests", []):
             skipped[(request.get("source"), request.get("id"))] = request
+    if version == "2.1":
+        # 自由 focus 可显式定义无行业标签的研究任务；采到材料本身不能反向伪造研究范围。
+        for task in plan.get("research_tasks", []):
+            for key in _task_keys(task):
+                task_row(key, industry_ids(task))
+                scheduled_task_keys.add(key)
     # 最新库快照的修订与审阅覆盖同对象的采集副本，旧审阅不能在集合并集里残留。
     authoritative = {}
     for payload in payloads:
@@ -333,9 +344,24 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
             if key in _task_keys(item):
                 row["skipped_requests"].add(source_id)
         gaps = [dimension for dimension in REVIEW_DIMENSIONS if not row[dimension]]
-        task_output.append({"task_id": row["task_id"], "language": row["language"], "industry_ids": row["industry_ids"],
+        task_result = {"task_id": row["task_id"], "language": row["language"], "industry_ids": row["industry_ids"],
                             **_counts(row), "planned_request_count": len(row["planned_requests"]),
-                            "skipped_request_count": len(row["skipped_requests"]), "review_gaps": gaps})
+                            "skipped_request_count": len(row["skipped_requests"]), "review_gaps": gaps}
+        if version == "2.1":
+            if row["materials"] - row["reviewed"]:
+                gaps.append("semantic_review")
+            if key in scheduled_task_keys and not row["attempts"] and not row["materials"]:
+                gaps.append("collection")
+            own_planned = {pair for pair, request in planned.items() if key in _task_keys(request)}
+            unresolved = [request for request in skipped.values() if key in _task_keys(request)
+                          and (request.get("replacement_source"), request.get("replacement_request_id")) not in observed_attempts]
+            if own_planned - observed_attempts or unresolved:
+                gaps.append("planned_queries")
+            if row["failures"]:
+                gaps.append("collection_failures")
+            task_result.update(scheduled=key in scheduled_task_keys,
+                               scheduled_research_complete=key in scheduled_task_keys and not gaps)
+        task_output.append(task_result)
     output = []
     for row in rows.values():
         identifier = row["industry_id"]
@@ -346,7 +372,7 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
         gaps = [dimension for dimension in REVIEW_DIMENSIONS if not row[dimension]]
         if row["materials"] - row["reviewed"]:
             gaps.append("semantic_review")
-        if not row["attempts"] and row["scheduled"]:
+        if not row["attempts"] and row["scheduled"] and (version == "2.0" or not row["materials"]):
             gaps.append("collection")
         unresolved_skips = [r for r in skipped.values() if identifier in industry_ids(r)
                             and (r.get("replacement_source"), r.get("replacement_request_id")) not in observed_attempts]
@@ -360,9 +386,21 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
         if row["failures"] and row["materials"]:
             status = "partial"
         languages = sorted({t["language"] for t in related_tasks if t["request_count"]})
-        planned_languages = sorted({t["language"] for t in related_tasks if t["planned_request_count"]})
-        scheduled_tasks = {t["task_id"] for t in related_tasks if t["planned_request_count"]}
+        scheduled_rows = [t for t in related_tasks if (t.get("scheduled") if version == "2.1" else t["planned_request_count"])]
+        planned_languages = sorted({t["language"] for t in scheduled_rows})
+        scheduled_tasks = {t["task_id"] for t in scheduled_rows}
         attempted_tasks = {t["task_id"] for t in related_tasks if t["request_count"]}
+        catalog_counts = {"unplanned_subtrack_count": max(0, row["catalog_subtrack_count"] - len(scheduled_tasks))}
+        if version == "2.1":
+            # 只有对应目录身份的计划才能减少目录缺口；独立 TASK-* 不是已覆盖的子赛道。
+            definition = next(item for item in catalog if item["id"] == identifier)
+            subtracks = {f"{identifier}.{item['id']}" for item in definition.get("subtracks", [])}
+            entries = {f"{identifier}.{item['id']}" for item in definition.get("discovery_entries", [])}
+            catalog_counts = {"catalog_discovery_entry_count": len(entries),
+                              "catalog_task_count": len(subtracks | entries),
+                              "unplanned_subtrack_count": len(subtracks - scheduled_tasks),
+                              "unplanned_discovery_entry_count": len(entries - scheduled_tasks),
+                              "unplanned_task_count": len((subtracks | entries) - scheduled_tasks)}
         source_names = sorted({key[0] for key in own_planned} | {key[0] for key in row["attempts"]} | row["sources"])
         source_coverage = [{"source": source, "planned_request_count": sum(key[0] == source for key in own_planned),
                             "request_count": sum(key[0] == source for key in row["attempts"]),
@@ -375,13 +413,24 @@ def build_industry_coverage(plan: dict, payloads: list[dict], tiered: dict | Non
                        "planned_languages": planned_languages, "attempted_languages": languages,
                        "pending_languages": sorted(set(planned_languages) - set(languages)), "source_coverage": source_coverage,
                        "scheduled_task_count": len(scheduled_tasks), "attempted_task_count": len(attempted_tasks),
-                       "unplanned_subtrack_count": max(0, row["catalog_subtrack_count"] - len(scheduled_tasks)),
+                       **catalog_counts,
                        "review_gaps": gaps, "scheduled_research_complete": row["scheduled"] and not gaps})
-    return {"version": "2.0", "as_of": plan.get("as_of"), "run_id": plan.get("run_id"),
+    coverage = {"version": version, "as_of": plan.get("as_of"), "run_id": plan.get("run_id"),
             "industries": output, "tasks": task_output, "unclassified_evidence_count": len(unmapped),
             "out_of_scope_evidence_count": len(out_of_scope),
             "status_counts": dict(Counter(row["status"] for row in output)), "exhaustive_market_coverage": False,
             "note": "行业目录与查询只是研究范围。页面已打开、词面相关、近期材料、语义审阅与商业证据分别计数；空结果不代表没有机会。"}
+    if version == "2.1":
+        known_scope = selected & rows.keys()
+        scope_defined = bool(known_scope or scheduled_task_keys)
+        scope_gaps = ([] if scope_defined else ["research_scope_undefined"])
+        if selected - rows.keys():
+            scope_gaps.append("selected_industries_missing_from_catalog")
+        if not scheduled_task_keys:
+            scope_gaps.append("research_tasks_undefined")
+        coverage.update(scope_defined=scope_defined, scope_gaps=scope_gaps,
+                        scheduled_research_task_count=len(scheduled_task_keys))
+    return coverage
 
 
 def research_quality(coverage: dict, packet: dict, tiered: dict, *, evidence: list[dict] | None = None) -> dict:
@@ -434,6 +483,27 @@ def research_quality(coverage: dict, packet: dict, tiered: dict, *, evidence: li
                              reviewed_evidence_count=counts["current_reviewed_evidence_count"] + counts["historical_reviewed_evidence_count"])
     qualified = sum(len(tiered.get(k, [])) + len((tiered.get("overflow") or {}).get(k, []))
                     for k in ("deep_candidates", "validated_ideas", "regional_signals"))
+    if coverage.get("version") == "2.1":
+        scope_gaps = list(coverage.get("scope_gaps") or [])
+        if not coverage.get("scope_defined") and "research_scope_undefined" not in scope_gaps:
+            scope_gaps.append("research_scope_undefined")
+        tasks = [row for row in coverage.get("tasks", []) if row.get("scheduled")]
+        if not tasks and "research_tasks_undefined" not in scope_gaps:
+            scope_gaps.append("research_tasks_undefined")
+        task_gaps = [{"task_id": row["task_id"], "language": row["language"], "review_gaps": row["review_gaps"]}
+                     for row in tasks if row.get("review_gaps")]
+        incomplete = bool(scope_gaps or gaps or task_gaps or unreviewed)
+        return {"version": "2.1", **review_counts, "scope_defined": bool(coverage.get("scope_defined")),
+                "scope_gaps": scope_gaps, "task_gaps": task_gaps, "coverage_incomplete": incomplete,
+                "industries_needing_review": gaps,
+                "industry_gaps": {r["industry_id"]: r["review_gaps"] for r in rows if r["scheduled"] and r["review_gaps"]},
+                "omitted_evidence_count": omitted, "unreviewed_evidence_count": unreviewed,
+                "market_absence_established": False,
+                "zero_result_reason": (None if qualified else "coverage_or_evidence_incomplete" if incomplete
+                                       else "no_qualified_candidates_in_reviewed_material"),
+                "required_followup": (["明确研究范围及具体研究任务；已审材料不等于覆盖市场"] if scope_gaps else []) +
+                                     (["按任务补查近期用户行为、收费对标、现有替代和反证"] if gaps or task_gaps else []) +
+                                     (["按 review_queue 与续读批次读取未审原文并记录语义复核"] if unreviewed else [])}
     return {"version": "2.0", **review_counts, "coverage_incomplete": bool(gaps or unreviewed), "industries_needing_review": gaps,
             "industry_gaps": {r["industry_id"]: r["review_gaps"] for r in rows if r["scheduled"] and r["review_gaps"]},
             "omitted_evidence_count": omitted, "unreviewed_evidence_count": unreviewed,
