@@ -179,6 +179,16 @@ class NormalizeTikHubResultsTests(unittest.TestCase):
         self.assertEqual(reddit["title"], "Finding reliable gaming teammates")
         self.assertEqual(reddit["date_confidence"], "high")
 
+    def test_compact_timezone_offsets_keep_exact_publication_time(self):
+        from normalize_tikhub_results import _normalize_date
+        for offset, expected in (("+0000", "Z"), ("+0530", "+05:30"), ("-0400", "-04:00")):
+            raw = "2026-07-13T12:01:00.000000" + offset
+            rendered, confidence, original = _normalize_date(raw)
+            self.assertEqual(rendered, "2026-07-13T12:01:00" + expected)
+            self.assertEqual(confidence, "high")
+            self.assertEqual(original, raw)
+        self.assertEqual(_normalize_date("2026-02-31T12:01:00+0000")[1], "low")
+
     def test_relative_publication_date_does_not_break_evidence_ingestion(self):
         from aor.storage.evidence_library import EvidenceLibrary
         result = _result("youtube", {"videos": [{

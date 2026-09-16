@@ -161,7 +161,9 @@ def _normalize_date(value: Any) -> tuple[str | None, str, Any]:
         if re.search(r"\b(?:ago|前|刚刚|yesterday|today)\b", text, re.IGNORECASE):
             return None, "low", value
         try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            # 供应商会返回 +0000 / +0530；Python 3.10 的 ISO 解析要求偏移量含冒号。
+            iso_text = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", text.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(iso_text)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed.isoformat().replace("+00:00", "Z"), "high", value
