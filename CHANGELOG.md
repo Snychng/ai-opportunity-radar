@@ -1,6 +1,6 @@
 # 版本变更
 
-## 4.5.0 — 2026-09-16（源码，尚未发布）
+## 4.5.0 — 2026-09-17
 
 - 新增 `search plan/collect/import/status`：宿主 AI 与可选 Grok 按渠道并行检索，使用独立任务、查询回执和唯一协调者提交；沿用既有 research/resume、证据库、OBS 与审阅队列。
 - Grok 使用前需完成 Hermes 订阅 OAuth 登录并配置认证文件路径；只读当前 access token，不刷新、不轮换、不自动使用付费 API Key。未配置或明确不可用时，有本轮预算的 TikHub 或宿主 X 搜索继续工作，回退任务未执行不计为搜索成功。
