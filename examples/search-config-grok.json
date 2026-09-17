@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "grok": {
+    "enabled": true,
+    "auth_file": "~/.hermes/auth.json",
+    "model": "grok-4.6",
+    "max_responses_requests": 6
+  },
+  "max_tasks": 24
+}

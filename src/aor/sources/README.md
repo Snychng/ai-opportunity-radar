@@ -84,7 +84,9 @@ python3 scripts/source_query.py diagnose
 
 verification.method 只允许 opened_page/authorized_browser，不能把搜索摘要冒充已打开正文。supporting_quote 必须为 original_text 的原文子串。核验状态标为 host_attested，导入器不声称独立打开过网页。
 
-输出保留 schema_version/run_id/as_of，provider=host-verified-web、stage=web_evidence_import、input_sha256、evidence[] 和 summary。证据 ID 从 original_url（缺失时 url）产生，content_sha256 单独表达内容修订。同批重复内容拒绝并要求合并 intent_refs。跨网页原始主体的独立性判定交给证据模块，不能按导入渠道增加独立来源。
+输出保留 schema_version/run_id/as_of，provider=host-verified-web、stage=web_evidence_import、input_sha256、evidence[] 和 summary。普通证据 ID 从 original_url（缺失时 url）产生，content_sha256 单独表达内容修订。同批重复内容拒绝并要求合并 intent_refs。跨网页原始主体的独立性判定交给证据模块，不能按导入渠道增加独立来源。
+
+新核验的 twitter 导入可成对提供 source_object_id/object_kind，URL 与 original_url 必须指向同一个白名单 X 状态帖 ID；类型由宿主核验为 post/comment/reply，reply 规范成 comment。此时原生对象与 TikHub 同帖/回复合并，并保存 URL 别名；不提供时沿用旧 URL 身份，不改写历史日志。query/query_id/query_language/query_region 与受控 retrieval 记录实际查询，属于元数据。模型/provider 信息保存在独立搜索回执，不能制造正文修订。
 
 定价页只写 signal_types=[pricing]，payment_status 始终为 not_established；即使 evidence_role=payment 也仍需证据模块核验付款主张，不会自动生成 paid_subscription 等已付款类型。演示标记原样保留。
 

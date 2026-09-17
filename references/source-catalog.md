@@ -1,6 +1,6 @@
 # 数据源目录与覆盖契约
 
-最后更新：2026-09-10。平台列表表示实现边界，不是实时可用性声明。
+最后更新：2026-09-16。平台列表表示实现边界，不是实时可用性声明。
 
 ## aor sources 与人工 web 导入
 
@@ -19,7 +19,17 @@ AOR_OFFLINE=1 aor sources import --input examples/web-import-demo.json \
 
 导入器只检查宿主的核验声明，输出 `provider=host-verified-web`、`stage=web_evidence_import`、`input_sha256` 和 `evidence[]`，核验状态为 `host_attested`；它不会独立打开网页。定价只产生 pricing 信号，`payment_status=not_established`；即使 evidence_role 为 payment，也不能跳过后续付款主张核验。同批重复内容会拒绝并要求合并 intent_refs。
 
+新核验的 X 原文可成对提供 `source_object_id` 与 `object_kind`，前者必须等于 X URL 的状态帖 ID，后者须在阅读上下文后填写 `post`、`comment` 或 `reply`（reply 规范为 comment）。`source=twitter` 且 url/original_url 必须指向同一状态帖；此时新导入按原生对象合并，与 TikHub 对应帖子或回复共享身份。缺少这组字段时沿用既有 URL 身份，旧库不被静默改写。回复不能使用父帖 ID 代替自身 ID。
+
+可选查询元数据为 `query/query_id/query_language/query_region`，以及仅含 `query/query_id/rank/searched_at` 的 `retrieval`；只记录实际执行的查询。检索模型、provider 和回答留在搜索回执，不塞入证据正文。相同原文的查询变化不制造正文修订。
+
 新证据可以 `resume RUN_ID --evidence FILE` 交给编排；输出不是 BENCH，也不能直接充当已验证候选。详细可核验契约见 [来源模块 README](../src/aor/sources/README.md)。
+
+## X 的可选搜索执行者
+
+原始来源始终是 `twitter`，Grok、TikHub 和宿主是不同执行路径。`sources catalog/diagnose` 保留既有目录与配置诊断协议；可选 Grok 和宿主协作由独立 `search` 命令提供，详见[登录配置与回退](multi-model-search.md)。
+
+启用 Grok 前先完成 Hermes OAuth 登录。没有 Grok 时，已有预算的 TikHub 或宿主 X 搜索照常工作；没有可用渠道则保留缺口。Grok 返回 URL/模型摘要属于候选，须打开原文后再 import；TikHub 返回材料仍按已有证据质量与语义审阅流程处理。不能把多模型找到同帖算作多份独立来源。
 
 ## 目录
 

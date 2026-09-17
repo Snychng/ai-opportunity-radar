@@ -29,6 +29,7 @@ COMMANDS = {
     "resume": "research.py",
     "inspect": "research.py",
     "sources": "source_query.py",
+    "search": "search.py",
     "library": "evidence_library.py",
     "eval": "evaluate_research.py",
     "review-queue": "review_queue.py",

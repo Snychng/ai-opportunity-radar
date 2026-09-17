@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .planning import text_field
 from .registry import EVIDENCE_ROLES, source_catalog
+from .search_candidates import x_post_id
 
 
 def _timestamp(value: Any, field: str) -> str:
@@ -46,7 +47,8 @@ def import_web_evidence(payload: Any, *, run_id: str, as_of: str) -> dict[str, A
     if not isinstance(payload["items"], list) or not 1 <= len(payload["items"]) <= 100:
         raise ValueError("单次导入必须包含 1 到 100 条网页摘录")
     required = {"source", "url", "title", "original_text", "supporting_quote", "evidence_role", "observed_at", "verification"}
-    optional = {"published_at", "language", "country", "original_url", "original_publisher", "intent_refs", "candidate_gaps", "is_demo", "industry_ids"}
+    optional = {"published_at", "language", "country", "original_url", "original_publisher", "intent_refs", "candidate_gaps", "is_demo", "industry_ids",
+                "source_object_id", "object_kind", "query", "query_id", "query_language", "query_region", "retrieval"}
     sources = {row["source"] for row in source_catalog()}
     evidence = []
     seen = set()
@@ -87,8 +89,48 @@ def import_web_evidence(payload: Any, *, run_id: str, as_of: str) -> dict[str, A
                 raise ValueError(f"{field} 必须是不超过 20 项的数组")
             refs[field] = [text_field(value, field, 200) for value in values]
         original_url = _public_url(raw["original_url"]) if raw.get("original_url") else url
+        native = {}
+        supplied_identity = "source_object_id" in raw or "object_kind" in raw
+        post_id, original_post_id = x_post_id(url), x_post_id(original_url)
+        if supplied_identity:
+            if source != "twitter" or not post_id or post_id != original_post_id:
+                raise ValueError("原生对象身份仅用于 URL 与 original_url 指向同一 X 状态帖的 twitter 摘录")
+            supplied_id = text_field(raw.get("source_object_id"), "source_object_id", 20)
+            kind = raw.get("object_kind")
+            if supplied_id != post_id or kind not in {"post", "comment", "reply"}:
+                raise ValueError("source_object_id 必须匹配 X URL；object_kind 必须为 post、comment 或 reply")
+            native = {"source_object_id": post_id, "object_kind": "comment" if kind == "reply" else kind}
+        if native:
+            # 仅显式声明对象类型的新宿主核验导入绑定原生身份；URL 不区分原帖和回复。
+            # 不改旧日志或全局 URL 身份推导。
+            # 作者路径是别名，不属于身份；保留原访问 URL，但原始 URL 用统一 permalink。
+            # 两者指向同帖，需同时规范化以满足既有 original_url 转载判定。
+            native["same_source_refs"] = sorted({url, original_url})
+            url = original_url = f"https://x.com/i/status/{post_id}"
+        query_metadata = {}
+        for field in ("query", "query_id", "query_language", "query_region"):
+            if field in raw:
+                query_metadata[field] = text_field(raw[field], field, 2000 if field == "query" else 200)
+        if "retrieval" in raw:
+            retrieval = raw["retrieval"]
+            allowed_retrieval = {"query", "query_id", "rank", "searched_at"}
+            if not isinstance(retrieval, dict) or retrieval.keys() - allowed_retrieval:
+                raise ValueError("retrieval 只接受 query、query_id、rank、searched_at；模型发现信息请保留在搜索回执")
+            normalized_retrieval = {}
+            for field in ("query", "query_id"):
+                if field in retrieval:
+                    normalized_retrieval[field] = text_field(retrieval[field], field, 2000)
+            if "rank" in retrieval:
+                rank = retrieval["rank"]
+                if isinstance(rank, bool) or not isinstance(rank, int) or not 1 <= rank <= 100000:
+                    raise ValueError("retrieval.rank 必须为 1 到 100000 的整数")
+                normalized_retrieval["rank"] = rank
+            if "searched_at" in retrieval:
+                normalized_retrieval["searched_at"] = _timestamp(retrieval["searched_at"], "retrieval.searched_at")
+            query_metadata["retrieval"] = normalized_retrieval
         # 同一 URL 的证据身份稳定；文本修订用独立摘要表达，导入途径不增加来源数。
-        evidence_id = "web:" + hashlib.sha256(original_url.encode("utf-8")).hexdigest()[:24]
+        evidence_id = (f"twitter:{'comment:' if native.get('object_kind') == 'comment' else ''}{post_id}" if native else
+                       "web:" + hashlib.sha256(original_url.encode("utf-8")).hexdigest()[:24])
         content_sha = canonical_sha256({"original_text": original, "supporting_quote": quote, "evidence_role": role})
         marker = (evidence_id, content_sha)
         if marker in seen:
@@ -107,7 +149,7 @@ def import_web_evidence(payload: Any, *, run_id: str, as_of: str) -> dict[str, A
             "verification": verification, "content_sha256": content_sha,
             "signal_types": ["pricing"] if role == "official_pricing" else [],
             "payment_status": "not_established", "is_demo": raw.get("is_demo", False),
-            **refs,
+            **refs, **native, **query_metadata,
         })
     return {"schema_version": SCHEMA_VERSION, "run_id": run_id, "as_of": as_of,
             "provider": "host-verified-web", "stage": "web_evidence_import",

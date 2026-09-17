@@ -113,6 +113,14 @@ DATA_HOME/
 日常维护先运行 [离线示例](quick-start.md#可运行离线示例)，再根据改动检查相关测试、`aor eval`、内部链接及 CLI 参数。契约细节见 [数据契约](data-contracts.md)、[来源模块说明](../src/aor/sources/README.md)、[证据库](evidence-library.md)、[付费恢复](tikhub-integration.md)与[报告契约](report-template.md)。
 
 
+## 协作搜索（4.5）
+
+`workflow/search.py` 与 `scripts/search.py` 负责独立检索计划、发送记录、回执登记和状态；`sources/grok_x.py` 只读用户指定的 Hermes access token，执行受限的 Responses X Search 请求。检索网络执行在研究 run 锁外，各 worker 写独立结果，由唯一协调者登记与提交。原有 `research/resume` 状态机和付费 journal 继续负责既有研究与 TikHub 执行。
+
+`sources/search_candidates.py` 规范候选 URL、原生对象身份及各次发现回执；`evidence/search_evaluation.py` 汇总执行与核验状态。候选不进入 evidence[]，模型摘要不充当 original_text；provider/model 等过程信息保持独立，避免它们改变正文修订哈希。新核验的 X 导入使用经过 URL 校验的原生身份，历史记录不重算。
+
+Grok 未配置或明确不可用时，交接有本轮授权预算的既有 TikHub 入口，否则生成宿主 X 搜索任务。超时与断流记为 unknown，不自动重试或重买。客户端调用上限、API 返回用量和真实账户账单分开表达。配置、登录与操作步骤见[协作搜索](multi-model-search.md)。
+
 ## 修复与兼容边界
 
 对象身份 2.0 将帖子与评论拆开，以 native identity 关联采集副本和库快照；新语义审阅绑定对应修订。旧库只通过 `library migrate-identities --destination` 派生迁移，源 JSONL 不覆盖。`resume --reparse` 复用父运行已存响应创建离线子运行，不重购、不断言新来源健康，父运行费用独立保留。

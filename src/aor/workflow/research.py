@@ -805,6 +805,10 @@ def inspect_run(home: Path, run_id: str) -> dict:
     manifest = _read(directory / "run.json")
     return {**_metadata(manifest), "status": manifest["status"], "next_action": manifest.get("next_action"),
             "research_completion": manifest.get("research_completion"),
+            "search_handoff": {"plan_path": str(directory / "search-plan.json") if "search-plan" in manifest["artifacts"] else None,
+                               "argv": ["aor", "search", "status" if "search-plan" in manifest["artifacts"] else "plan",
+                                        "--home", str(Path(home).expanduser().resolve()), "--run-id", run_id],
+                               "note": "宿主与X检索可并行，回执统一search import；缺Grok正常交给宿主或显式预算TikHub。"},
             "run_path": str(directory), "input_template": manifest.get("input_template"),
             "artifacts": manifest["artifacts"], "stages": manifest["stages"],
             "summary_path": str(directory / "summary.md") if (directory / "summary.md").exists() else None,
