@@ -1,5 +1,5 @@
 """评论优先研究：原文绑定、跨平台分页、预算恢复与公开边界。"""
-from datetime import date
+from datetime import date, datetime
 import json
 import os
 from pathlib import Path
@@ -264,7 +264,11 @@ class CommentPaginationTests(unittest.TestCase):
         self.assertEqual(advanced['summary']['unique_comments'], 2)
         self.assertEqual(collection_coverage([response])['unique_comments'], 2)
 
-    def test_budget_stop_resume_and_recovery_do_not_rebuy_saved_pages(self):
+    @patch('tikhub_query.datetime')
+    def test_budget_stop_resume_and_recovery_do_not_rebuy_saved_pages(self, execution_clock):
+        # 本例验证同轮分页恢复；采集时间与固定 as_of 一致，避免真实时钟跨日后倒写历史。
+        executed_at = datetime.fromisoformat(DAY + 'T08:00:00+00:00')
+        execution_clock.now.return_value = executed_at
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AOR_OFFLINE': '1'}):
             home = Path(temp)
             run = start_research(home, as_of=date.fromisoformat(DAY))
@@ -298,6 +302,11 @@ class CommentPaginationTests(unittest.TestCase):
                 result = run_comment_collection(home, run['run_id'], inputs, max_cost_usd=0.01, resume=True)
                 self.assertEqual(len(calls), 3)
                 self.assertEqual(result['comment_collection']['unique_comments'], 2)
+                manifest = json.loads((Path(result['run_path']) / 'run.json').read_text())
+                self.assertTrue(manifest['execution_artifacts'])
+                for name in manifest['execution_artifacts']:
+                    payload = json.loads(Path(manifest['artifacts'][name]['path']).read_text())
+                    self.assertEqual(payload['generated_at'], executed_at.isoformat())
                 run_comment_collection(home, run['run_id'], inputs, max_cost_usd=0.01, resume=True)
                 self.assertEqual(len(calls), 3)
                 with self.assertRaises(ValueError):
